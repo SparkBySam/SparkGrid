@@ -1,0 +1,18 @@
+#!/bin/bash
+# Fast stages before every commit: lint, format, layers, privacy, debug package.
+# The KPI stage also runs when a staged path is under Packages/SparkGridCore/Sources
+# other than Rendering, under corpus, or is scripts/check-kpi.sh.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+"$root/scripts/lint.sh"
+"$root/scripts/check-format.sh"
+"$root/scripts/check-layers.sh"
+"$root/scripts/check-privacy.sh"
+"$root/scripts/check-package.sh" debug
+
+if ! git diff --cached --quiet -- 'Packages/SparkGridCore/Sources' ':(exclude)Packages/SparkGridCore/Sources/Rendering' 'corpus' 'scripts/check-kpi.sh'; then
+  "$root/scripts/check-kpi.sh"
+fi

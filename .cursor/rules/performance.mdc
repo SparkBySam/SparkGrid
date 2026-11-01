@@ -1,0 +1,84 @@
+---
+description: Performance work on the calc engine, import/export, document store, and grid. The KPI workbook is a benchmark, never a special case.
+alwaysApply: true
+---
+
+# Performance rules
+
+## The KPI workbook is a benchmark, not a target
+
+- `BDC Digital KPI 2026.xlsx` (15 sheets, ~228K cells, ~48K formulas) is the reference file for timing. Use it to measure speedups. Do not write code for it.
+- Never put sheet names, cell addresses, column indices, or formula shapes from one workbook into `Spark Grid Shared` or the app. That includes names like `"YTD Summary"`, `"Config"`, month names, `"dashboard"`, cells like `S5`, and column ranges like 17–24.
+- Sheet order and evaluation order come from the formulas' real dependencies, never from sheet names.
+- A fast path must work for any workbook with that formula pattern. If it only fires on the KPI file, it does not ship.
+- This must print nothing for new or changed code:
+  ```
+  grep -rnE 'YTD|Ytd|ytd|KPI|"[Cc]onfig"|"[Dd]ashboard"' Packages/SparkGridCore/Sources "Spark Grid/State" "Spark Grid/Grid"
+  ```
+  Existing matches are debt. Delete them when you touch that code; do not add more.
+
+## BugBashRunner is for debugging only
+
+- `BugBashRunner` is a debug harness. Nothing the app needs may live only there, and nothing in it is evidence of what the user experiences.
+- `recalculateEntireWorkbook` is not called by the app today. Speeding it up does not change open time, edit lag, or scrolling. Do not report it as a user-facing win.
+
+## Diagnostics never run in live paths
+
+- Diagnostics, probes, and profile logging go behind `#if DEBUG` and run only when a `FormulaRecalcProfile` is attached.
+- Never add diagnostics to `displayValue`, `recalculate`, `cellsDidChange`, `ingest`, any `draw…` method, scroll handling, or document change tracking.
+- Example of what not to do: the `YTD Summary!S5` probe at the end of `FormulaEngine.recalculate` runs once per lazily displayed cell and adds ~160 ms (Release) to the YTD tab's first screen.
+
+## Measure what the user feels, in Release
+
+- Time in a Release build (Product > Profile, or a Release scheme). Debug (`-Onone`) numbers are not comparable and do not count toward budgets.
+- Profile first (Instruments Time Profiler or `sample`) and work on the largest cost. Do not optimize anything under ~5% of the path you are fixing.
+- Time the paths the app runs, on the KPI file:
+  1. Open: `SpreadsheetDocument.load` through the first painted grid.
+  2. The unsaved-changes check (`SpreadsheetDocumentStore.computeDirtyState` / `WorkbookFingerprint`).
+  3. First screen of each sheet, including `YTD Summary`.
+  4. One cell edit, through `commitEdit` and the SwiftUI `onChange` sync.
+  5. A tab switch (`selectSheet`).
+  6. Save / autosave (`XLSXCodec.exportWorkbook`).
+  7. Scrolling: the worst single screen while scrolling a month sheet's data rows.
+- Also time at least one large workbook with a different shape. A change that helps only the KPI file is a regression.
+
+## Main thread budget
+
+- No work proportional to the whole workbook on the main thread per edit, selection change, scroll tick, or tab switch. That means no full-workbook hashing or encoding, no full export, and no rebuilding every sheet's values.
+- Open, import, export, and autosave run off the main thread. The main thread gets a finished snapshot.
+- Dirty tracking is a change counter, not a content hash. Switching tabs is not an edit.
+
+## Answers must match
+
+- The scalar `FormulaEvaluator` is the answer check. A faster path that disagrees with it does not ship.
+- `YTD Summary!R5` fails to parse because the formula in the file is malformed (misplaced parentheses in the May term). A parse error is the correct result there. Do not special-case it.
+
+## How to land a change
+
+- One change per commit. Put the before and after Release timings for the affected paths from the list above in the commit message.
+- If a change measures slower than the baseline, or fails the answer check, revert it. Do not stack another attempt on top of a path that already measured slower.
+- No commits whose only purpose is adding logging to hot paths.
+
+## Baseline (2026-10-11, KPI workbook, this Mac)
+
+Measured by compiling `Spark Grid Shared` unmodified into a benchmark. Use these as the numbers to beat.
+
+| Path | Release | Debug |
+|---|---|---|
+| `XLSXCodec.importWorkbook` | 6.1 s | 11.6 s |
+| `WorkbookFingerprint` (each call; runs on open ×2, every edit, tab switch, save) | 3.7 s | 4.3 s |
+| `XLSXCodec.exportWorkbook` (save / autosave) | 2.3 s | 2.8 s |
+| One edit, `cellsDidChange` | 43 ms | 273 ms |
+| `YTD Summary` first screen (60×25 cells) | 612 ms | 2,016 ms |
+| June scroll, worst single screen | 63 ms | 300 ms |
+| `recalculateEntireWorkbook` (not an app path) | 0.7 s | 3.3 s |
+| Memory after import | ~1.15 GB | ~1.15 GB |
+
+Where import time goes (Release, sampled): CoreXLSX worksheet decode ~42%, `expandSharedFormulas` pass ~32% (the file has no shared formulas), `importAutoFilter` regex ~5%, re-reading zip entries <0.1%.
+
+## Known facts that change the plan
+
+- Spark Grid's exporter writes formulas without their cached results (`<f>` with no `<v>`). Files saved by Spark Grid, including the KPI file, have no cached values, so "paint cached values first" does nothing for them until the exporter writes `<v>`.
+- `WorkbookFingerprint` runs `JSONEncoder` once per cell format, for every cell, on every change. That is the edit lag.
+- The grid's scroll planes are keyed on `selectionRevision`, so every click or arrow key discards them.
+- `selectSheet` rebuilds the formula engine twice and discards computed values. The fingerprint includes the active tab, so a tab switch also marks the document edited.

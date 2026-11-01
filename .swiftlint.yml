@@ -1,0 +1,53 @@
+# W4 crash rules, enforced as errors. Do not disable a rule to make the gate pass.
+# Test targets are excluded. Existing violations stay until W4 deletes them.
+strict: true
+
+only_rules:
+  - force_unwrapping
+  - force_try
+  - force_cast
+  - implicitly_unwrapped_optional
+  - banned_fatal_error
+  - banned_precondition_failure
+  - banned_precondition
+  - banned_assert
+  - banned_unowned
+  - banned_subscript_force_unwrap
+
+excluded:
+  - .build
+  - .tools
+  - Packages/SparkGridCore/.build
+  - Packages/SparkGridCore/Tests
+
+custom_rules:
+  banned_fatal_error:
+    name: "No fatalError"
+    regex: 'fatalError\s*\('
+    message: "fatalError is banned outside tests."
+    severity: error
+  banned_precondition_failure:
+    name: "No preconditionFailure"
+    regex: 'preconditionFailure\s*\('
+    message: "preconditionFailure is banned outside tests."
+    severity: error
+  banned_precondition:
+    name: "No precondition"
+    regex: '\bprecondition\s*\('
+    message: "precondition is banned outside tests."
+    severity: error
+  banned_assert:
+    name: "No assert"
+    regex: '\bassert\s*\('
+    message: "assert is banned outside tests."
+    severity: error
+  banned_unowned:
+    name: "No unowned"
+    regex: '\bunowned\b'
+    message: "unowned is banned outside tests."
+    severity: error
+  banned_subscript_force_unwrap:
+    name: "No subscript force unwrap"
+    regex: '\]!'
+    message: "Do not force-unwrap a dictionary or array lookup."
+    severity: error

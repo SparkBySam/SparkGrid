@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spark Grid changelog — 1.1.1 is out</title>
+  <meta name="description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <link rel="canonical" href="https://sparkgridapp.com/changelog" />
+  <meta property="og:title" content="Spark Grid changelog — 1.1.1 is out" />
+  <meta property="og:description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Spark Grid" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:url" content="https://sparkgridapp.com/changelog" />
+  <meta property="og:image" content="https://sparkgridapp.com/images/og.jpg" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Spark Grid changelog — 1.1.1 is out" />
+  <meta name="twitter:description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
+  <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"><div class="grid-plane"></div></div>
+  <header class="top">
+    <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/launch">What’s in 1.1</a>
+      <a href="/support">Support</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/legal">Legal</a>
+    </nav>
+  </header>
+  <article class="page">
+    <h1>Changelog</h1>
+    <p class="pitch">Spreadsheets. No account.</p>
+    <p>Spark Grid 1.1.1 is out on the Mac App Store. October 29, 2026.</p>
+    <p>Filters you can work in, tabs you can drag, and fixes that keep your files exactly as you left them.</p>
+
+    <h2>What’s new in 1.1.1</h2>
+    <ul>
+      <li>A filter panel on every column: search its values, see how many rows hold each one, and sort A to Z or Z to A. Click the same sort again to put the rows back.</li>
+      <li>The tab bar shows how many rows a filter is showing, with one click to clear it. Filter changes can be undone.</li>
+      <li>Drag a sheet tab to move it. The new order saves with the file.</li>
+      <li>⌘-arrow jumps to the edge of your data. Scroll bars appear while you scroll.</li>
+      <li>⌘-click or ⌘-drag removes cells, rows, or columns from a selection.</li>
+    </ul>
+
+    <h2>Fixed in 1.1.1</h2>
+    <ul>
+      <li>Formatting comes back when you reopen a file that has conditional formatting. It was saved in the file all along; opening it dropped it.</li>
+      <li>Sorting, filling, and pasting formulas keep their brackets, so <code>(1-F3)</code> stays grouped and the result stays right.</li>
+      <li>Undo works after you open a file.</li>
+      <li>Copy, cut, and delete skip rows a filter hides, as in Excel.</li>
+      <li>Saving after a sort is quick, and quitting no longer waits on a save.</li>
+      <li>Memory stays steady when you sort or undo on large sheets.</li>
+      <li>ROUND matches Excel on exact half cents. XLOOKUP, XMATCH, IFS, TEXTJOIN, and CONCAT saved by Excel calculate. INDEX across one row works.</li>
+      <li>A long chain of formulas on another sheet calculates instead of showing #VALUE!.</li>
+      <li>Sheets with color scales stay smooth after you resize rows or columns.</li>
+      <li>The grid no longer stretches after you resize the window.</li>
+      <li>Drag-select speeds up near the edge and stops where you stop. Filter headers fit their text. Closing a large workbook no longer hangs.</li>
+    </ul>
+    <p><strong>Please check:</strong> in 1.1, sorting, filling, or pasting a formula with brackets, such as <code>=A2*(1-B2)</code>, could save it without them and change its result. If you did that in a file and saved it, check those formulas and totals.</p>
+
+    <h2>1.1</h2>
+    <p>October 15, 2026. Big workbooks open faster. The sheet you’re editing stays quick.</p>
+
+    <h3>What’s new in 1.1</h3>
+    <ul>
+      <li>Large workbooks open much faster and use less memory.</li>
+      <li>Saving no longer freezes the window.</li>
+      <li>Switching sheets is immediate, and calculated values stay put.</li>
+      <li>The sheet you’re editing stays quick. Other sheets update in the background.</li>
+      <li>Scrolling back to a page you’ve already seen is instant.</li>
+      <li>Heavy formulas, including COUNTIFS, SUMIFS, SUMPRODUCT, and VLOOKUP, calculate faster on large sheets.</li>
+      <li>Formula cells show their results. The formula stays in the formula bar.</li>
+      <li>Sheet tabs stay in the file’s order.</li>
+      <li>Blank formulas stay blank when the file is opened in Excel, instead of showing 0.</li>
+      <li>Column widths and row heights stay as you set them after you save and reopen, including a blank row.</li>
+      <li>Merged titles draw across the merge at full size, and continue through empty cells when the sentence is wider. Saving still stores the original merge and the original sentence.</li>
+      <li>A title in the frozen columns stays put when you scroll. The rest is clipped at the freeze line.</li>
+      <li>A section title lower in the sheet stays on its own row and no longer covers the frozen headers.</li>
+      <li>Borders no longer cut through a merged title.</li>
+      <li>Selecting a merged cell keeps the view on the cell you clicked.</li>
+      <li>Command-A in the formula field selects that formula.</li>
+    </ul>
+
+    <h3>Longer notes</h3>
+    <ul>
+      <li>Opening a large workbook is much faster. On the KPI file, the wait dropped from about 15 seconds to about half a second, and the app uses far less memory.</li>
+      <li>Saving and autosave no longer freeze the window while the file is written.</li>
+      <li>Switching sheets is immediate, and the values already calculated stay put.</li>
+      <li>An edit on the sheet you’re looking at stays near-instant. A June edit measured 0.027 seconds. Other sheets update in the background after that.</li>
+      <li>Scrolling a page you have already seen is instant. The first visit to a new part of a large sheet can still hitch.</li>
+      <li>Heavy formulas on large sheets, including COUNTIFS, SUMIFS, SUMPRODUCT, and VLOOKUP, calculate faster.</li>
+      <li>A cell with a formula shows the result. The formula stays in the formula bar.</li>
+      <li>Sheet tabs open and save in the same order as Excel.</li>
+      <li>Formulas Excel saved as blank stay blank on export, instead of showing 0 before Excel recalculates.</li>
+      <li>A column or row you resize is still that size after you save and reopen, including a blank row. Widths and heights already in the file come back the same.</li>
+      <li>Merged titles paint across the merge at full size. When the sentence is wider than the merge, it draws through the empty cells to the right. Saving still stores the original merge and the original sentence. Borders and fills no longer cut through the title.</li>
+      <li>A title that starts in a frozen column or row stays with that pane. The scrolling part is clipped at the freeze line, so it does not slide under the frozen columns.</li>
+      <li>A section title lower in the sheet stays on its own row. It does not paint over the frozen column headers when you scroll.</li>
+      <li>Selecting a merged cell keeps the view on the cell you clicked.</li>
+      <li>Command-A while the formula field is active selects that field’s text.</li>
+    </ul>
+    <p><a href="/launch">What 1.1 includes</a>.</p>
+
+    <h2>1.0</h2>
+    <p>First Mac App Store release.</p>
+  </article>
+  <footer>
+    <div>
+      <span>© 2026 Sam Parker</span>
+      <a href="/launch">What’s in 1.1</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/legal">Terms &amp; licenses</a>
+      <a href="/support">Support</a>
+      <a href="https://apps.apple.com/us/app/spark-grid/id6811196983?mt=12">Mac App Store</a>
+    </div>
+    <a class="coffee" href="https://buymeacoffee.com/sparkdev">Buy me a coffee</a>
+  </footer>
+</body>
+</html>

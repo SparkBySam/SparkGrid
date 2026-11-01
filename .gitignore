@@ -1,0 +1,47 @@
+# Xcode / macOS
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Secrets & local env
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+Secrets.xcconfig
+*-Credentials.*
+
+# Local bug-bash fixtures (may contain client data)
+Fixtures/
+fixtures/
+*.local.xlsx
+
+# Archives / accidental dumps
+*.ipa
+*.dSYM.zip
+*.dSYM
+.vercel
+.derivedData/
+.venv-img/
+Spark Grid/Assets.xcassets/AppIcon.appiconset/_blue_backup/
+AppStoreScreenshots/_raw*
+
+# Pinned SwiftLint binary downloaded by scripts/lint.sh
+.tools/

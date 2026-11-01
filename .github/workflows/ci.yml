@@ -1,0 +1,18 @@
+# Hosted gate. GitHub sets CI, so scripts/check-kpi.sh skips the private corpus.
+# If this runner's Xcode is older than 27, scripts/check-xcodebuild.sh skips the
+# app builds. The project deployment target and Swift language mode stay as they are.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scripts/ci.sh
+        run: scripts/ci.sh

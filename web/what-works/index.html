@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>What works in Spark Grid — .xlsx, CSV, formulas, and charts</title>
+  <meta name="description" content="What Spark Grid 1.1 does with your .xlsx and CSV files: what opens and saves, which formulas calculate, what formatting comes through, and what is not there yet." />
+  <link rel="canonical" href="https://sparkgridapp.com/what-works" />
+  <meta property="og:title" content="What works in Spark Grid" />
+  <meta property="og:description" content="What opens, what calculates, what comes through, and what is not there yet. Spark Grid 1.1 for Mac." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Spark Grid" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:url" content="https://sparkgridapp.com/what-works" />
+  <meta property="og:image" content="https://sparkgridapp.com/images/og.jpg" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="What works in Spark Grid" />
+  <meta name="twitter:description" content="What opens, what calculates, what comes through, and what is not there yet. Spark Grid 1.1 for Mac." />
+  <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
+  <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"><div class="grid-plane"></div></div>
+  <header class="top">
+    <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/launch">What’s in 1.1</a>
+      <a href="/changelog">Changelog</a>
+      <a href="/support">Support</a>
+      <a href="/press">Press</a>
+    </nav>
+  </header>
+  <article class="page">
+    <h1>What works</h1>
+    <p>Last updated: October 29, 2026 · Spark Grid 1.1.1</p>
+    <p class="pitch">
+      You have a workbook already. Here is what Spark Grid does with it, and what it doesn’t do yet.
+    </p>
+    <div class="cta-row">
+      <a class="store-badge" href="https://apps.apple.com/us/app/spark-grid/id6811196983?mt=12">
+        <img src="/images/download-on-the-mac-app-store.svg" width="156" height="40" alt="Download on the Mac App Store" />
+      </a>
+    </div>
+
+    <h2>Files</h2>
+    <ul>
+      <li><strong>.xlsx</strong> opens and saves. So does <strong>CSV</strong>.</li>
+      <li>New, Open, Save, Save As, and recent files. Autosave writes a file you have already saved.</li>
+      <li>Open from the Open dialog, or drop a file on the app icon.</li>
+      <li>Several sheets: add, rename, delete, and switch. Drag a tab to move it. Tabs keep the file’s order, and a new order saves.</li>
+      <li>Defined names in an Excel file are read. Names you create are saved.</li>
+      <li>Column widths and row heights come back the same after you save and reopen.</li>
+      <li>Formulas Excel saved as blank stay blank, instead of showing 0.</li>
+    </ul>
+
+    <h2>Formulas</h2>
+    <p>A formula cell shows its result. The formula stays in the formula bar. These 52 functions calculate:</p>
+    <ul>
+      <li><strong>Math:</strong> SUM, AVERAGE, COUNT, COUNTA, COUNTBLANK, MIN, MAX, ABS, ROUND, ROUNDUP, ROUNDDOWN, SUMPRODUCT</li>
+      <li><strong>Conditional totals:</strong> SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS. Criteria can use wildcards.</li>
+      <li><strong>Logic:</strong> IF, IFS, IFERROR, IFNA, AND, OR, NOT, TRUE</li>
+      <li><strong>Lookup:</strong> XLOOKUP, VLOOKUP, HLOOKUP, INDEX, MATCH, XMATCH, COLUMN</li>
+      <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER, SUBSTITUTE, CHAR</li>
+      <li><strong>Dates:</strong> DATE, YEAR, MONTH, DAY, TODAY, NOW</li>
+    </ul>
+    <p>Any other function shows <code>#NAME?</code>. Missing a function you use? <a href="mailto:help@sparkgridapp.com?subject=Function%20request">Tell Sam which one</a>.</p>
+
+    <h2>Formatting</h2>
+    <ul>
+      <li>Fonts, colors, borders, and alignment.</li>
+      <li>Number formats keep the file’s format code: thousands separators, the currency symbol, and the date and time pattern.</li>
+      <li>Conditional formatting: highlights, color scales, data bars, and three icon sets.</li>
+      <li>Formatting comes back the same when you save and reopen, including in files with conditional formatting.</li>
+      <li>Merged cells. Titles draw across the merge at full size.</li>
+      <li>Freeze panes. Frozen rows and columns stay put when you scroll.</li>
+    </ul>
+
+    <h2>Working in the sheet</h2>
+    <ul>
+      <li>Selection, fill handle, zoom, and resizing rows and columns.</li>
+      <li>Filter any column from its header: search its values, see how many rows hold each one, and sort A to Z or Z to A. Click the same sort again to put the rows back. Undo works on filters.</li>
+      <li>Copy, cut, and delete skip rows a filter hides, as in Excel.</li>
+      <li>Find and replace on the current sheet.</li>
+      <li>⌘-arrow jumps to the edge of your data. Add Shift to select as you go.</li>
+      <li>⌘-click or ⌘-drag removes cells, rows, or columns from a selection.</li>
+      <li>Pictures you can move and resize.</li>
+      <li>Bar, line, and area charts on the sheet, with series color, point colors, title, legend, axis titles, and gridlines.</li>
+      <li>Print preview for the selection, the used range, the sheet, or the workbook.</li>
+    </ul>
+
+    <h2>Big workbooks</h2>
+    <ul>
+      <li>Large files open fast. A 48,000-formula workbook went from about 15 seconds to about half a second in 1.1.</li>
+      <li>An edit on the sheet you’re looking at shows up near-instantly. Other sheets catch up in the background.</li>
+      <li>Saving doesn’t freeze the window. Switching sheets is immediate.</li>
+      <li>Scrolling back to a page you’ve seen is instant. The first visit to a far part of a very large sheet can still hitch.</li>
+    </ul>
+
+    <h2>Not there yet</h2>
+    <ul>
+      <li>Spark Grid is not Excel or Numbers. No pivot tables, data-validation lists, comments, or live collaboration.</li>
+      <li>No pie or scatter charts, and no charts with more than one series.</li>
+      <li>The fill handle copies. It doesn’t continue 1, 2, 3 or a run of dates.</li>
+      <li>Filters pick from a list of values. They don’t filter by greater than, less than, or text contains yet.</li>
+      <li>The name box shows the address. It doesn’t take an address or a name. No F2 to edit.</li>
+      <li>Pressing Space in Finder doesn’t preview a workbook in Spark Grid.</li>
+    </ul>
+
+    <h2>Fixed in 1.1.1</h2>
+    <p>These matched Excel only partly in 1.1.</p>
+    <ul>
+      <li><strong>ROUND on an exact half cent</strong> now rounds the way Excel does, so 1463.095 gives 1463.10.</li>
+      <li><strong>Newer functions saved by Excel</strong> (XLOOKUP, XMATCH, IFS, TEXTJOIN, and CONCAT) calculate instead of showing blank.</li>
+      <li><strong>INDEX across one row</strong>, like <code>INDEX(B1:M1, 10)</code>, gives the tenth cell.</li>
+      <li><strong>Formulas with brackets</strong> keep their brackets when you sort, fill, or paste them, so <code>(1-F3)</code> stays grouped.</li>
+    </ul>
+
+    <h2>Privacy</h2>
+    <p>No account. No analytics. The app doesn’t use the network, and your files stay on your Mac. See the <a href="/privacy">privacy policy</a>.</p>
+
+    <h2>Something not on this page?</h2>
+    <p>
+      Email a sample workbook with anything private removed, and say what you expected.
+      <a href="mailto:help@sparkgridapp.com?subject=What%20works%20question">help@sparkgridapp.com</a>
+    </p>
+  </article>
+  <footer>
+    <div>
+      <span>© 2026 Sam Parker</span>
+      <a href="/launch">What’s in 1.1</a>
+      <a href="/what-works">What works</a>
+      <a href="/changelog">Changelog</a>
+      <a href="/press">Press kit</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/legal">Terms &amp; licenses</a>
+      <a href="/support">Support</a>
+      <a href="https://apps.apple.com/us/app/spark-grid/id6811196983?mt=12">Mac App Store</a>
+    </div>
+    <a class="coffee" href="https://buymeacoffee.com/sparkdev">Buy me a coffee</a>
+  </footer>
+</body>
+</html>

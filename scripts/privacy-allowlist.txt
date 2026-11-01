@@ -1,0 +1,4 @@
+# Tracked files larger than 1 MB that scripts/check-privacy.sh may allow.
+# One repo-relative path per line. Blank lines and # comments are ignored.
+# Customer workbooks and anything derived from them never belong here.
+# Adding a path loosens the privacy gate and needs Sam's approval.
