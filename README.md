@@ -1,71 +1,65 @@
 # Spark Grid
 
-Free native Mac spreadsheet for opening, editing, and saving `.xlsx` and CSV files. [Spark Grid 1.0 is on the Mac App Store](https://apps.apple.com/us/app/spark-grid/id6811196983?mt=12). No account, no analytics, and the app does not use the network.
+A free, native Mac spreadsheet for `.xlsx` and `.csv` files.
 
-Site: https://sparkgridapp.com
+[![Download on the Mac App Store](web/images/download-on-the-mac-app-store.svg)](https://apps.apple.com/us/app/spark-grid/id6811196983?mt=12)
 
-Built with SwiftUI chrome and a custom AppKit grid.
+![Spark Grid](web/images/hero.png)
 
-**Version 1.0** is the Mac App Store release. It evaluates an everyday formula list, and it has filters, formatting, and pictures. Charts are not in that build. Pivot tables and SUMIF are not in this version. Rough edges are real; please report files that break.
+Spark Grid opens the spreadsheets people already have and saves them back as real `.xlsx` and `.csv` files, with no conversion to a format of its own. It is written in Swift, with SwiftUI around a custom AppKit grid, and it runs entirely on your Mac: no account, no analytics, and no network use.
 
-## Requirements
+Site: [sparkgridapp.com](https://sparkgridapp.com)
 
-- macOS 14+ (tested on macOS 27 Golden Gate)
-- Xcode 27+ recommended to build against the macOS 27 SDK (older Xcode 16+ may still work for source builds)
-- Apple Development / Distribution signing team
+## What it does
 
-## Build & run
+- **Opens and saves `.xlsx` and `.csv`.** Formulas, number formats, fonts, fills, borders, merges, frozen panes, filters, conditional formatting and pictures come through a save.
+- **Calculates as you type.** A formula engine with a lexer, parser and evaluator covers everyday functions, including lookups, conditional sums and counts, and text, date and rounding functions.
+- **Feels like a Mac app.** A fast custom grid with fill handle, multi-range selection, zoom, find and replace, sort, AutoFilter, charts, printing, autosave and undo.
+- **Handles big files.** A 50,000-row ledger opens, scrolls and saves without stalling.
+
+The version on the Mac App Store is 1.1.1. This repository also holds work for 1.2: dropdown lists, comments, hidden rows and sheets, rule filters, fill series, and keeping parts of a file it does not edit yet (such as other apps' charts and pivot tables) so a save does not drop them.
+
+## Build
+
+Requirements: macOS 14 or later and a current Xcode.
 
 ```bash
 open "Spark Grid.xcodeproj"
 ```
 
-Or:
+Or from the command line:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -scheme "Spark Grid" -configuration Release -destination 'platform=macOS' build
+xcodebuild -project "Spark Grid.xcodeproj" -scheme "Spark Grid" -configuration Release build
 ```
 
-## Features
+Signing uses your own Apple Development team. The Swift packages (CoreXLSX, ZIPFoundation and XMLCoder) are fetched by Swift Package Manager.
 
-- Spreadsheet grid: selection, fill handle, freeze panes, merges, zoom
-- Formula bar with lexer/parser/evaluator and autocomplete
-- Formatting toolbar, conditional formatting, AutoFilter, sort, find/replace
-- Chart insertion exists in this source tree. It is not in the Mac App Store build. Drag to move, resize, custom series and point colors, and title, legend, axis, and gridline controls are not shipped.
-- Embedded pictures (insert, move, resize, z-order)
-- `.xlsx` / `.csv` open and save, with autosave for a file you have already saved
+## Tests
 
-Finder’s Space preview does not open Spark Grid for `.csv` or `.xlsx`. macOS uses another app’s Quick Look generator for those types.
-
-## App Store / signing notes
-
-- Bundle ID: `com.sparkbysam.SparkGrid`
-- Sandboxed; user-selected file access + printing
-- No network features; encryption questionnaire: standard exemption (`ITSAppUsesNonExemptEncryption = false`)
-- Privacy Nutrition Labels: data not collected (confirm in App Store Connect)
-
-## Debug bug-bash
+The spreadsheet engine is a Swift package with its own tests:
 
 ```bash
-export SPARK_GRID_BUG_BASH=1
-export SPARK_GRID_FIXTURES="/path/to/fixtures"   # optional; copy samples here for the sandboxed app
-# formulas.xlsx, conditional_format.xlsx, enterprise_themed.xlsx, enterprise_images.xlsx
-# The KPI workbook is SPARK_GRID_CORPUS. It is not in git.
+cd Packages/SparkGridCore && swift test
 ```
 
-Missing fixtures are skipped.
+`scripts/ci.sh` is the full check run before every commit: lint, formatting, package tests, an app build, layering and privacy checks, a generated 50,000-row ledger workbook whose answers are checked cell by cell, and a command fuzzer.
 
-## Project layout
+## Layout
 
 | Area | Location |
-|------|----------|
-| App / window | `Spark Grid/App`, `Spark Grid/Views` |
-| Grid | `Spark Grid/Grid` |
-| State | `Spark Grid/State` |
-| Shared models / formulas / XLSX+CSV | `Spark Grid Shared/` |
-| Finder Quick Look | `Spark Grid Quick Look/` |
+| --- | --- |
+| App, windows, menus, dialogs | `Spark Grid/App`, `Spark Grid/Views` |
+| The grid view | `Spark Grid/Grid` |
+| Window state and editing | `Spark Grid/State` |
+| Engine: cells, formulas, functions, `.xlsx` and `.csv`, number formats | `Packages/SparkGridCore/Sources` |
+| Finder Quick Look preview | `Spark Grid Quick Look` |
+| Website | `web` |
 
 ## License
 
-Copyright © 2026 Sam Parker. All rights reserved.
+Spark Grid's source is published under the [PolyForm Strict License 1.0.0](LICENSE.md). You may read it, build it and use it for personal, noncommercial purposes. You may not redistribute it, publish changed versions, or use it commercially. To get the app, download it free from the Mac App Store.
+
+Fonts and Swift packages keep their own licenses. See [ATTRIBUTION.md](ATTRIBUTION.md).
+
+Copyright 2026 Sam Parker.
