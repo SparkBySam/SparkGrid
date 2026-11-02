@@ -1009,7 +1009,7 @@ public nonisolated struct FormulaEvaluator {
     let resultOffset = (horizontal ? n.minRow : n.minCol) + index - 1
     if exact, let cache = lookupTableCache {
       let tableKey = LookupTableKey(
-        sheet: (start.sheet ?? "").lowercased(),
+        sheet: (start.sheet ?? end.sheet ?? formulaSheetName ?? "").lowercased(),
         minRow: n.minRow,
         minCol: n.minCol,
         maxRow: n.maxRow,
@@ -1124,6 +1124,12 @@ public nonisolated struct FormulaEvaluator {
     switch resolved {
     case .range(let start, let end):
       let n = normalizedBounds(start: start, end: end)
+      if aggregateRangeCache != nil,
+        InputBounds.materializedCount(
+          rows: n.maxRow - n.minRow + 1, cols: n.maxCol - n.minCol + 1) != nil
+      {
+        return rangeCellValues(start: start, end: end)
+      }
       var values: [CellValue] = []
       for row in n.minRow...n.maxRow {
         for col in n.minCol...n.maxCol {

@@ -89,6 +89,20 @@ extension SpreadsheetViewModel {
     }
   }
 
+  /// Shows the run of hidden rows or columns that includes `hiddenIndex`, as the chevrons beside
+  /// a hidden run in the headers do.
+  func unhideRun(_ axis: HideAxis, containing hiddenIndex: Int) {
+    commitEditIfNeeded()
+    updateHidden(axis, actionName: axis == .rows ? "Unhide Rows" : "Unhide Columns") { hidden in
+      guard hidden.contains(hiddenIndex) else { return }
+      var lower = hiddenIndex
+      while hidden.contains(lower - 1) { lower -= 1 }
+      var upper = hiddenIndex
+      while hidden.contains(upper + 1) { upper += 1 }
+      hidden = hidden.filter { $0 < lower || $0 > upper }
+    }
+  }
+
   private func updateHidden(
     _ axis: HideAxis, actionName: String, _ change: (inout Set<Int>) -> Void
   ) {

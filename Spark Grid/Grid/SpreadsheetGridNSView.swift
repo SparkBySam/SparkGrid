@@ -46,6 +46,7 @@ final class SpreadsheetGridNSView: NSView {
 
   private var zoomScale: CGFloat {
     if let zoom = tileCapture?.session.zoom { return zoom }
+    if let drawZoomScale { return drawZoomScale }
     return max(0.5, min(2.0, viewModel?.zoomScale ?? 1))
   }
 
@@ -59,6 +60,14 @@ final class SpreadsheetGridNSView: NSView {
   }
   /// Fading scroll bars drawn over the cells.
   private let scrollIndicators = GridScrollIndicatorView(frame: .zero)
+  private let commentCard = CommentHoverCard(frame: .zero)
+  /// Until when a scroll frame may draw newly visible tiles itself. Past it they wait for a worker.
+  private var visibleTileDrawDeadline: CFAbsoluteTime = 0
+  /// Main-thread time a scroll frame may spend drawing tiles that just came on screen.
+  private static let visibleTileDrawBudget: CFAbsoluteTime = 0.006
+  /// The commented cell the pointer is resting on, and the wait before its card shows.
+  private var hoveredCommentAddress: CellAddress?
+  private var commentHoverTimer: Timer?
   /// Scroll used while a background tile records drawing commands.
   private var activeScrollOrigin: CGPoint { tileCapture?.scroll ?? scrollOrigin }
 
@@ -107,6 +116,9 @@ final class SpreadsheetGridNSView: NSView {
   private var drawFrozenRows: Int?
   private var drawFrozenCols: Int?
   private var drawMergeLookup: MergeLookup?
+  /// Zoom for the draw in progress. Reading the observed view model once per cell was
+  /// about 8% of a scroll frame on a 15,000-row sheet in a Debug build.
+  private var drawZoomScale: CGFloat?
   private var drawLayoutDepth = 0
   private var cachedMergeLookup: MergeLookup?
   private var cachedMergeRevision = Int.min
@@ -678,6 +690,10 @@ final class SpreadsheetGridNSView: NSView {
     var rangeValueCache: [RangeValueKey: [Double]] = [:]
     /// Bumped when the workbook changes so this worker drops its cache.
     var preparedGeneration = -1
+    /// The view model's content revision this engine was built from. Its value cache is keyed
+    /// by address, so after a sort it held the old rows' answers and tiles drawn while
+    /// scrolling showed the sheet unsorted.
+    var preparedContentRevision = -1
   }
 
   /// Normalized bounds of a conditional range. Direction does not change the numbers.
@@ -925,6 +941,7 @@ final class SpreadsheetGridNSView: NSView {
     selectionChromeOverlay.grid = self
     addSubview(selectionChromeOverlay, positioned: .below, relativeTo: editorClip)
     addSubview(scrollIndicators)
+    addSubview(commentCard)
     pinnedHeaderMergeOverlay.grid = self
     pinnedBodyMergeOverlay.grid = self
     pinnedHeaderMergeOverlay.isHidden = true
@@ -1012,7 +1029,8 @@ final class SpreadsheetGridNSView: NSView {
       removeTrackingArea(area)
     }
     let options: NSTrackingArea.Options = [
-      .activeInKeyWindow, .mouseMoved, .inVisibleRect, .enabledDuringMouseDrag,
+      .activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect,
+      .enabledDuringMouseDrag,
     ]
     addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil))
   }
@@ -1179,6 +1197,7 @@ final class SpreadsheetGridNSView: NSView {
   private func beginDrawLayout() {
     if tileCapture != nil { return }
     if drawLayoutDepth == 0 {
+      drawZoomScale = max(0.5, min(2.0, viewModel?.zoomScale ?? 1))
       layoutSheet = viewModel?.activeSheet
       drawFrozenRows = layoutSheet?.frozenRows ?? 0
       drawFrozenCols = layoutSheet?.frozenColumns ?? 0
@@ -1203,6 +1222,7 @@ final class SpreadsheetGridNSView: NSView {
     drawFrozenRows = nil
     drawFrozenCols = nil
     drawMergeLookup = nil
+    drawZoomScale = nil
   }
 
   private func mergeLookup(for sheet: Sheet) -> MergeLookup {
@@ -3635,6 +3655,7 @@ final class SpreadsheetGridNSView: NSView {
 
   private func syncScrollTiles() {
     guard viewModel != nil else { return }
+    visibleTileDrawDeadline = CFAbsoluteTimeGetCurrent() + Self.visibleTileDrawBudget
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
@@ -4056,9 +4077,17 @@ final class SpreadsheetGridNSView: NSView {
     let headerText = resolvedDrawColor(palette.secondaryLabel)
     let merges = MergeLookup(ranges: sheet.mergedRanges)
     let sheetID = sheet.id
+    let contentRevision = viewModel.contentRevision
     advanceTileCalcGeneration()
     tileValues.queue.sync {
-      if self.tileValues.sheetID != sheetID {
+      if self.tileValues.preparedContentRevision != contentRevision {
+        self.tileValues.engine = FormulaEngine()
+        self.tileValues.engine.activateSheet(workbook)
+        self.tileValues.paintCache.removeAll(keepingCapacity: true)
+        self.tileValues.rangeValueCache.removeAll(keepingCapacity: true)
+        self.tileValues.sheetID = sheetID
+        self.tileValues.preparedContentRevision = contentRevision
+      } else if self.tileValues.sheetID != sheetID {
         self.tileValues.engine.activateSheet(workbook)
         self.tileValues.paintCache.removeAll(keepingCapacity: true)
         self.tileValues.rangeValueCache.removeAll(keepingCapacity: true)
@@ -4099,6 +4128,7 @@ final class SpreadsheetGridNSView: NSView {
     let scale = rasterScale
     let target = spec.target
     let workbook = viewModel?.workbook
+    let contentRevision = viewModel?.contentRevision ?? -1
     let group = tileValueRenderGroup
     group.enter()
     // Snapshot after any workbook update already queued on this same queue.
@@ -4140,6 +4170,7 @@ final class SpreadsheetGridNSView: NSView {
           merges: merges,
           calculatedResults: calculatedResults,
           generation: calcGeneration,
+          contentRevision: contentRevision,
           workbook: workbook
         )
         self.renderTileFromValues(
@@ -4192,12 +4223,17 @@ final class SpreadsheetGridNSView: NSView {
     merges: MergeLookup?,
     calculatedResults: [String: [CellAddress: CellValue]],
     generation: Int,
+    contentRevision: Int,
     workbook: Workbook?
   ) {
     if worker.preparedGeneration != generation {
       worker.paintCache.removeAll(keepingCapacity: true)
       worker.rangeValueCache.removeAll(keepingCapacity: true)
       if let workbook {
+        if worker.preparedContentRevision != contentRevision {
+          worker.engine = FormulaEngine()
+          worker.preparedContentRevision = contentRevision
+        }
         worker.engine.activateSheet(workbook)
       }
       worker.preparedGeneration = generation
@@ -4374,6 +4410,24 @@ final class SpreadsheetGridNSView: NSView {
       )
       return
     }
+    // A tile already on screen is drawn now from the values this view has. A gridline
+    // placeholder there filled in a beat later, block by block, while the sheet scrolled.
+    if let image = drawVisibleTileNow(
+      pane: pane, spec: spec, viewRect: viewRect, contentOrigin: contentOrigin)
+    {
+      appendScrollTile(
+        pane: pane,
+        indexX: indexX,
+        indexY: indexY,
+        spec: spec,
+        image: image,
+        viewRect: viewRect,
+        contentOrigin: contentOrigin,
+        placeholder: false
+      )
+      rememberTileImage(pane: pane, x: indexX, y: indexY, image: image)
+      return
+    }
     guard let image = gridlinePlaceholder(size: viewRect.size) else { return }
     let requestedAt = CFAbsoluteTimeGetCurrent()
     appendScrollTile(
@@ -4397,6 +4451,40 @@ final class SpreadsheetGridNSView: NSView {
       requestedAt: requestedAt,
       notifyMain: true
     )
+  }
+
+  /// The tile's image when it is on screen and this frame still has drawing time; otherwise nil.
+  private func drawVisibleTileNow(
+    pane: ScrollTilePane,
+    spec: ScrollTileSpec,
+    viewRect: NSRect,
+    contentOrigin: CGPoint
+  ) -> NSImage? {
+    guard tileCapture == nil, rasterTarget == nil,
+      viewModel?.formulaEngine.paintsStoredResultsOnly != true,
+      CFAbsoluteTimeGetCurrent() < visibleTileDrawDeadline
+    else { return nil }
+    let frame = NSRect(
+      x: spec.scrollsX ? contentOrigin.x - scrollOrigin.x : 0,
+      y: spec.scrollsY ? contentOrigin.y - scrollOrigin.y : 0,
+      width: viewRect.width,
+      height: viewRect.height
+    )
+    let visible = scrollTileClip(pane).bounds.intersection(frame)
+    guard visible.width >= 0.5, visible.height >= 0.5 else { return nil }
+    let scroll = CGPoint(
+      x: spec.scrollsX ? contentOrigin.x : scrollOrigin.x,
+      y: spec.scrollsY ? contentOrigin.y : scrollOrigin.y
+    )
+    let override = contentRect(coveringScrollable: viewRect)
+    prepareValuesCovering(viewRect: viewRect, scroll: scroll, contentOverride: override)
+    let list = collectTileDrawList(
+      viewRect: viewRect,
+      scroll: scroll,
+      contentOverride: override,
+      target: spec.target
+    )
+    return list.renderImage(scale: rasterScale)
   }
 
   private func appendScrollTile(
@@ -5320,6 +5408,7 @@ final class SpreadsheetGridNSView: NSView {
           clip: visible,
           color: headerText
         )
+        drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
         gridLine.setStroke()
         if abs(rect.maxX - columnBoundaryX) > 0.5 {
           NSBezierPath.strokeLine(
@@ -5402,6 +5491,7 @@ final class SpreadsheetGridNSView: NSView {
           clip: visible,
           color: viewModel?.isShownByActiveFilter(row) == true ? theme.accent : headerText
         )
+        drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
         gridLine.setStroke()
         if abs(rect.maxY - rowBoundaryY) > 0.5 {
           NSBezierPath.strokeLine(
@@ -5423,6 +5513,107 @@ final class SpreadsheetGridNSView: NSView {
       )
     }
     NSGraphicsContext.restoreGraphicsState()
+  }
+
+  /// A small chevron in a header beside rows or columns the sheet hides, pointing at them.
+  /// Clicking it shows them again.
+  private struct HiddenRunChevron {
+    enum Direction { case up, down, left, right }
+    var rect: NSRect
+    var direction: Direction
+    var axis: SpreadsheetViewModel.HideAxis
+    var hiddenIndex: Int
+  }
+
+  private func hiddenRunChevrons(row: Int, rect: NSRect) -> [HiddenRunChevron] {
+    guard let sheet = viewModel?.activeSheet, !sheet.fileExtras.hiddenRows.isEmpty,
+      rect.height >= 12
+    else { return [] }
+    var marks: [HiddenRunChevron] = []
+    let x = rect.maxX - 13
+    if sheet.isRowHidden(row + 1) {
+      marks.append(
+        HiddenRunChevron(
+          rect: NSRect(x: x, y: rect.maxY - 8, width: 9, height: 5), direction: .down,
+          axis: .rows, hiddenIndex: row + 1))
+    }
+    if row > 0, sheet.isRowHidden(row - 1) {
+      marks.append(
+        HiddenRunChevron(
+          rect: NSRect(x: x, y: rect.minY + 3, width: 9, height: 5), direction: .up,
+          axis: .rows, hiddenIndex: row - 1))
+    }
+    return marks
+  }
+
+  private func hiddenRunChevrons(column col: Int, rect: NSRect) -> [HiddenRunChevron] {
+    guard let sheet = viewModel?.activeSheet, !sheet.fileExtras.hiddenColumns.isEmpty,
+      rect.width >= 16
+    else { return [] }
+    var marks: [HiddenRunChevron] = []
+    let y = rect.midY - 4.5
+    if sheet.isColumnHidden(col + 1) {
+      marks.append(
+        HiddenRunChevron(
+          rect: NSRect(x: rect.maxX - 8, y: y, width: 5, height: 9), direction: .right,
+          axis: .columns, hiddenIndex: col + 1))
+    }
+    if col > 0, sheet.isColumnHidden(col - 1) {
+      marks.append(
+        HiddenRunChevron(
+          rect: NSRect(x: rect.minX + 3, y: y, width: 5, height: 9), direction: .left,
+          axis: .columns, hiddenIndex: col - 1))
+    }
+    return marks
+  }
+
+  private func drawHiddenRunChevrons(_ marks: [HiddenRunChevron]) {
+    guard !marks.isEmpty else { return }
+    theme.gridLine.setStroke()
+    for mark in marks {
+      let r = mark.rect
+      let path = NSBezierPath()
+      path.lineWidth = 1.5
+      path.lineCapStyle = .round
+      path.lineJoinStyle = .round
+      switch mark.direction {
+      case .down:
+        path.move(to: NSPoint(x: r.minX, y: r.minY))
+        path.line(to: NSPoint(x: r.midX, y: r.maxY))
+        path.line(to: NSPoint(x: r.maxX, y: r.minY))
+      case .up:
+        path.move(to: NSPoint(x: r.minX, y: r.maxY))
+        path.line(to: NSPoint(x: r.midX, y: r.minY))
+        path.line(to: NSPoint(x: r.maxX, y: r.maxY))
+      case .right:
+        path.move(to: NSPoint(x: r.minX, y: r.minY))
+        path.line(to: NSPoint(x: r.maxX, y: r.midY))
+        path.line(to: NSPoint(x: r.minX, y: r.maxY))
+      case .left:
+        path.move(to: NSPoint(x: r.maxX, y: r.minY))
+        path.line(to: NSPoint(x: r.minX, y: r.midY))
+        path.line(to: NSPoint(x: r.maxX, y: r.maxY))
+      }
+      path.stroke()
+    }
+  }
+
+  /// The chevron under `point` in a header, with a little slack around it.
+  private func hiddenRunChevron(at point: NSPoint) -> HiddenRunChevron? {
+    let candidates: [HiddenRunChevron]
+    switch headerHit(at: point) {
+    case .row(let row):
+      candidates = (max(0, row - 1)...(row + 1)).flatMap {
+        hiddenRunChevrons(row: $0, rect: rowHeaderRect(for: $0))
+      }
+    case .column(let col):
+      candidates = (max(0, col - 1)...(col + 1)).flatMap {
+        hiddenRunChevrons(column: $0, rect: columnHeaderRect(for: $0))
+      }
+    default:
+      return nil
+    }
+    return candidates.first { $0.rect.insetBy(dx: -4, dy: -4).contains(point) }
   }
 
   private func drawHeaderCorner(in dirtyRect: NSRect) {
@@ -8221,7 +8412,8 @@ final class SpreadsheetGridNSView: NSView {
       segments = next
     }
     let line = NSBezierPath()
-    line.lineWidth = 1.5
+    // Three points, so frozen rows and columns read as a pane and not as one more grid line.
+    line.lineWidth = 3
     for segment in segments where segment.1 - segment.0 > 0.5 {
       if horizontal {
         line.move(to: NSPoint(x: segment.0, y: axis))
@@ -8237,6 +8429,7 @@ final class SpreadsheetGridNSView: NSView {
   // MARK: - Editor
 
   func showEditor(selectAll: Bool = false) {
+    hideCommentCard()
     guard let viewModel else { return }
     let rect = rectForCell(row: viewModel.selectionAnchor.row, col: viewModel.selectionAnchor.col)
     guard isCellRectInContentArea(rect) else { return }
@@ -8875,6 +9068,12 @@ final class SpreadsheetGridNSView: NSView {
 
   /// Shows another sheet, or the same sheet after its size or freeze changed.
   func reloadForSheetChange(to sheetID: UUID) {
+    hideCommentCard()
+    // Switching sheets already saved the typing to the sheet it was typed on. An editor left
+    // open saved it again, into the cell selected on the new sheet, when it closed.
+    if isEditorActive {
+      hideEditor(commit: false, claimGridFocus: false)
+    }
     if let previous = scrolledSheetID {
       scrollOriginBySheet[previous] = scrollOrigin
     }
@@ -8926,6 +9125,12 @@ final class SpreadsheetGridNSView: NSView {
     let point = convert(event.locationInWindow, from: nil)
     updateCursor(for: point)
     updateErrorToolTip(at: point)
+    updateCommentCard(at: point)
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    super.mouseExited(with: event)
+    hideCommentCard()
   }
 
   private func updateErrorToolTip(at point: NSPoint) {
@@ -8936,9 +9141,47 @@ final class SpreadsheetGridNSView: NSView {
     let address = addressAtContent(point: point)
     if let error = viewModel.displayValue(at: address).formulaError {
       toolTip = "\(error.displayCode) — \(error.explanation)"
+    } else if viewModel.comment(at: address) != nil {
+      // The comment card shows it.
+      toolTip = nil
     } else {
       toolTip = viewModel.noteToolTip(at: address)
     }
+  }
+
+  /// Shows a cell's comment after the pointer rests on it briefly. Moving off hides it.
+  private func updateCommentCard(at point: NSPoint) {
+    guard let viewModel, !isEditorActive, contentRect.contains(point) else {
+      hideCommentCard()
+      return
+    }
+    let address = viewModel.activeSheet.mergeAnchor(for: addressAtContent(point: point))
+    guard viewModel.comment(at: address) != nil else {
+      hideCommentCard()
+      return
+    }
+    guard address != hoveredCommentAddress else { return }
+    hideCommentCard()
+    hoveredCommentAddress = address
+    commentHoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) {
+      [weak self] _ in
+      self?.showCommentCard(at: address)
+    }
+  }
+
+  private func showCommentCard(at address: CellAddress) {
+    guard let viewModel, !isEditorActive, let comment = viewModel.comment(at: address),
+      let cell = paintRect(for: address, sheet: viewModel.activeSheet)
+    else { return }
+    commentCard.show(
+      author: comment.author, text: comment.text, beside: cell, within: contentRect)
+  }
+
+  private func hideCommentCard() {
+    commentHoverTimer?.invalidate()
+    commentHoverTimer = nil
+    hoveredCommentAddress = nil
+    commentCard.hide()
   }
 
   override func cursorUpdate(with event: NSEvent) {
@@ -8955,6 +9198,13 @@ final class SpreadsheetGridNSView: NSView {
     if isPointInFillHandle(point) {
       fillSourceRange = viewModel?.selectionRange
       isDraggingFill = true
+      return
+    }
+
+    // Before resizing: the chevrons sit right at the edge a resize grabs.
+    if let chevron = hiddenRunChevron(at: point) {
+      viewModel?.unhideRun(chevron.axis, containing: chevron.hiddenIndex)
+      needsDisplay = true
       return
     }
 
@@ -9279,6 +9529,7 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   override func scrollWheel(with event: NSEvent) {
+    hideCommentCard()
     let invert = AppSettings.shared.invertScrollDirection
     let previousOrigin = scrollOrigin
     scrollOrigin.x += event.scrollingDeltaX

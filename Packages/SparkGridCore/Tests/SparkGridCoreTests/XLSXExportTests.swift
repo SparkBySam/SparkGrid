@@ -86,6 +86,55 @@ final class XLSXExportTests: XCTestCase {
     XCTAssertEqual(reopened.conditionalFormats.count, 1)
   }
 
+  /// A data bar from 0 to 1.5 kept that scale through a save. It used to come back min to max,
+  /// so a 0.75 bar in a column of 0.5 to 1.0 drew half full instead of a half of 1.5.
+  func testDataBarScaleRoundTripsAndSetsBarLength() throws {
+    let a1 = CellAddress(row: 0, col: 0)
+    var sheet = Sheet(name: "Data")
+    for (row, value) in ["0.5", "0.75", "1"].enumerated() {
+      sheet.setCell(Cell(raw: value), at: CellAddress(row: row, col: 0))
+    }
+    let style = DataBarStyle(
+      color: DataBarStyle.blue.color, showValue: true,
+      low: DataBarBound(type: .number, value: 0), high: DataBarBound(type: .number, value: 1.5))
+    let range = CellRange(start: a1, end: CellAddress(row: 2, col: 0))
+    sheet.conditionalFormats = [
+      ConditionalFormatRule(range: range, predicate: .dataBar(style), style: .redFill)
+    ]
+    let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [sheet]))
+    let reopened = try XLSXCodec.importWorkbook(from: data).sheets[0]
+    guard case .dataBar(let saved) = reopened.conditionalFormats.first?.predicate else {
+      return XCTFail("data bar did not reopen")
+    }
+    XCTAssertEqual(saved.low, style.low)
+    XCTAssertEqual(saved.high, style.high)
+
+    let paint = ConditionalFormatEvaluator.resolvedPaint(
+      at: CellAddress(row: 1, col: 0), base: nil, rules: reopened.conditionalFormats,
+      value: .number(0.75), displayString: "0.75", numberFormat: nil,
+      numericValuesInRange: { _ in [0.5, 0.75, 1] },
+      evaluateFormula: { _, _, _ in .blank })
+    XCTAssertEqual(paint.dataBarFraction ?? 0, 0.5, accuracy: 1e-9)
+  }
+
+  /// A bar with min and max ends still starts at 0, as it always has.
+  func testDataBarWithMinAndMaxKeepsTheAutomaticScale() throws {
+    let a1 = CellAddress(row: 0, col: 0)
+    var sheet = Sheet(name: "Data")
+    sheet.setCell(Cell(raw: "5"), at: a1)
+    sheet.conditionalFormats = [
+      ConditionalFormatRule(
+        range: CellRange(start: a1, end: a1), predicate: .dataBar(.blue), style: .redFill)
+    ]
+    let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [sheet]))
+    let reopened = try XLSXCodec.importWorkbook(from: data).sheets[0]
+    guard case .dataBar(let saved) = reopened.conditionalFormats.first?.predicate else {
+      return XCTFail("data bar did not reopen")
+    }
+    XCTAssertNil(saved.low)
+    XCTAssertNil(saved.high)
+  }
+
   /// Tabs reopen in the order they were saved, and a formula still finds its sheet by name.
   func testMovedSheetOrderRoundTrips() throws {
     let a1 = CellAddress(row: 0, col: 0)

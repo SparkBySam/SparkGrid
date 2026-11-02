@@ -112,13 +112,32 @@ public nonisolated struct ColorScaleStop: Codable, Equatable, Sendable {
   }
 }
 
+/// One end of a data bar's scale, as a file's `cfvo` gives it.
+public nonisolated struct DataBarBound: Codable, Equatable, Sendable {
+  public var type: ColorScaleStop.StopType
+  public var value: Double?
+
+  public init(type: ColorScaleStop.StopType, value: Double?) {
+    self.type = type
+    self.value = value
+  }
+}
+
 public nonisolated struct DataBarStyle: Codable, Equatable, Sendable {
   public var color: CodableColor
   public var showValue: Bool
+  /// Nil means the bar starts at 0 or the lowest value, whichever is lower.
+  public var low: DataBarBound?
+  /// Nil means the bar ends at the highest value.
+  public var high: DataBarBound?
 
-  public init(color: CodableColor, showValue: Bool) {
+  public init(
+    color: CodableColor, showValue: Bool, low: DataBarBound? = nil, high: DataBarBound? = nil
+  ) {
     self.color = color
     self.showValue = showValue
+    self.low = low
+    self.high = high
   }
 
   public static let blue = DataBarStyle(
@@ -430,6 +449,7 @@ public nonisolated enum ConditionalFormatEvaluator {
       case .dataBar(let style):
         guard
           let fraction = dataBarFraction(
+            style: style,
             value: value,
             range: rule.range,
             numericValuesInRange: numericValuesInRange
@@ -607,15 +627,26 @@ public nonisolated enum ConditionalFormatEvaluator {
   }
 
   private static func dataBarFraction(
+    style: DataBarStyle,
     value: CellValue,
     range: CellRange,
     numericValuesInRange: (CellRange) -> [Double]
   ) -> Double? {
     guard let cellValue = value.asNumber else { return nil }
     let values = numericValuesInRange(range)
-    guard !values.isEmpty else { return nil }
-    let dataMin = min(0, values.min() ?? 0)
-    let dataMax = values.max() ?? cellValue
+    guard let lowest = values.min(), let highest = values.max() else { return nil }
+    func position(_ bound: DataBarBound?, automatic: Double) -> Double {
+      guard let bound else { return automatic }
+      switch bound.type {
+      case .min: return lowest
+      case .max: return highest
+      case .number: return bound.value ?? automatic
+      case .percent: return lowest + (highest - lowest) * (bound.value ?? 0) / 100
+      case .percentile: return percentile(values.sorted(), p: bound.value ?? 50)
+      }
+    }
+    let dataMin = position(style.low, automatic: min(0, lowest))
+    let dataMax = position(style.high, automatic: highest)
     let span = dataMax - dataMin
     if span <= 0 { return cellValue > 0 ? 1 : 0 }
     return min(1, max(0, (cellValue - dataMin) / span))

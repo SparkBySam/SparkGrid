@@ -271,10 +271,10 @@ public nonisolated enum CrossSheetBackground {
     var valuesBySheet: [String: [CellAddress: CellValue]] = [:]
     for (coord, value) in memo {
       guard graph.sheetNames.indices.contains(coord.sheetID) else { continue }
-      let key = graph.sheetNames[coord.sheetID]
-      var sheetValues = valuesBySheet[key] ?? [:]
-      sheetValues[CellAddress(row: coord.row, col: coord.col)] = value
-      valuesBySheet[key] = sheetValues
+      // Written in place. Copying the sheet's dictionary out and back for every value made
+      // this quadratic: 105,000 results on one sheet took most of a minute.
+      valuesBySheet[graph.sheetNames[coord.sheetID], default: [:]][
+        CellAddress(row: coord.row, col: coord.col)] = value
     }
     return Outcome(valuesBySheet: valuesBySheet)
   }
@@ -291,6 +291,11 @@ private nonisolated final class EvaluationContext {
   var expressions: [FormulaCoord: FormulaExpr] = [:]
   var currentSheetID = 0
   var currentSheetName = ""
+  /// Range snapshots and lookup tables shared by every formula in this pass. Formulas run precedents first and
+  /// results never change once set, so a range read once holds for the rest of the pass.
+  /// Without it each SUMIFS re-read its whole columns: 1,200 over 15,000 rows took 6 minutes.
+  let aggregateRangeCache = FormulaAggregateRangeCache()
+  let lookupTableCache = FormulaLookupTableCache()
 
   init(
     workbook: Workbook,
@@ -363,6 +368,9 @@ private nonisolated final class EvaluationContext {
       self.lookup(ref)
     }
     evaluator.evaluationOrigin = CellAddress(row: coord.row, col: coord.col)
+    evaluator.formulaSheetName = currentSheetName
+    evaluator.aggregateRangeCache = aggregateRangeCache
+    evaluator.lookupTableCache = lookupTableCache
     evaluator.namedRangeLookup = { [self] name in
       self.namedRangeExpr(named: name)
     }

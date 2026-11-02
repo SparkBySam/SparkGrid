@@ -57,11 +57,12 @@ struct SheetTabsView: View {
                 viewModel.setSheetHidden(true, at: index)
               }
               .disabled(visibleSheets.count <= 1)
+              let hiddenSheets = viewModel.unhideableSheets
               if !hiddenSheets.isEmpty {
                 Menu("Unhide") {
-                  ForEach(hiddenSheets, id: \.element.id) { hiddenIndex, hidden in
+                  ForEach(hiddenSheets, id: \.index) { hidden in
                     Button(hidden.name) {
-                      viewModel.setSheetHidden(false, at: hiddenIndex)
+                      viewModel.setSheetHidden(false, at: hidden.index)
                     }
                   }
                 }
@@ -116,13 +117,6 @@ struct SheetTabsView: View {
   /// Tabs shown. A file can hide sheets; those stay out of the tab bar until unhidden.
   private var visibleSheets: [(offset: Int, element: Sheet)] {
     viewModel.workbook.sheets.enumerated().filter { !$0.element.isHidden }
-  }
-
-  /// Hidden sheets a person may show again. Sheets the file marks very hidden are not listed.
-  private var hiddenSheets: [(offset: Int, element: Sheet)] {
-    viewModel.workbook.sheets.enumerated().filter {
-      $0.element.fileExtras.visibility == .hidden
-    }
   }
 
   /// Marks a dragged tab, so text dropped from elsewhere is not read as a sheet.

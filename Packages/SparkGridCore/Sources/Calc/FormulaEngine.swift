@@ -103,6 +103,11 @@ public final class FormulaEngine {
     if FormulaSyntax.isFormula(raw),
       let stored = storedRecalculatedValue(sheetName: sheet.name, at: address)
     {
+      // Kept like a stored result below. A highlight rule reads the cell through `resolve`,
+      // which only looks here: N34 showed "Large" while N2="Large" came back false.
+      if !Self.isFormulaText(stored) {
+        valueCache[address] = stored
+      }
       return stored
     }
     if FormulaSyntax.isFormula(raw), let value = cell.cachedFormulaValue {
@@ -583,6 +588,13 @@ public final class FormulaEngine {
     formulaCachesNeedRecalculation = !trustImportedCaches
     freshFormulaValues.removeAll(keepingCapacity: true)
     valuesBySheet.removeValue(forKey: sheetKey(activeSheetName))
+    if !trustImportedCaches {
+      // These results are keyed by address. After a sort or an inserted row, the formula now at
+      // an address is a different one, and painting read the old row's answer: a sort by a
+      // formula column moved the typed columns and left every formula column showing old values.
+      recalculatedSheetValues.removeAll(keepingCapacity: true)
+      valuesBySheet.removeAll(keepingCapacity: true)
+    }
     clearFormulaGraph()
     aggregateRangeCache.invalidateAll()
     lookupTableCache.invalidateAll()

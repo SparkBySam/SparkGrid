@@ -87,10 +87,10 @@ public nonisolated enum SparkTheme {
   /// Lines between cells, and between header cells.
   public static let gridLine = dynamic(
     "SparkGridLine", light: rgb(0x00_00_00, alpha: 0.24), dark: rgb(0xF2_EF_E8, alpha: 0.16))
-  /// The freeze-pane boundary: stronger than a grid line, never near-black.
+  /// The freeze-pane boundary: plainly heavier than a grid line, never near-black.
   public static let freezeDivider = dynamic(
-    "SparkFreezeDivider", light: rgb(0x00_00_00, alpha: 0.45),
-    dark: rgb(0xF2_EF_E8, alpha: 0.45))
+    "SparkFreezeDivider", light: rgb(0x00_00_00, alpha: 0.6),
+    dark: rgb(0xF2_EF_E8, alpha: 0.55))
   /// Cell borders the user applies without picking a color.
   private static let dynamicCellBorder = dynamic(
     "SparkCellBorder", light: rgb(0x00_00_00, alpha: 0.85),
@@ -198,7 +198,7 @@ public nonisolated enum SparkTheme {
     secondaryLabel: rgb(0x00_00_00, alpha: 0.60),
     errorText: rgb(0xD7_00_15),
     gridLine: rgb(0x00_00_00, alpha: 0.24),
-    freezeDivider: rgb(0x00_00_00, alpha: 0.45),
+    freezeDivider: rgb(0x00_00_00, alpha: 0.6),
     cellBorder: rgb(0x00_00_00, alpha: 0.85),
     accent: amberOnLight,
     selectionWash: amberOnLight.withAlphaComponent(0.12),

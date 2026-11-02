@@ -239,6 +239,10 @@ final class SpreadsheetViewModel {
       onGridInvalidation?(.full)
       return
     }
+    // A changed value can flip a highlight rule or move a color scale. Only cells on screen
+    // are worked out again.
+    conditionalFormatCache.removeAll(keepingCapacity: true)
+    conditionalFormatCacheRevision = -1
     onGridInvalidation?(.cells(addresses))
   }
 
@@ -301,12 +305,24 @@ final class SpreadsheetViewModel {
       // calc can read while the open grid keeps the live workbook.
       let snapshot = self.workbookCopyForCalculation(self.workbook)
       DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-        let engine = FormulaEngine()
-        _ = engine.recalculateEntireWorkbook(snapshot, profile: false)
-        let results = engine.snapshotCalculatedResults()
+        // The dependency-ordered pass, not `recalculateEntireWorkbook`. On a 114,599-formula
+        // workbook it takes 8 s instead of 12 in Release, and the whole-workbook pass showed
+        // Daily Q1's unqualified SUM(F5:F64) totals with Monthly Summary's F5:F64 answers.
+        let outcome = CrossSheetBackground.calculateFormulasWithoutCaches(in: snapshot)
+        var results: [String: [CellAddress: CellValue]] = [:]
+        for (name, values) in outcome.valuesBySheet {
+          results[name.lowercased()] = values
+        }
         DispatchQueue.main.async { [weak self] in
           guard let self, generation == self.openCalculationGeneration else { return }
           self.formulaEngine.installCalculatedResults(results)
+          // Highlights, filtered rows and painted cells were worked out from the blanks shown
+          // while this ran. A rule like Flag = "Loss" stayed unhighlighted after a reopen.
+          self.structureRevision &+= 1
+          self.hiddenRowsCache = nil
+          self.conditionalFormatCache.removeAll(keepingCapacity: true)
+          self.conditionalFormatCacheRevision = -1
+          self.conditionalRangeNumbers.removeAll(keepingCapacity: true)
           self.onGridInvalidation?(.full)
         }
       }
@@ -1420,6 +1436,18 @@ final class SpreadsheetViewModel {
     undoManager?.setActionName("Move Sheet")
   }
 
+  /// Hidden sheets a person may show again. Sheets the file marks very hidden are not listed.
+  var unhideableSheets: [(index: Int, name: String)] {
+    workbook.sheets.enumerated().compactMap { index, sheet in
+      sheet.fileExtras.visibility == .hidden ? (index, sheet.name) : nil
+    }
+  }
+
+  /// Whether Hide Sheet applies: another sheet stays visible.
+  var canHideActiveSheet: Bool {
+    workbook.sheets.filter { !$0.isHidden }.count > 1
+  }
+
   /// Hides or shows a sheet's tab. The last visible sheet cannot be hidden.
   func setSheetHidden(_ hidden: Bool, at index: Int) {
     guard workbook.sheets.indices.contains(index) else { return }
@@ -1479,6 +1507,26 @@ final class SpreadsheetViewModel {
   /// Text display shared by every selected cell. Nil when the selection mixes modes.
   /// Covered merge cells follow the anchor and are not a second mode.
   var uniformTextDisplay: CellFormat.TextDisplay? {
+    // The toolbar asks on every render, including while scrolling. With a whole row selected
+    // the answer scans every cell on the sheet, so it is kept until the cells or selection change.
+    let key = UniformTextDisplayKey(
+      contentRevision: contentRevision, ranges: selectionRanges, anchor: selectionAnchor)
+    if let cached = uniformTextDisplayCache, cached.key == key { return cached.value }
+    let value = computeUniformTextDisplay()
+    uniformTextDisplayCache = (key, value)
+    return value
+  }
+
+  private struct UniformTextDisplayKey: Equatable {
+    var contentRevision: Int
+    var ranges: [CellRange]
+    var anchor: CellAddress
+  }
+
+  @ObservationIgnored private var uniformTextDisplayCache:
+    (key: UniformTextDisplayKey, value: CellFormat.TextDisplay?)?
+
+  private func computeUniformTextDisplay() -> CellFormat.TextDisplay? {
     let sheet = activeSheet
     var uniform: CellFormat.TextDisplay?
     var counted = 0

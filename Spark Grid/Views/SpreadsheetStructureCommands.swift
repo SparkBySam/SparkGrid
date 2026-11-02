@@ -56,6 +56,22 @@ struct SpreadsheetStructureCommands: Commands {
 
       Divider()
 
+      Button("Hide Sheet") {
+        guard let viewModel else { return }
+        viewModel.setSheetHidden(true, at: viewModel.workbook.activeSheetIndex)
+      }
+      .disabled(viewModel?.canHideActiveSheet != true)
+      // Right-clicking a tab was the only way back to a hidden sheet.
+      let hiddenSheets = viewModel?.unhideableSheets ?? []
+      Menu("Unhide Sheet") {
+        ForEach(hiddenSheets, id: \.index) { hidden in
+          Button(hidden.name) { viewModel?.setSheetHidden(false, at: hidden.index) }
+        }
+      }
+      .disabled(hiddenSheets.isEmpty)
+
+      Divider()
+
       Button("Freeze Panes") {
         guard viewModel?.freezePanesAtSelection() == true else {
           SpreadsheetGridNSView.presentFreezeRequiresOffsetAlert(axis: .both)

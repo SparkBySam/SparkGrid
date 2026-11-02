@@ -2228,7 +2228,7 @@ extension FormulaEvaluator {
     let resultOffset = n.minCol + index - 1
 
     let tableKey = LookupTableKey(
-      sheet: (start.sheet ?? "").lowercased(),
+      sheet: (start.sheet ?? end.sheet ?? formulaSheetName ?? "").lowercased(),
       minRow: n.minRow,
       minCol: n.minCol,
       maxRow: n.maxRow,

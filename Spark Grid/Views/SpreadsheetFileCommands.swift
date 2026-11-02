@@ -38,7 +38,10 @@ struct SpreadsheetFileCommands: Commands {
 
   private func openPanel() {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText, .plainText]
+    // The files Spark Grid reads, the same two it saves. Plain text let any text file be picked,
+    // and it opened as a one-column CSV.
+    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
+    panel.allowsOtherFileTypes = false
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }

@@ -629,20 +629,7 @@ extension XLSXCodec {
         case .colorScale(let stops):
           xml += #"<cfRule type="colorScale" priority="\#(priority)"\#(stop)><colorScale>"#
           for stop in stops {
-            switch stop.type {
-            case .min:
-              xml += #"<cfvo type="min"/>"#
-            case .max:
-              xml += #"<cfvo type="max"/>"#
-            case .number:
-              xml += #"<cfvo type="num" val="\#(escapeXML(stringFromNumber(stop.value ?? 0)))"/>"#
-            case .percent:
-              xml +=
-                #"<cfvo type="percent" val="\#(escapeXML(stringFromNumber(stop.value ?? 0)))"/>"#
-            case .percentile:
-              xml +=
-                #"<cfvo type="percentile" val="\#(escapeXML(stringFromNumber(stop.value ?? 50)))"/>"#
-            }
+            xml += cfvoXML(stop.type, stop.value)
           }
           for stop in stops {
             xml += #"<color rgb="FF\#(rgbHex(stop.color))"/>"#
@@ -651,7 +638,7 @@ extension XLSXCodec {
         case .dataBar(let style):
           let show = style.showValue ? "" : #" showValue="0""#
           xml +=
-            #"<cfRule type="dataBar" priority="\#(priority)"\#(stop)><dataBar\#(show)><cfvo type="min"/><cfvo type="max"/><color rgb="FF\#(rgbHex(style.color))"/></dataBar></cfRule>"#
+            #"<cfRule type="dataBar" priority="\#(priority)"\#(stop)><dataBar\#(show)>\#(dataBarBoundsXML(style))<color rgb="FF\#(rgbHex(style.color))"/></dataBar></cfRule>"#
         case .iconSet(let style):
           xml +=
             #"<cfRule type="iconSet" priority="\#(priority)"\#(stop)><iconSet iconSet="\#(style.excelName)"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule>"#
@@ -783,18 +770,7 @@ extension XLSXCodec {
     case .colorScale(let stops):
       var xml = #"<x14:cfRule type="colorScale" priority="\#(priority)"\#(stop)><x14:colorScale>"#
       for stop in stops {
-        switch stop.type {
-        case .min: xml += #"<x14:cfvo type="min"/>"#
-        case .max: xml += #"<x14:cfvo type="max"/>"#
-        case .number:
-          xml += #"<x14:cfvo type="num" val="\#(escapeXML(stringFromNumber(stop.value ?? 0)))"/>"#
-        case .percent:
-          xml +=
-            #"<x14:cfvo type="percent" val="\#(escapeXML(stringFromNumber(stop.value ?? 0)))"/>"#
-        case .percentile:
-          xml +=
-            #"<x14:cfvo type="percentile" val="\#(escapeXML(stringFromNumber(stop.value ?? 50)))"/>"#
-        }
+        xml += cfvoXML(stop.type, stop.value, prefix: "x14:")
       }
       for stop in stops {
         xml += #"<x14:color rgb="FF\#(rgbHex(stop.color))"/>"#
@@ -804,7 +780,7 @@ extension XLSXCodec {
     case .dataBar(let style):
       let show = style.showValue ? "" : #" showValue="0""#
       return
-        #"<x14:cfRule type="dataBar" priority="\#(priority)"\#(stop)><x14:dataBar\#(show)><x14:cfvo type="min"/><x14:cfvo type="max"/><x14:color rgb="FF\#(rgbHex(style.color))"/></x14:dataBar></x14:cfRule>"#
+        #"<x14:cfRule type="dataBar" priority="\#(priority)"\#(stop)><x14:dataBar\#(show)>\#(dataBarBoundsXML(style, prefix: "x14:"))<x14:color rgb="FF\#(rgbHex(style.color))"/></x14:dataBar></x14:cfRule>"#
     case .iconSet(let style):
       return
         #"<x14:cfRule type="iconSet" priority="\#(priority)"\#(stop)><x14:iconSet iconSet="\#(style.excelName)"><x14:cfvo type="percent" val="0"/><x14:cfvo type="percent" val="33"/><x14:cfvo type="percent" val="67"/></x14:iconSet></x14:cfRule>"#
@@ -945,16 +921,7 @@ extension XLSXCodec {
 
     var stops: [ColorScaleStop] = []
     for (index, attrs) in cfvos.enumerated() {
-      let typeRaw = attributeValue(attrs, name: "type") ?? "min"
-      let type: ColorScaleStop.StopType
-      switch typeRaw {
-      case "min": type = .min
-      case "max": type = .max
-      case "num", "number": type = .number
-      case "percent": type = .percent
-      case "percentile": type = .percentile
-      default: type = .number
-      }
+      let type = cfvoType(attributeValue(attrs, name: "type") ?? "min")
       let value = attributeValue(attrs, name: "val").flatMap(Double.init)
       let colorAttrs = colors[index]
       let color =
@@ -989,7 +956,54 @@ extension XLSXCodec {
         color = parsed
       }
     }
-    return .dataBar(DataBarStyle(color: color, showValue: showValue))
+    // Only fixed thresholds are kept. A min or max end stays automatic, so
+    // bars from files that use them draw as they always have.
+    let ns = bar as NSString
+    let cfvos =
+      (try? NSRegularExpression(pattern: #"<(?:x14:)?cfvo\b([^>]*)/?\s*>"#))?
+      .matches(in: bar, range: NSRange(location: 0, length: ns.length))
+      .map { ns.substring(with: $0.range(at: 1)) } ?? []
+    let bounds = cfvos.prefix(2).map { attrs -> DataBarBound? in
+      let type = cfvoType(attributeValue(attrs, name: "type") ?? "min")
+      guard type != .min, type != .max else { return nil }
+      return DataBarBound(
+        type: type, value: attributeValue(attrs, name: "val").flatMap(Double.init))
+    }
+    return .dataBar(
+      DataBarStyle(
+        color: color, showValue: showValue,
+        low: bounds.first ?? nil, high: bounds.count > 1 ? bounds[1] : nil))
+  }
+
+  private static func cfvoType(_ raw: String) -> ColorScaleStop.StopType {
+    switch raw {
+    case "min": return .min
+    case "max": return .max
+    case "percent": return .percent
+    case "percentile": return .percentile
+    default: return .number
+    }
+  }
+
+  private static func cfvoXML(
+    _ type: ColorScaleStop.StopType, _ value: Double?, prefix: String = ""
+  ) -> String {
+    switch type {
+    case .min: return #"<\#(prefix)cfvo type="min"/>"#
+    case .max: return #"<\#(prefix)cfvo type="max"/>"#
+    case .number:
+      return #"<\#(prefix)cfvo type="num" val="\#(escapeXML(stringFromNumber(value ?? 0)))"/>"#
+    case .percent:
+      return #"<\#(prefix)cfvo type="percent" val="\#(escapeXML(stringFromNumber(value ?? 0)))"/>"#
+    case .percentile:
+      return
+        #"<\#(prefix)cfvo type="percentile" val="\#(escapeXML(stringFromNumber(value ?? 50)))"/>"#
+    }
+  }
+
+  private static func dataBarBoundsXML(_ style: DataBarStyle, prefix: String = "") -> String {
+    cfvoXML(style.low?.type ?? .min, style.low?.value, prefix: prefix)
+      + cfvoXML(style.high?.type ?? .max, style.high?.value, prefix: prefix)
   }
 
   private static func iconSetPredicate(in body: String, ruleAttrs: String)
