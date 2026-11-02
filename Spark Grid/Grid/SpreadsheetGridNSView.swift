@@ -7069,6 +7069,11 @@ final class SpreadsheetGridNSView: NSView {
       drawFormat.textColor = CellFormatRenderer.codableColor(
         from: Self.selectedCellTextColor(over: fillColor, theme: theme)
       )
+    } else if isDarkMode, drawFormat.textColor == nil, let fillColor {
+      // Automatic text is white in dark mode. On a file's light fill, such as a totals row,
+      // it was nearly invisible; it now follows the fill, as conditional fills already do.
+      drawFormat.textColor = CodableColor.contrastingText(
+        on: CellFormatRenderer.codableColor(from: fillColor))
     }
     let recordedText = text
     let recordedRect = textRect
@@ -8142,6 +8147,7 @@ final class SpreadsheetGridNSView: NSView {
         clip: visible,
         color: labelColor
       )
+      drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
       accent.setStroke()
       let border = NSBezierPath()
       border.lineWidth = 2
@@ -8174,6 +8180,7 @@ final class SpreadsheetGridNSView: NSView {
         clip: visible,
         color: labelColor
       )
+      drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
       accent.setStroke()
       let border = NSBezierPath()
       border.lineWidth = 2

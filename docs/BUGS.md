@@ -12,6 +12,7 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 | 7 | No toolbar control for tables | | Tables can be reached through the name box. There is no create or edit UI. |
 | 11 | No visible controls for comments | | Comments work from the context menu only. |
 | | `FormulaEngine.recalculateEntireWorkbook` mixes up unqualified ranges across sheets | Benchmarks, BugBashRunner | Its range cache keys unqualified ranges with no sheet, so Daily Q1's `SUM(F5:F64)` got Monthly Summary's answer. Adding the sheet name exposed a bulk loader that reads uncalculated same-sheet formulas as 0. The app no longer uses it on open. |
+| | Five BugBashRunner checks fail on `main` and on this branch alike | Debug runner (`SPARK_GRID_BUG_BASH=1`) | The sandbox blocks `Fixtures/shared_formula_many_cells.xlsx`; three pixel checks read back black because they snapshot the grid without a window; the spell check reads `=A1` before the open calculation lands. The checks need fixing, not the app. |
 | | Icon sets always save as 0/33/67 percent thresholds | Any file with an icon set | The file's own thresholds are dropped on save, the way data bar thresholds were. |
 
 ## Not Spark Grid bugs
@@ -53,6 +54,8 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 | 2 | Sorting looks like it only sorts the typed columns: formula columns kept showing the old row's results at each address after a sort, and scroll tiles drew the unsorted rows | Next PR |
 | | Highlights vanished after a reopen: a rule reading a formula cell got a blank when the cell's value came from the background calculation | Next PR |
 | | Typing in a cell, switching sheets, then clicking a cell saved the typing twice: once on its own sheet and again into the cell selected on the new sheet, and undo then crossed sheets | Next PR |
+| | In dark mode, automatic text on a file's light fill (such as a totals row) drew white and was nearly invisible | Next PR |
+| | Hiding the active sheet jumped to the first tab instead of the one beside it | Next PR |
 | | File → Open accepted any text file and opened it as a one-column CSV | Next PR |
 | | Highlight rules lost after reopening a file without saved results: they were worked out from the blanks shown while it calculated | Next PR |
 | | Opening a file without saved results showed wrong totals on Daily Q1 and Weekly Windows (another sheet's SUM); open calculation also 12 s, now 8 s | Next PR |

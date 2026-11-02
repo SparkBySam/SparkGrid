@@ -1473,8 +1473,11 @@ final class SpreadsheetViewModel {
     workbook.sheets[index].fileExtras.visibility = visibility
     suspendFormulaRebuild = false
     finishWorkbookMutation(stampBefore: stampBefore)
+    // The tab beside the hidden one, as Delete does, not the first tab in the workbook.
+    let sheets = workbook.sheets
     if visibility != .visible, index == workbook.activeSheetIndex,
-      let next = workbook.sheets.indices.first(where: { !workbook.sheets[$0].isHidden })
+      let next = sheets.indices.first(where: { $0 > index && !sheets[$0].isHidden })
+        ?? sheets.indices.last(where: { $0 < index && !sheets[$0].isHidden })
     {
       selectSheet(at: next)
     } else if visibility == .visible {
