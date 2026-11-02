@@ -1,10 +1,10 @@
 # Status
 
-Updated: 2026-10-29. Commit this file in the same commit as the work it describes.
+Updated: 2026-11-01. Commit this file in the same commit as the work it describes.
 
-## 1.2 in progress (branch `claude/1.2`)
+## 1.2 release (version 1.2, build 6)
 
-1.1.1 shipped on 2026-10-29. 1.2 follows `Future Features.md`: compatibility first.
+1.1.1 shipped on 2026-10-29. 1.2 follows `Future Features.md`: compatibility first. The bug bash (PR #77) is merged; `docs/BUGS.md` lists what is open. Release notes are in `docs/release-notes-1.2.md`.
 
 - A save keeps what the file had: hidden rows, columns and sheets, grouped rows and columns, tab color, sheet protection, page setup and headers, dropdown rules, comments, links, tables, charts the app does not draw, and pivot tables. These live in `Sheet.fileExtras` and `Workbook.pivotCaches` and move with inserted, deleted and sorted rows. The Oct 29 audit workbook keeps every item, and a saved copy opens in Excel with no repair prompt.
 - Hidden rows and columns are hidden in the grid. Hide and Unhide are on the header menus and the Sheet menu; hidden sheets leave the tab bar and come back from the tab menu.
