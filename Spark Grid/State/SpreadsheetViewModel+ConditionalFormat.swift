@@ -192,7 +192,13 @@ extension SpreadsheetViewModel {
     conditionalFormatCache.removeAll(keepingCapacity: true)
     conditionalFormatCacheRevision = -1
     if recordUndo {
+      // Undo puts the rules back on this sheet, even when another one is showing by then.
+      let sheetID = sheet.id
       undoManager?.registerUndo(withTarget: self) { target in
+        guard let index = target.workbook.sheets.firstIndex(where: { $0.id == sheetID }) else {
+          return
+        }
+        if index != target.workbook.activeSheetIndex { target.selectSheet(at: index) }
         target.applyConditionalFormats(undoBefore, undoBefore: rules, actionName: actionName)
       }
       undoManager?.setActionName(actionName)

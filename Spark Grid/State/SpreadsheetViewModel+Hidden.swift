@@ -7,11 +7,28 @@ extension SpreadsheetViewModel {
     case rows, columns
   }
 
+  /// The selection's ranges.
+  private var hideTargetRanges: [CellRange] {
+    selectionRanges.isEmpty ? [selectionRange] : selectionRanges
+  }
+
+  /// First and last row or column the selection covers, or nil when it covers none.
+  private func selectedBounds(_ axis: HideAxis) -> (low: Int, high: Int)? {
+    var bounds: (low: Int, high: Int)?
+    for range in hideTargetRanges {
+      let n = range.normalized
+      let lower = axis == .rows ? n.minRow : n.minCol
+      let upper = axis == .rows ? n.maxRow : n.maxCol
+      guard upper >= lower else { continue }
+      bounds = (min(bounds?.low ?? lower, lower), max(bounds?.high ?? upper, upper))
+    }
+    return bounds
+  }
+
   /// Rows or columns the selection covers.
-  func selectedIndexes(_ axis: HideAxis) -> Set<Int> {
-    let ranges = selectionRanges.isEmpty ? [selectionRange] : selectionRanges
+  private func selectedIndexes(_ axis: HideAxis) -> Set<Int> {
     var indexes = Set<Int>()
-    for range in ranges {
+    for range in hideTargetRanges {
       let n = range.normalized
       let lower = axis == .rows ? n.minRow : n.minCol
       let upper = axis == .rows ? n.maxRow : n.maxCol
@@ -28,18 +45,18 @@ extension SpreadsheetViewModel {
     return indexes
   }
 
+  /// Whether Unhide Rows and Unhide Columns apply. The menus ask on every selection change, so
+  /// this reads only the selection's bounds, never a set of every selected row.
   var canUnhideInSelection: (rows: Bool, columns: Bool) {
     let extras = activeSheet.fileExtras
     guard !extras.hiddenRows.isEmpty || !extras.hiddenColumns.isEmpty else { return (false, false) }
     // Rows hidden next to the selection count, so a hidden row between two selected rows,
     // or just past one, can come back.
-    let rows = selectedIndexes(.rows)
-    let columns = selectedIndexes(.columns)
-    func near(_ hidden: Set<Int>, _ selected: Set<Int>) -> Bool {
-      guard let low = selected.min(), let high = selected.max() else { return false }
-      return hidden.contains { $0 >= low - 1 && $0 <= high + 1 }
+    func near(_ hidden: Set<Int>, _ axis: HideAxis) -> Bool {
+      guard !hidden.isEmpty, let bounds = selectedBounds(axis) else { return false }
+      return hidden.contains { $0 >= bounds.low - 1 && $0 <= bounds.high + 1 }
     }
-    return (near(extras.hiddenRows, rows), near(extras.hiddenColumns, columns))
+    return (near(extras.hiddenRows, .rows), near(extras.hiddenColumns, .columns))
   }
 
   func hideSelected(_ axis: HideAxis) {
@@ -60,8 +77,7 @@ extension SpreadsheetViewModel {
   /// Shows hidden rows or columns inside the selection and right next to it.
   func unhideSelected(_ axis: HideAxis) {
     commitEditIfNeeded()
-    let selected = selectedIndexes(axis)
-    guard let low = selected.min(), let high = selected.max() else { return }
+    guard let (low, high) = selectedBounds(axis) else { return }
     updateHidden(axis, actionName: axis == .rows ? "Unhide Rows" : "Unhide Columns") { hidden in
       // Grow past runs of hidden rows touching the selection, so Unhide on the row below a
       // hidden block shows the whole block.
@@ -83,15 +99,7 @@ extension SpreadsheetViewModel {
     case .columns: change(&sheet.fileExtras.hiddenColumns)
     }
     guard sheet.fileExtras != before else { return }
-    let after = sheet.fileExtras
-    applyFileExtras(after)
-    undoManager?.registerUndo(withTarget: self) { target in
-      target.applyFileExtras(before)
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.applyFileExtras(after)
-      }
-    }
-    undoManager?.setActionName(actionName)
+    recordFileExtrasChange(before: before, after: sheet.fileExtras, actionName: actionName)
   }
 
   /// Changes the active sheet's kept file parts as one undoable step.
@@ -101,17 +109,32 @@ extension SpreadsheetViewModel {
     var after = before
     change(&after)
     guard after != before else { return }
-    applyFileExtras(after)
-    undoManager?.registerUndo(withTarget: self) { target in
-      target.applyFileExtras(before)
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.applyFileExtras(after)
-      }
-    }
+    recordFileExtrasChange(before: before, after: after, actionName: actionName)
+  }
+
+  /// Applies `after` to the active sheet with an undo step that puts `before` back on that same
+  /// sheet, even when another sheet is showing by the time Undo is chosen.
+  private func recordFileExtrasChange(
+    before: SheetFileExtras, after: SheetFileExtras, actionName: String
+  ) {
+    let sheetID = activeSheet.id
+    applyFileExtras(after, sheetID: sheetID)
+    registerFileExtrasUndo(before: before, after: after, sheetID: sheetID)
     undoManager?.setActionName(actionName)
   }
 
-  private func applyFileExtras(_ extras: SheetFileExtras) {
+  private func registerFileExtrasUndo(
+    before: SheetFileExtras, after: SheetFileExtras, sheetID: UUID
+  ) {
+    undoManager?.registerUndo(withTarget: self) { target in
+      target.applyFileExtras(before, sheetID: sheetID)
+      target.registerFileExtrasUndo(before: after, after: before, sheetID: sheetID)
+    }
+  }
+
+  private func applyFileExtras(_ extras: SheetFileExtras, sheetID: UUID) {
+    guard let index = workbook.sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+    if index != workbook.activeSheetIndex { selectSheet(at: index) }
     var sheet = activeSheet
     sheet.fileExtras = extras
     setActiveSheetPreservingFormulas(sheet)

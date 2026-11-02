@@ -304,6 +304,7 @@ public final class WorkbookSession {
     cell.importedFormulaResult = nil
     cell.importedFormulaValueType = nil
     applyPercentLiteralIfNeeded(to: &cell)
+    applyDateLiteralIfNeeded(to: &cell)
     sheet.setCell(cell, at: address)
     workbook.sheets[index] = sheet
     return Applied(
@@ -851,6 +852,21 @@ public final class WorkbookSession {
     if format.decimalPlaces == nil {
       format.decimalPlaces = 2
     }
+    cell.format = format
+  }
+
+  /// A typed date such as `2/28/2026` or `2026-02-28` is stored as a date serial with a date
+  /// format, as other spreadsheet apps do, so it sorts, sums and filters as a date. A cell that
+  /// already has another number format keeps the text as typed.
+  private func applyDateLiteralIfNeeded(to cell: inout Cell) {
+    let trimmed = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !FormulaSyntax.isFormula(trimmed), Double(trimmed) == nil,
+      let serial = ColumnFilterRules.dateSerial(trimmed), serial >= 1
+    else { return }
+    var format = cell.format ?? CellFormat()
+    guard format.numberFormat == .general || format.numberFormat == .date else { return }
+    format.numberFormat = .date
+    cell.raw = String(Int(serial))
     cell.format = format
   }
 

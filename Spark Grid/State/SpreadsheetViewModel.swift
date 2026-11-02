@@ -57,6 +57,7 @@ final class SpreadsheetViewModel {
       onGridInvalidation?(.full)
     }
   }
+  private var savedSelections: [UUID: SavedSelection] = [:]
   var selectionAnchor: CellAddress = .origin
   var selectionEnd: CellAddress = .origin
   /// All selected regions. The last entry is the active range (matches anchor/end).
@@ -499,7 +500,7 @@ final class SpreadsheetViewModel {
   }
 
   var formulaBarText: String {
-    get { isEditing ? editText : selectedCell.raw }
+    get { isEditing ? editText : selectedCell.editableText }
     set {
       editText = newValue
       if !isEditing { isEditing = true }
@@ -521,7 +522,7 @@ final class SpreadsheetViewModel {
   }
 
   func syncEditTextFromSelection() {
-    editText = selectedCell.raw
+    editText = selectedCell.editableText
   }
 
   func selectRange(from start: CellAddress, to end: CellAddress) {
@@ -967,7 +968,7 @@ final class SpreadsheetViewModel {
   func beginEditing(preserveSelection: Bool = true) {
     if !preserveSelection { return }
     formulaArgumentHint = nil
-    editText = selectedCell.raw
+    editText = selectedCell.editableText
     isEditing = true
     focusedFormulaHighlightIndex = nil
     noteFormulaEditTextChanged()
@@ -977,8 +978,9 @@ final class SpreadsheetViewModel {
     formulaArgumentHint = nil
     let address = selectionAnchor
     let newValue = editText
-    let oldValue = activeSheet.cell(at: address).raw
-    guard newValue != oldValue else {
+    let cell = activeSheet.cell(at: address)
+    // Unchanged text, including a percent or date shown as `29.8%` or `2/28/2026`, is no edit.
+    guard newValue != cell.raw, newValue != cell.editableText else {
       isEditing = false
       noteFormulaEditTextChanged()
       return
@@ -1325,9 +1327,20 @@ final class SpreadsheetViewModel {
     isEditing = false
   }
 
+  /// The selection each sheet had when another one was shown, as other spreadsheet apps keep it.
+  private struct SavedSelection {
+    var anchor: CellAddress
+    var end: CellAddress
+    var ranges: [CellRange]
+  }
+
   func selectSheet(at index: Int) {
     commitEditIfNeeded()
     guard index >= 0, index < workbook.sheets.count else { return }
+    if index != workbook.activeSheetIndex {
+      savedSelections[activeSheet.id] = SavedSelection(
+        anchor: selectionAnchor, end: selectionEnd, ranges: selectionRanges)
+    }
     withoutRecordingEdit {
       // One activation. `workbook` didSet would rebuild again and drop the
       // values `activateSheet` just kept for the other sheets.
@@ -1338,7 +1351,15 @@ final class SpreadsheetViewModel {
       restoreFilterFromActiveSheet()
     }
     invalidateFindMatches()
-    selection = .origin
+    if let saved = savedSelections[activeSheet.id] {
+      selectionAnchor = clamp(saved.anchor)
+      selectionEnd = clamp(saved.end)
+      selectionRanges = saved.ranges.map { CellRange(start: clamp($0.start), end: clamp($0.end)) }
+      if selectionRanges.isEmpty { selectionRanges = [selectionRange] }
+      noteSelectionChanged()
+    } else {
+      selection = .origin
+    }
     syncEditTextFromSelection()
     isEditing = false
   }
@@ -1347,6 +1368,10 @@ final class SpreadsheetViewModel {
     commitEditIfNeeded()
     guard workbook.sheets.count > 1 else { return }
     guard workbook.sheets.indices.contains(index) else { return }
+    // A hidden sheet cannot be left as the only one; one tab always shows.
+    if !workbook.sheets[index].isHidden, workbook.sheets.filter({ !$0.isHidden }).count <= 1 {
+      return
+    }
 
     let name = workbook.sheets[index].name
     let wasActive = index == workbook.activeSheetIndex
@@ -1354,6 +1379,15 @@ final class SpreadsheetViewModel {
     var next = workbook
     let outcome = engineCommands.apply(id: "sheet.delete", arguments: ["sheet": name], to: &next)
     guard outcome.ok else { return }
+    // The tab after a deleted one may be hidden; show the nearest visible sheet instead.
+    if next.activeSheet.isHidden {
+      let active = next.activeSheetIndex
+      if let visible = next.sheets.indices.filter({ !next.sheets[$0].isHidden })
+        .min(by: { abs($0 - active) < abs($1 - active) })
+      {
+        next.activeSheetIndex = visible
+      }
+    }
     workbook = next
     if wasActive {
       restoreFilterFromActiveSheet()

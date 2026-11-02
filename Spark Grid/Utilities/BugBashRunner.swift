@@ -1160,10 +1160,10 @@ typealias Cell = SparkGridCore.Cell
           detail: "row counts \(String(describing: vm.filterRowCounts))")
       }
       // Rows 2 and 4 hold "a"; rows 1, 3 and 5 are hidden.
-      guard vm.isFirstRowAfterFilterGap(2), vm.isFirstRowAfterFilterGap(4),
-        !vm.isFirstRowAfterFilterGap(1)
+      guard vm.isShownByActiveFilter(2), vm.isShownByActiveFilter(4),
+        !vm.isShownByActiveFilter(1), !vm.isShownByActiveFilter(0)
       else {
-        return Result(name: name, passed: false, detail: "gap marker on the wrong rows")
+        return Result(name: name, passed: false, detail: "filtered row marker on the wrong rows")
       }
       undo.undo()
       guard vm.filterState != nil, vm.filterRowCounts == nil else {

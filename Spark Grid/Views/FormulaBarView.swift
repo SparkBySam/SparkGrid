@@ -87,21 +87,23 @@ struct FormulaBarView: View {
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Only the formula side takes the double-click. Over the name box too, it held back
+        // every first click to wait for a second one, so the name box needed two clicks.
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+          guard contentLineCount > 1 else { return }
+          withAnimation(.easeInOut(duration: 0.15)) {
+            isExpanded.toggle()
+          }
+        }
+        .help(
+          contentLineCount > 1
+            ? (isExpanded
+              ? "Double-click to collapse formula bar" : "Double-click to expand formula bar")
+            : "Formula bar"
+        )
       }
       .padding(.horizontal, 10)
-      .contentShape(Rectangle())
-      .onTapGesture(count: 2) {
-        guard contentLineCount > 1 else { return }
-        withAnimation(.easeInOut(duration: 0.15)) {
-          isExpanded.toggle()
-        }
-      }
-      .help(
-        contentLineCount > 1
-          ? (isExpanded
-            ? "Double-click to collapse formula bar" : "Double-click to expand formula bar")
-          : "Formula bar"
-      )
 
       if let explanation = viewModel.selectedFormulaErrorExplanation {
         FormulaErrorBanner(text: explanation)
@@ -192,7 +194,12 @@ private struct NameBox: View {
         if !focused { text = next }
       }
       .onChange(of: focused) { _, isFocused in
-        if !isFocused {
+        if isFocused {
+          // A click selects the whole address, so typing replaces it.
+          DispatchQueue.main.async {
+            (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
+          }
+        } else {
           text = viewModel.nameBoxText
           rejected = false
         }

@@ -1355,7 +1355,8 @@ extension FormulaEvaluator {
     let digits = NSDecimalNumber(decimal: output).description(
       withLocale: Locale(identifier: "en_US_POSIX"))
     let rounded = Double(digits) ?? NSDecimalNumber(decimal: output).doubleValue
-    return negative ? -rounded : rounded
+    // ROUNDDOWN(-0.004, 2) is 0, not negative zero.
+    return negative && rounded != 0 ? -rounded : rounded
   }
 
   // MARK: - Column shape strip (tight eval loop)

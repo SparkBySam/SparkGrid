@@ -579,10 +579,13 @@ extension SpreadsheetViewModel {
   }
 
   /// The first shown row after rows the filter hides. Its row number is drawn in the accent.
-  func isFirstRowAfterFilterGap(_ row: Int) -> Bool {
-    guard let filter = filterState, filter.dataRows.contains(row), row - 1 > filter.headerRow
-    else { return false }
-    return !isRowHiddenByFilter(row) && isRowHiddenByFilter(row - 1)
+  /// True for a row a filter with criteria is showing. Its number is drawn in the accent, as
+  /// other spreadsheet apps color every row of a filtered list, not only those after a gap.
+  func isShownByActiveFilter(_ row: Int) -> Bool {
+    guard let filter = filterState, filter.hasCriteria, filter.dataRows.contains(row) else {
+      return false
+    }
+    return !isRowHiddenByFilter(row)
   }
 
   /// True while the filter's rows are sorted by `column` from the popover in this direction.
@@ -702,19 +705,14 @@ extension SpreadsheetViewModel {
     let n = filterState.range.normalized
     guard n.maxRow > n.minRow else { return [] }
     var hidden = Set<Int>()
-    let cutoffs = filterState.cutoffs(sheet: activeSheet) { [weak self] address in
+    let sheet = activeSheet
+    let shown: (CellAddress) -> String = { [weak self] address in
       self?.displayString(at: address) ?? ""
     }
-    for row in (n.minRow + 1)...n.maxRow {
-      if filterState.isRowHidden(
-        row, sheet: activeSheet,
-        displayString: { [weak self] address in
-          self?.displayString(at: address) ?? ""
-        },
-        cutoffs: cutoffs)
-      {
-        hidden.insert(row)
-      }
+    let cutoffs = filterState.cutoffs(sheet: sheet, displayString: shown)
+    for row in (n.minRow + 1)...n.maxRow
+    where filterState.isRowHidden(row, sheet: sheet, displayString: shown, cutoffs: cutoffs) {
+      hidden.insert(row)
     }
     return hidden
   }

@@ -6,13 +6,16 @@ extension SpreadsheetViewModel {
   /// Longest list a dropdown shows.
   static let dropdownItemLimit = 500
 
+  /// The list rule on this cell; the last one wins when rules overlap, as in other apps.
+  func listRule(at address: CellAddress) -> DataValidationRule? {
+    let rules = activeSheet.fileExtras.dataValidations
+    guard !rules.isEmpty else { return nil }
+    return rules.last { $0.isList && $0.ranges.contains { $0.contains(address) } }
+  }
+
   /// The choices of the dropdown list on this cell, or nil when it has none.
   func dropdownItems(at address: CellAddress) -> [String]? {
-    guard
-      let rule = activeSheet.fileExtras.dataValidations.last(where: { rule in
-        rule.attributes.contains(#"type="list""#) && rule.ranges.contains { $0.contains(address) }
-      })
-    else { return nil }
+    guard let rule = listRule(at: address) else { return nil }
     if let items = rule.inlineListItems {
       return Array(items.prefix(Self.dropdownItemLimit))
     }
@@ -118,13 +121,7 @@ extension SpreadsheetViewModel {
 
 extension SpreadsheetViewModel {
   /// True when the cell has a dropdown list. Cheaper than reading the list.
-  func hasDropdown(at address: CellAddress) -> Bool {
-    let rules = activeSheet.fileExtras.dataValidations
-    guard !rules.isEmpty else { return false }
-    return rules.contains { rule in
-      rule.attributes.contains(#"type="list""#) && rule.ranges.contains { $0.contains(address) }
-    }
-  }
+  func hasDropdown(at address: CellAddress) -> Bool { listRule(at: address) != nil }
 }
 
 // MARK: - Making and changing dropdown lists and comments
@@ -145,12 +142,7 @@ extension SpreadsheetViewModel {
 
   /// The list rule on the selected cell, if any.
   var selectedDropdownSource: DropdownSource? {
-    let address = selectionAnchor
-    guard
-      let rule = activeSheet.fileExtras.dataValidations.last(where: { rule in
-        rule.attributes.contains(#"type="list""#) && rule.ranges.contains { $0.contains(address) }
-      })
-    else { return nil }
+    guard let rule = listRule(at: selectionAnchor) else { return nil }
     if let items = rule.inlineListItems { return .items(items) }
     return rule.listSourceFormula.map { .cells($0) }
   }
@@ -200,7 +192,7 @@ extension SpreadsheetViewModel {
     -> [DataValidationRule]
   {
     rules.compactMap { rule in
-      guard rule.attributes.contains(#"type="list""#) else { return rule }
+      guard rule.isList else { return rule }
       var kept = rule.ranges
       for cut in ranges {
         kept = kept.flatMap { Self.subtract(cut, from: $0) }

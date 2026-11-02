@@ -891,6 +891,12 @@ extension XLSXCodec {
     return attributes(ofTag: String(element[...end]))
   }
 
+  /// The name a kept table goes by in formulas and the name box, such as `Deals`.
+  public static func tableName(_ xml: String) -> String? {
+    let attributes = tagAttributes(in: xml, localName: "table").first
+    return attributes?["displayName"] ?? attributes?["name"]
+  }
+
   /// False when the table says it has no header row.
   public static func tableHasHeaderRow(_ xml: String) -> Bool {
     tagAttributes(in: xml, localName: "table").first?["headerRowCount"] != "0"

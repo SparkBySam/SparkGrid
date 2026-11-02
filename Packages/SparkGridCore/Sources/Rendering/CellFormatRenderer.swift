@@ -24,12 +24,13 @@ public enum CellFormatRenderer {
   public static func displayText(raw: String, format: CellFormat?) -> String {
     guard let format, !raw.isEmpty else { return raw }
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let number = parseNumber(trimmed) else {
+    guard let parsed = parseNumber(trimmed) else {
       if let rendered = renderedText(trimmed, format) {
         return rendered
       }
       return raw
     }
+    let number = parsed == 0 ? 0 : parsed
 
     if let rendered = renderedFormat(number, format) {
       return rendered
@@ -69,7 +70,10 @@ public enum CellFormatRenderer {
         return rendered
       }
       return value.displayString
-    case .number(let number):
+    case .number(let signedNumber):
+      // Negative zero (a rounding difference, or "-0" cached in a file) shows as zero, as in
+      // other spreadsheet apps, not "-$0" or "(0)".
+      let number = signedNumber == 0 ? 0 : signedNumber
       let trimmed = fallbackRaw.trimmingCharacters(in: .whitespacesAndNewlines)
       let literalPercent = trimmed.hasSuffix("%") && !trimmed.hasPrefix("=")
       let resolvedFormat: CellFormat? = {

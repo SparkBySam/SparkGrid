@@ -63,9 +63,17 @@ struct SpreadsheetCommands: Commands {
     }
 
     CommandGroup(after: .pasteboard) {
-      Button("Select All") { viewModel?.selectAll() }
-        .keyboardShortcut("a", modifiers: .command)
-        .disabled(viewModel == nil)
+      Button("Select All") {
+        // Text being typed (a cell, the formula bar, the name box, a dialog field) selects its
+        // own text, as in any Mac app; otherwise the whole sheet is selected.
+        if let editor = NSApp.keyWindow?.firstResponder as? NSText {
+          editor.selectAll(nil)
+        } else {
+          viewModel?.selectAll()
+        }
+      }
+      .keyboardShortcut("a", modifiers: .command)
+      .disabled(viewModel == nil)
 
       Divider()
 

@@ -1,7 +1,9 @@
+import Engine
 import FileFormats
 import Foundation
 import GridCore
 import Model
+import NumberFormat
 import XCTest
 
 /// Rule filters: contains, greater than, between, top and bottom, saved the way other apps read.
@@ -37,6 +39,51 @@ final class RulesFilterTests: XCTestCase {
     XCTAssertTrue(
       ColumnFilterRules(rules: [Rule(kind: .greaterThan, value: "10")]).matches(
         "12%", cutoffs: none))
+  }
+
+  func testDateRulesCompareDates() {
+    let none = ColumnFilterRules.Cutoffs()
+    let after = ColumnFilterRules(rules: [Rule(kind: .greaterThan, value: "1/1/2026")])
+    XCTAssertTrue(after.matches("2/28/2026", cutoffs: none))
+    XCTAssertFalse(after.matches("12/31/2025", cutoffs: none))
+    XCTAssertTrue(after.matches("2026-03-01", cutoffs: none))
+    XCTAssertEqual(ColumnFilterRules.dateSerial("1/1/2026"), 46023)
+    XCTAssertNil(ColumnFilterRules.dateSerial("Order 12-B"))
+  }
+
+  func testDateRuleSavesAsASerial() throws {
+    var sheet = Sheet(name: "Data")
+    sheet.setCell(Cell(raw: "Closed"), at: .origin)
+    var filter = SheetFilterState(
+      range: CellRange(start: .origin, end: CellAddress(row: 3, col: 0)))
+    filter.rulesByColumn[0] = ColumnFilterRules(rules: [Rule(kind: .greaterThan, value: "1/1/2026")]
+    )
+    sheet.autoFilter = filter
+    let reopened = try XLSXCodec.importWorkbook(
+      from: try XLSXCodec.exportWorkbook(Workbook(sheets: [sheet])))
+    // Other apps write a date rule as a serial, and read one that way.
+    let rules = try XCTUnwrap(reopened.sheets[0].autoFilter?.rulesByColumn[0])
+    XCTAssertEqual(rules.rules.first?.value, "46023")
+    XCTAssertTrue(rules.matches("2/28/2026", cutoffs: ColumnFilterRules.Cutoffs()))
+  }
+
+  func testWordsThatParseAsNumbersStayText() {
+    XCTAssertNil(ColumnFilterRules.number("nan"))
+    XCTAssertNil(ColumnFilterRules.number("Infinity"))
+    XCTAssertEqual(ColumnFilterRules.number("(1,250.50)"), -1250.5)
+  }
+
+  func testListSourceOnASheetNamedWithAnAmpersand() {
+    let rule = DataValidationRule(
+      ranges: [CellRange(start: .origin, end: .origin)], attributes: #"type="list""#,
+      body: "<formula1>'R&amp;D'!$A$1:$A$3</formula1>")
+    XCTAssertEqual(rule.listSourceFormula, "'R&D'!$A$1:$A$3")
+    XCTAssertNil(rule.inlineListItems)
+    let inline = DataValidationRule(
+      ranges: rule.ranges, attributes: #"type="list""#,
+      body: "<formula1>&quot;Open,Won &amp; Lost&quot;</formula1>")
+    XCTAssertEqual(inline.inlineListItems, ["Open", "Won & Lost"])
+    XCTAssertNil(inline.listSourceFormula)
   }
 
   func testAnyAndAll() {
@@ -117,5 +164,33 @@ final class RulesFilterTests: XCTestCase {
       #"{"range":{"start":{"row":0,"col":0},"end":{"row":3,"col":1}},"selectedValuesByColumn":{}}"#
     let filter = try JSONDecoder().decode(SheetFilterState.self, from: Data(json.utf8))
     XCTAssertTrue(filter.rulesByColumn.isEmpty)
+  }
+}
+
+/// Percents and dates read in the formula bar as they are shown, and a typed date is a date.
+final class CellEditTextTests: XCTestCase {
+  func testPercentAndDateReadAsShown() {
+    var percent = Cell(raw: "0.298")
+    percent.format = CellFormat(numberFormat: .percent)
+    XCTAssertEqual(percent.editableText, "29.8%")
+    var date = Cell(raw: "46023")
+    date.format = CellFormat(numberFormat: .date)
+    XCTAssertEqual(date.editableText, "1/1/2026")
+    XCTAssertEqual(Cell(raw: "=A1+1").editableText, "=A1+1")
+    XCTAssertEqual(Cell(raw: "0.298").editableText, "0.298")
+  }
+
+  func testTypedDateIsStoredAsADate() {
+    var workbook = Workbook(sheets: [Sheet(name: "Data")])
+    for (address, text) in [("A1", "1/1/2026"), ("A2", "2026-01-01"), ("A3", "Order 12-B")] {
+      _ = WorkbookSession().apply(
+        id: "cell.set", arguments: ["sheet": "Data", "address": address, "raw": text],
+        to: &workbook)
+    }
+    let sheet = workbook.sheets[0]
+    XCTAssertEqual(sheet.cell(at: CellAddress(row: 0, col: 0)).raw, "46023")
+    XCTAssertEqual(sheet.cell(at: CellAddress(row: 0, col: 0)).format?.numberFormat, .date)
+    XCTAssertEqual(sheet.cell(at: CellAddress(row: 1, col: 0)).raw, "46023")
+    XCTAssertEqual(sheet.cell(at: CellAddress(row: 2, col: 0)).raw, "Order 12-B")
   }
 }

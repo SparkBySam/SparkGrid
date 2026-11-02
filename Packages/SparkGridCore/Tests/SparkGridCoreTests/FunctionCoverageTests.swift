@@ -2,6 +2,9 @@ import Formula
 import Foundation
 import Functions
 import GridCore
+import Model
+import NumberFormat
+import Rendering
 import XCTest
 
 @testable import Calc
@@ -42,6 +45,17 @@ final class FunctionCoverageTests: XCTestCase {
     XCTAssertEqual(FormulaProbe.eval("ROUND(PI(),4)"), .number(3.1416))
     XCTAssertEqual(FormulaProbe.eval("ROUNDUP(PI(),4)"), .number(3.1416))
     XCTAssertEqual(FormulaProbe.eval("ROUNDDOWN(PI(),3)"), .number(3.141))
+    // A rounding difference never shows as "-0".
+    if case .number(let zero) = FormulaProbe.eval("ROUNDDOWN(-0.004,2)") {
+      XCTAssertEqual(zero.sign, .plus)
+    } else {
+      XCTFail("ROUNDDOWN(-0.004,2) is a number")
+    }
+    var currency = CellFormat()
+    currency.numberFormat = .currency
+    XCTAssertFalse(
+      CellFormatRenderer.displayText(for: .number(-0.0), format: currency, fallbackRaw: "")
+        .contains("-"))
     XCTAssertTrue(AnswerProbe.same(FormulaProbe.eval("ROUND(1250,-2)"), .number(1300)))
     XCTAssertTrue(AnswerProbe.same(FormulaProbe.eval("ROUND(-1250,-2)"), .number(-1300)))
   }

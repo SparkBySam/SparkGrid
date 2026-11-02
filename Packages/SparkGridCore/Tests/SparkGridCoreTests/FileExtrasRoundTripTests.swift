@@ -119,6 +119,14 @@ final class FileExtrasRoundTripTests: XCTestCase {
     XCTAssertEqual(sheet.fileExtras.hiddenRows, [5])
   }
 
+  func testTableNameReadsDisplayName() {
+    XCTAssertEqual(
+      XLSXCodec.tableName(
+        #"<table xmlns="x" id="1" name="Table1" displayName="Deals" ref="A1:B3">"#),
+      "Deals")
+    XCTAssertEqual(XLSXCodec.tableName(#"<table id="1" name="Orders" ref="A1:B3">"#), "Orders")
+  }
+
   func testAddingAColumnInsideATableAddsItToTheTable() throws {
     var sheet = sampleWorkbook().sheets[0]
     SheetStructureMutation.insertColumns(into: &sheet, at: 1, count: 1)

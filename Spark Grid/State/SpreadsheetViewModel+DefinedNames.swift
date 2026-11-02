@@ -117,7 +117,7 @@ extension SpreadsheetViewModel {
 
 extension SpreadsheetViewModel {
   /// The name box: jumps to an address (`B200`), a range (`A1:C5`), a cell on another sheet
-  /// (`Lists!A1`), or a defined name. Returns false when the text is none of those.
+  /// (`Lists!A1`), a defined name, or a table. Returns false when the text is none of those.
   @discardableResult
   func goTo(_ text: String) -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -126,9 +126,11 @@ extension SpreadsheetViewModel {
       revealDefinedName(named)
       return true
     }
+    if revealTable(named: trimmed) { return true }
     let target = DefinedNameFormula.make(
       name: "GoTo", formula: trimmed, sheets: workbook.sheets, localSheet: activeSheet.name)
-    guard target.resolvesToRange,
+    // Past the last column (XFD) or row, text like `ADeals1` is a typo, not a far-off cell.
+    guard target.resolvesToRange, target.endCol < 16_384, target.endRow < 1_048_576,
       let index = workbook.sheets.firstIndex(where: {
         $0.name.caseInsensitiveCompare(target.sheetName) == .orderedSame
       }),
@@ -136,6 +138,23 @@ extension SpreadsheetViewModel {
     else { return false }
     revealDefinedName(target)
     return true
+  }
+
+  /// Selects the table with this name, on whichever visible sheet holds it.
+  private func revealTable(named name: String) -> Bool {
+    for (index, sheet) in workbook.sheets.enumerated() where !sheet.isHidden {
+      guard
+        let table = sheet.fileExtras.tables.first(where: {
+          XLSXCodec.tableName($0.xml)?.caseInsensitiveCompare(name) == .orderedSame
+        })
+      else { continue }
+      commitEditIfNeeded()
+      if index != workbook.activeSheetIndex { selectSheet(at: index) }
+      selectRange(from: table.range.start, to: table.range.end)
+      scrollRequestToken &+= 1
+      return true
+    }
+    return false
   }
 
   /// Text the name box shows: the active cell, or the selected range.

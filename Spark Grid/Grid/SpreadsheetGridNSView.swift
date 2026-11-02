@@ -5395,12 +5395,12 @@ final class SpreadsheetGridNSView: NSView {
         guard !visible.isNull, !visible.isEmpty, dirtyRect.intersects(visible) else { continue }
         headerFill.setFill()
         visible.fill()
-        // The accent marks where the filter hides rows above this one.
+        // The accent marks every row of a filtered list.
         drawHeaderLabel(
           "\(row + 1)" as NSString,
           centeredIn: onScreen,
           clip: visible,
-          color: viewModel?.isFirstRowAfterFilterGap(row) == true ? theme.accent : headerText
+          color: viewModel?.isShownByActiveFilter(row) == true ? theme.accent : headerText
         )
         gridLine.setStroke()
         if abs(rect.maxY - rowBoundaryY) > 0.5 {
@@ -6757,8 +6757,8 @@ final class SpreadsheetGridNSView: NSView {
         for col in colLower...colUpper {
           let address = CellAddress(row: row, col: col)
           if viewModel.isEditing, isEditorActive, address == viewModel.selectionAnchor { continue }
-          let role = mergeRole(at: address, sheet: sheet)
-          if case .covered = role { continue }
+          // Every cell of a merge is washed, not only its top-left one, so a selected merge is
+          // tinted across its whole width even when part of it is scrolled away.
           let rect = rectForCell(row: row, col: col)
           guard isCellRectInContentArea(rect), dirtyRect.intersects(rect) else { continue }
           rect.fill()
@@ -6777,6 +6777,9 @@ final class SpreadsheetGridNSView: NSView {
     value: CellValue,
     displayText: String
   ) {
+    // A row a filter hides, or a hidden column, has no size. Its data bar or icon would still
+    // paint a sliver at the edge of the cell beside it.
+    guard rect.height >= 1, rect.width >= 1 else { return }
     if rasterTarget == nil, let viewModel,
       viewModel.isEditing && address == viewModel.selectionAnchor && isEditorActive
     {
@@ -6895,7 +6898,8 @@ final class SpreadsheetGridNSView: NSView {
     NSGraphicsContext.restoreGraphicsState()
   }
 
-  private func drawScrollableOverflowText(in dirtyRect: NSRect) {
+  /// `onlyRows` limits the pass to those rows, for a repaint of a few cells.
+  private func drawScrollableOverflowText(in dirtyRect: NSRect, onlyRows: Set<Int>? = nil) {
     let viewModel = rasterViewModel()
     guard viewModel != nil || tileCapture != nil else { return }
     guard let sheet = sheetForLayout() ?? viewModel?.activeSheet else { return }
@@ -6906,13 +6910,24 @@ final class SpreadsheetGridNSView: NSView {
     let clip = scrollableCellsClipRect()
     let pad = overflowColumnPad()
     let paneColumns = frozenCols...lastColumn
+    // Each visible run of rows, or each of `onlyRows` that is on screen.
+    var rowRuns: [ClosedRange<Int>] = []
+    for rows in visibleRowSpans() {
+      let rowLower = max(rows.lowerBound, frozenRows)
+      guard rowLower <= rows.upperBound else { continue }
+      if let onlyRows {
+        rowRuns += onlyRows.filter { $0 >= rowLower && $0 <= rows.upperBound }.sorted().map {
+          $0...$0
+        }
+      } else {
+        rowRuns.append(rowLower...rows.upperBound)
+      }
+    }
     for cols in columnSpans(atOrAfter: frozenCols) {
-      for rows in visibleRowSpans() {
-        let rowLower = max(rows.lowerBound, frozenRows)
-        guard rowLower <= rows.upperBound else { continue }
+      for rows in rowRuns {
         drawOverflowText(
           in: dirtyRect,
-          rowRange: rowLower...rows.upperBound,
+          rowRange: rows,
           visibleColumns: cols,
           paneColumns: paneColumns,
           clipRect: clip,
@@ -6924,12 +6939,10 @@ final class SpreadsheetGridNSView: NSView {
     }
     // A title in the frozen columns keeps going through empty cells on this side of the freeze.
     if frozenCols > 0 {
-      for rows in visibleRowSpans() {
-        let rowLower = max(rows.lowerBound, frozenRows)
-        guard rowLower <= rows.upperBound else { continue }
+      for rows in rowRuns {
         drawOverflowText(
           in: dirtyRect,
-          rowRange: rowLower...rows.upperBound,
+          rowRange: rows,
           visibleColumns: 0...(frozenCols - 1),
           paneColumns: 0...lastColumn,
           clipRect: clip,
@@ -7540,7 +7553,7 @@ final class SpreadsheetGridNSView: NSView {
   /// A faint chevron at the right of every visible cell with a dropdown list, so the lists can
   /// be seen without selecting each cell. The selected cell draws its full button instead.
   private func drawDropdownHints(in dirtyRect: NSRect, sheet: Sheet) {
-    let rules = sheet.fileExtras.dataValidations.filter { $0.attributes.contains(#"type="list""#) }
+    let rules = sheet.fileExtras.dataValidations.filter(\.isList)
     guard !rules.isEmpty, let viewModel else { return }
     let selected = viewModel.selectionAnchor
     let w = 6 * zoomScale
@@ -7599,8 +7612,13 @@ final class SpreadsheetGridNSView: NSView {
     let cell = cellBorderRect(
       minRow: n.minRow, minCol: n.minCol, maxRow: n.maxRow, maxCol: n.maxCol)
     guard cell.height > 1, isCellRectInContentArea(cell) else { return nil }
+    // Ends short of the fill handle, which sits half inside the cell's bottom-right corner,
+    // so the two never overlap and each is easy to hit.
+    let handleClearance = fillHandleSize / 2 + 1
     let width = min(18 * zoomScale, cell.height)
-    return NSRect(x: cell.maxX - width, y: cell.minY, width: width, height: cell.height)
+    return NSRect(
+      x: cell.maxX - width - handleClearance, y: cell.minY + 1, width: width,
+      height: max(1, cell.height - 2))
   }
 
   private func drawDropdownButton(in dirtyRect: NSRect) {
@@ -7627,7 +7645,8 @@ final class SpreadsheetGridNSView: NSView {
     let address = viewModel.selectionAnchor
     guard let items = viewModel.dropdownItems(at: address) else { return }
     let menu = NSMenu()
-    let current = viewModel.activeSheet.cell(at: address).raw
+    // What the cell shows, so a formula such as `=Reps!$B$2` ticks the name it gives.
+    let current = viewModel.displayString(at: address)
     if items.isEmpty {
       let empty = menu.addItem(withTitle: "No choices", action: nil, keyEquivalent: "")
       empty.isEnabled = false
@@ -8480,6 +8499,17 @@ final class SpreadsheetGridNSView: NSView {
       testingInvalidateReason += " tiles"
       return
     }
+    // Frozen rows draw their spilling text in the frozen pass, which a limited repaint skips.
+    let frozenRows = frozenRowCount()
+    if frozenRows > 0, addresses.contains(where: { $0.row < frozenRows }) {
+      testingInvalidateReason += " frozen-rows"
+      for address in addresses {
+        let rect =
+          paintRect(for: address, sheet: sheet) ?? rectForCell(row: address.row, col: address.col)
+        if rect.intersects(bounds) { setNeedsDisplay(rect) }
+      }
+      return
+    }
     limitPaintTo = addresses
     isApplyingPartialPaint = true
     var anyOnScreen = false
@@ -8750,11 +8780,15 @@ final class SpreadsheetGridNSView: NSView {
     guard let viewModel else { return }
     let sheet = layoutSheet ?? viewModel.activeSheet
     var borderItems: [(CellBorders, NSRect)] = []
+    var painted: [NSRect] = []
+    var rows = Set<Int>()
     for address in addresses {
       let role = mergeRole(at: address, sheet: sheet)
       if case .covered = role { continue }
       guard let rect = paintRect(for: address, merge: mergeRange(from: role)) else { continue }
       guard rect.intersects(dirtyRect) else { continue }
+      painted.append(rect)
+      rows.insert(address.row)
       theme.canvas.setFill()
       rect.fill()
       let cell = sheet.cell(at: address)
@@ -8771,6 +8805,18 @@ final class SpreadsheetGridNSView: NSView {
       if let borders = cached.paint.format?.borders ?? cell.format?.borders, borders.hasAny {
         borderItems.append((borders, rect))
       }
+    }
+    // Most text is drawn by the spill pass, not with its cell. Without this, a repainted cell
+    // showed blank until the next full redraw. Clipped to the repainted cells, so text in the
+    // cells around them is not drawn twice.
+    if !painted.isEmpty, let ctx = NSGraphicsContext.current {
+      ctx.saveGraphicsState()
+      let clip = NSBezierPath()
+      for rect in painted { clip.appendRect(rect) }
+      clip.addClip()
+      let union = painted.dropFirst().reduce(painted[0]) { $0.union($1) }
+      drawScrollableOverflowText(in: union, onlyRows: rows)
+      ctx.restoreGraphicsState()
     }
     if !borderItems.isEmpty {
       CellFormatRenderer.drawBordersBatch(borderItems, scale: zoomScale)
@@ -8820,6 +8866,24 @@ final class SpreadsheetGridNSView: NSView {
     let address = highlight.start
     let rect = rectForCell(row: address.row, col: address.col)
     scrollToVisible(rect.insetBy(dx: -40, dy: -40))
+  }
+
+  /// Where each sheet in this window was scrolled to, so returning to a tab (or an Undo that
+  /// switches back to one) shows the same place rather than the top-left corner.
+  private var scrollOriginBySheet: [UUID: CGPoint] = [:]
+  private var scrolledSheetID: UUID?
+
+  /// Shows another sheet, or the same sheet after its size or freeze changed.
+  func reloadForSheetChange(to sheetID: UUID) {
+    if let previous = scrolledSheetID {
+      scrollOriginBySheet[previous] = scrollOrigin
+    }
+    scrolledSheetID = sheetID
+    reloadContent(resetScrollPosition: true)
+    if let saved = scrollOriginBySheet[sheetID] {
+      scrollOrigin = saved
+      clampScrollOrigin()
+    }
   }
 
   func reloadContent(resetScrollPosition shouldReset: Bool = false) {
@@ -9849,19 +9913,12 @@ final class SpreadsheetGridNSView: NSView {
     scrollSelectionIntoView()
   }
 
-  /// The formula bar, or the in-cell editor, when it is the first responder.
-  private func formulaFieldForSelectAll() -> NSTextView? {
+  /// Text being typed when Command-A is pressed: the formula bar, the in-cell editor, the name
+  /// box or the find bar. Command-A selects that text rather than the sheet.
+  private func formulaFieldForSelectAll() -> NSText? {
     guard let responder = window?.firstResponder else { return nil }
-    if let formulaBar = responder as? FormulaBarNSTextView {
-      return formulaBar
-    }
-    guard isEditorActive else { return nil }
-    if let fieldEditor = responder as? NSTextView, fieldEditor === editor.currentEditor() {
-      return fieldEditor
-    }
-    if responder === editor, let fieldEditor = editor.currentEditor() as? NSTextView {
-      return fieldEditor
-    }
+    if let text = responder as? NSText { return text }
+    if responder === editor, isEditorActive { return editor.currentEditor() }
     return nil
   }
 

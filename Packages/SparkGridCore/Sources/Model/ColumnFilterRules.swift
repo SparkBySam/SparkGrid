@@ -83,24 +83,29 @@ public nonisolated struct ColumnFilterRules: Codable, Equatable, Sendable {
     return matchAll ? checks.allSatisfy { $0 } : checks.contains(true)
   }
 
+  /// Runs once per row and rule, so each kind does only the work it needs: text rules never
+  /// parse numbers, and number rules never lowercase.
   private func matches(_ text: String, rule: Rule, cutoffs: Cutoffs) -> Bool {
-    let cell = text.trimmingCharacters(in: .whitespaces)
-    let wanted = rule.value.trimmingCharacters(in: .whitespaces)
-    let lowerCell = cell.lowercased()
-    let lowerWanted = wanted.lowercased()
     switch rule.kind {
-    case .equals:
-      if let a = Self.number(cell), let b = Self.number(wanted) { return a == b }
-      return lowerCell == lowerWanted
-    case .notEquals:
-      if let a = Self.number(cell), let b = Self.number(wanted) { return a != b }
-      return lowerCell != lowerWanted
-    case .contains: return lowerCell.contains(lowerWanted)
-    case .notContains: return !lowerCell.contains(lowerWanted)
-    case .beginsWith: return lowerCell.hasPrefix(lowerWanted)
-    case .endsWith: return lowerCell.hasSuffix(lowerWanted)
+    case .equals, .notEquals:
+      let same: Bool
+      if let a = Self.number(text), let b = Self.number(rule.value) {
+        same = a == b
+      } else {
+        same = Self.folded(text) == Self.folded(rule.value)
+      }
+      return rule.kind == .equals ? same : !same
+    case .contains, .notContains, .beginsWith, .endsWith:
+      let cell = Self.folded(text)
+      let wanted = Self.folded(rule.value)
+      switch rule.kind {
+      case .contains: return cell.contains(wanted)
+      case .notContains: return !cell.contains(wanted)
+      case .beginsWith: return cell.hasPrefix(wanted)
+      default: return cell.hasSuffix(wanted)
+      }
     case .greaterThan, .greaterOrEqual, .lessThan, .lessOrEqual:
-      guard let a = Self.number(cell), let b = Self.number(wanted) else { return false }
+      guard let a = Self.number(text), let b = Self.number(rule.value) else { return false }
       switch rule.kind {
       case .greaterThan: return a > b
       case .greaterOrEqual: return a >= b
@@ -108,17 +113,22 @@ public nonisolated struct ColumnFilterRules: Codable, Equatable, Sendable {
       default: return a <= b
       }
     case .between:
-      guard let a = Self.number(cell), let low = Self.number(wanted),
+      guard let a = Self.number(text), let low = Self.number(rule.value),
         let high = Self.number(rule.value2)
       else { return false }
       return a >= min(low, high) && a <= max(low, high)
     case .top:
-      guard let a = Self.number(cell), let cutoff = cutoffs.top else { return false }
+      guard let cutoff = cutoffs.top, let a = Self.number(text) else { return false }
       return a >= cutoff
     case .bottom:
-      guard let a = Self.number(cell), let cutoff = cutoffs.bottom else { return false }
+      guard let cutoff = cutoffs.bottom, let a = Self.number(text) else { return false }
       return a <= cutoff
     }
+  }
+
+  /// Text compared without case or surrounding spaces.
+  private static func folded(_ text: String) -> String {
+    text.trimmingCharacters(in: .whitespaces).lowercased()
   }
 
   /// A number from shown text: `$1,250.50`, `(300)`, `12%` (as 12) and `-4` all read as numbers.
@@ -132,9 +142,41 @@ public nonisolated struct ColumnFilterRules: Codable, Equatable, Sendable {
     }
     // A percent compares as shown: 12% reads as 12, so a rule of 10 means 10%.
     if t.hasSuffix("%") { t.removeLast() }
-    t = t.replacingOccurrences(of: ",", with: "")
-    t = t.replacingOccurrences(of: "$", with: "")
-    guard let value = Double(t) else { return nil }
+    // Plain numbers, most cells, skip the copies below.
+    if let plain = Double(t), plain.isFinite { return negative ? -plain : plain }
+    t.removeAll { $0 == "," || $0 == "$" }
+    // "nan" and "inf" are words in a cell, not numbers.
+    guard let value = Double(t), value.isFinite else { return negative ? nil : dateSerial(text) }
     return negative ? -value : value
+  }
+
+  /// A shown date such as `2/28/2026`, `2026-02-28` or `28-Feb-2026` as a spreadsheet date
+  /// serial (days since 30 Dec 1899), so "greater than 1/1/2026" compares dates, not text.
+  public static func dateSerial(_ text: String) -> Double? {
+    let t = text.trimmingCharacters(in: .whitespaces)
+    // Every form read here has a digit and a / or - or space between parts.
+    guard t.count >= 6, t.count <= 20, t.contains(where: \.isNumber),
+      t.contains(where: { $0 == "/" || $0 == "-" || $0 == " " })
+    else { return nil }
+    for formatter in dateFormatters {
+      if let date = formatter.date(from: t) {
+        return (date.timeIntervalSince(serialEpoch) / 86_400).rounded()
+      }
+    }
+    return nil
+  }
+
+  /// 30 Dec 1899, day zero of spreadsheet date serials (25,569 days before 1970).
+  private static let serialEpoch = Date(timeIntervalSince1970: -2_209_161_600)
+
+  private static let dateFormatters: [DateFormatter] = [
+    "M/d/yyyy", "M/d/yy", "yyyy-MM-dd", "d-MMM-yyyy", "d-MMM-yy", "MMM d, yyyy", "MMMM d, yyyy",
+  ].map { pattern in
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .gmt
+    formatter.dateFormat = pattern
+    formatter.isLenient = false
+    return formatter
   }
 }

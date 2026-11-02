@@ -450,9 +450,17 @@ extension XLSXCodec {
         .replacingOccurrences(of: "*", with: "~*")
         .replacingOccurrences(of: "?", with: "~?")
     }
+    // Other apps compare dates in a rule as serial numbers, so a typed date is saved as one.
+    func comparable(_ text: String) -> String {
+      let t = text.trimmingCharacters(in: .whitespaces)
+      guard Double(t) == nil, let serial = ColumnFilterRules.dateSerial(t) else { return t }
+      return String(Int(serial))
+    }
     var items: [(op: String?, val: String)] = []
     for rule in rules.rules {
-      let v = rule.value.trimmingCharacters(in: .whitespaces)
+      let v =
+        rule.kind.isNumeric
+        ? comparable(rule.value) : rule.value.trimmingCharacters(in: .whitespaces)
       switch rule.kind {
       case .equals: items.append((nil, v))
       case .notEquals: items.append(("notEqual", v))
@@ -466,7 +474,7 @@ extension XLSXCodec {
       case .lessOrEqual: items.append(("lessThanOrEqual", v))
       case .between:
         items.append(("greaterThanOrEqual", v))
-        items.append(("lessThanOrEqual", rule.value2.trimmingCharacters(in: .whitespaces)))
+        items.append(("lessThanOrEqual", comparable(rule.value2)))
       case .top, .bottom: break
       }
     }

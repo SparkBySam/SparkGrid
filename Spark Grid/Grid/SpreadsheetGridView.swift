@@ -32,7 +32,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
     if sheetKey != context.coordinator.lastSheetKey {
       context.coordinator.lastSheetKey = sheetKey
       context.coordinator.lastStructureRevision = viewModel.structureRevision
-      nsView.reloadContent(resetScrollPosition: true)
+      nsView.reloadForSheetChange(to: viewModel.activeSheet.id)
     } else if viewModel.structureRevision != context.coordinator.lastStructureRevision {
       context.coordinator.lastStructureRevision = viewModel.structureRevision
       context.coordinator.lastGridRefreshToken = viewModel.gridRefreshToken

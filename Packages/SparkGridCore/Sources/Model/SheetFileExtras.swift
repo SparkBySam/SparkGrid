@@ -76,30 +76,39 @@ public nonisolated struct DataValidationRule: Codable, Equatable, Sendable {
     self.body = body
   }
 
+  /// True for a dropdown list rule.
+  public var isList: Bool { attributes.contains(#"type="list""#) }
+
   /// The choices of a list rule whose source is written inline, such as `"Open,Closed"`.
   public var inlineListItems: [String]? {
-    guard attributes.contains(#"type="list""#) else { return nil }
-    guard let open = body.range(of: "<formula1>"),
-      let close = body.range(of: "</formula1>", range: open.upperBound..<body.endIndex)
-    else { return nil }
-    let formula = String(body[open.upperBound..<close.lowerBound])
-      .replacingOccurrences(of: "&quot;", with: "\"")
-      .replacingOccurrences(of: "&amp;", with: "&")
-      .replacingOccurrences(of: "&lt;", with: "<")
-      .replacingOccurrences(of: "&gt;", with: ">")
-    guard formula.count >= 2, formula.hasPrefix("\""), formula.hasSuffix("\"") else { return nil }
+    guard isList, let formula = formula1, Self.isInlineList(formula) else { return nil }
     return formula.dropFirst().dropLast().split(separator: ",", omittingEmptySubsequences: false)
       .map { String($0) }
   }
 
   /// The source formula of a list rule that points at cells, such as `$F$2:$F$9`.
   public var listSourceFormula: String? {
-    guard attributes.contains(#"type="list""#), inlineListItems == nil else { return nil }
+    guard isList, let formula = formula1, !formula.isEmpty, !Self.isInlineList(formula) else {
+      return nil
+    }
+    return formula
+  }
+
+  private static func isInlineList(_ formula: String) -> Bool {
+    formula.count >= 2 && formula.hasPrefix("\"") && formula.hasSuffix("\"")
+  }
+
+  /// The text of `<formula1>`, unescaped, so `'R&amp;D'!$A$1` reads as `'R&D'!$A$1`.
+  private var formula1: String? {
     guard let open = body.range(of: "<formula1>"),
       let close = body.range(of: "</formula1>", range: open.upperBound..<body.endIndex)
     else { return nil }
-    let formula = String(body[open.upperBound..<close.lowerBound])
-    return formula.isEmpty ? nil : formula
+    return String(body[open.upperBound..<close.lowerBound])
+      .replacingOccurrences(of: "&quot;", with: "\"")
+      .replacingOccurrences(of: "&apos;", with: "'")
+      .replacingOccurrences(of: "&lt;", with: "<")
+      .replacingOccurrences(of: "&gt;", with: ">")
+      .replacingOccurrences(of: "&amp;", with: "&")
   }
 }
 
