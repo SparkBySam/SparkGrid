@@ -180,7 +180,11 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    guard let documentStore else { return true }
+    // Settings and other windows close on their own. Only the spreadsheet window asks to save,
+    // and closing it closes the document; Settings used to take that path and quit the app.
+    guard sender.identifier?.rawValue.hasPrefix("main") == true, let documentStore else {
+      return true
+    }
     return documentStore.allowWindowToClose(sender)
   }
 

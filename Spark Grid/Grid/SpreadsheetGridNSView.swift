@@ -25,6 +25,9 @@ final class SpreadsheetGridNSView: NSView {
         case .cells(let addresses):
           self.testingInvalidateReason = "cells \(addresses.count)"
           self.invalidateDisplayedCells(addresses)
+          self.layoutOnSheetCharts()
+        case .charts:
+          self.layoutOnSheetCharts()
         case .repaint:
           self.testingInvalidateReason = "repaint"
           self.cellPaintCache.removeAll(keepingCapacity: true)
@@ -316,6 +319,19 @@ final class SpreadsheetGridNSView: NSView {
     var hasMoved = false
   }
   private var activeChartDrag: ChartDragState?
+  /// A chart from the file being dragged. Its card moves with the pointer; the anchor is
+  /// written when the drag ends.
+  private var activeImportedChartDrag: ImportedChartDrag?
+
+  private struct ImportedChartDrag {
+    var id: Int
+    /// `.body` moves the chart; an edge or corner resizes it.
+    var handle: OnSheetChartGeometry.ChartFrameHandle = .body
+    var startPoint: NSPoint
+    var startRect: NSRect
+    var startHostFrame: NSRect
+    var hasMoved = false
+  }
   private let chartHandleThickness: CGFloat = 8
   /// Flipped like the grid. Host frames are viewport coordinates whose
   /// origin is the chart's top-left. An unflipped layer reads that origin
@@ -737,8 +753,23 @@ final class SpreadsheetGridNSView: NSView {
   private var frameBitmap: CGContext?
   private var isDrawingFrameBitmap = false
   private var chartHosts: [UUID: OnSheetChartHost] = [:]
+  /// Charts from other apps, by their place among the sheet's kept charts.
+  private var importedChartHosts: [Int: ImportedChartHost] = [:]
+  /// Pointer position for each chart card, so it can name the value under the pointer.
+  private var chartHovers: [UUID: ChartHover] = [:]
+  private var importedChartHovers: [Int: ChartHover] = [:]
+  private var importedChartSnapshots: [Int: ImportedChartSnapshot] = [:]
   private var chartHostSnapshots: [UUID: ChartHostSnapshot] = [:]
   private var isLayingOutCharts = false
+
+  private struct ImportedChartSnapshot: Equatable {
+    var placement: SpreadsheetViewModel.ImportedChartPlacement
+    var selected: Bool
+    var sheetID: UUID
+    var contentRevision: Int
+    /// Bumps when calculated values arrive from the background, such as another sheet's totals.
+    var engineRevision: Int
+  }
 
   private struct ChartHostSnapshot: Equatable {
     var chart: SheetChart
@@ -1380,12 +1411,13 @@ final class SpreadsheetGridNSView: NSView {
     engine: FormulaEngine
   ) -> ConditionalPaint {
     let rules = sheet.conditionalFormats
-    guard !rules.isEmpty else { return ConditionalPaint(format: cell.format) }
+    let base = sheet.formatWithTableStyle(at: address)
+    guard !rules.isEmpty else { return ConditionalPaint(format: base) }
     let value = engine.sheetDisplayValue(at: address, sheet: sheet, cell: cell)
     let text = engine.displayString(at: address, sheet: sheet, format: cell.format)
     return ConditionalFormatEvaluator.resolvedPaint(
       at: address,
-      base: cell.format,
+      base: base,
       rules: rules,
       value: value,
       displayString: text,
@@ -2299,6 +2331,20 @@ final class SpreadsheetGridNSView: NSView {
       if viewModel?.selectedChartID == chart.id,
         let handle = OnSheetChartGeometry.frameHandle(
           at: point, in: rect, thickness: chartHandleThickness),
+        handle != .body
+      {
+        cursor(for: handle).set()
+      } else {
+        NSCursor.openHand.set()
+      }
+      return
+    }
+    if let placement = importedChartHitTest(at: point) {
+      if let drag = activeImportedChartDrag, drag.hasMoved {
+        (drag.handle == .body ? NSCursor.closedHand : cursor(for: drag.handle)).set()
+      } else if viewModel?.selectedImportedChartID == placement.id,
+        let handle = OnSheetChartGeometry.frameHandle(
+          at: point, in: importedChartRect(placement), thickness: chartHandleThickness),
         handle != .body
       {
         cursor(for: handle).set()
@@ -4327,7 +4373,7 @@ final class SpreadsheetGridNSView: NSView {
             let role = mergeRole(at: address, sheet: sheet)
             if case .covered = role { continue }
             let hasCell = sheet.cells[address] != nil
-            if !hasCell, case .none = role { continue }
+            if !hasCell, case .none = role, !sheet.tableContains(address) { continue }
             let cell = sheet.cell(at: address)
             _ = cachedCellPaint(at: address, viewModel: nil, sheet: sheet, cell: cell)
           }
@@ -4936,7 +4982,7 @@ final class SpreadsheetGridNSView: NSView {
             let role = mergeRole(at: address, sheet: sheet)
             if case .covered = role { continue }
             let hasCell = sheet.cells[address] != nil
-            if !hasCell, case .none = role { continue }
+            if !hasCell, case .none = role, !sheet.tableContains(address) { continue }
             let merge = mergeRange(from: role)
             guard let rect = paintRect(for: address, merge: merge), clip.intersects(rect) else {
               continue
@@ -5402,13 +5448,14 @@ final class SpreadsheetGridNSView: NSView {
         guard !visible.isNull, !visible.isEmpty, dirtyRect.intersects(visible) else { continue }
         headerFill.setFill()
         visible.fill()
+        // Under the label, so the number or letter stays readable.
+        drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
         drawHeaderLabel(
           A1Notation.columnLabel(for: col) as NSString,
           centeredIn: onScreen,
           clip: visible,
           color: headerText
         )
-        drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
         gridLine.setStroke()
         if abs(rect.maxX - columnBoundaryX) > 0.5 {
           NSBezierPath.strokeLine(
@@ -5485,13 +5532,14 @@ final class SpreadsheetGridNSView: NSView {
         headerFill.setFill()
         visible.fill()
         // The accent marks every row of a filtered list.
+        // Under the label, so the number or letter stays readable.
+        drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
         drawHeaderLabel(
           "\(row + 1)" as NSString,
           centeredIn: onScreen,
           clip: visible,
           color: viewModel?.isShownByActiveFilter(row) == true ? theme.accent : headerText
         )
-        drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
         gridLine.setStroke()
         if abs(rect.maxY - rowBoundaryY) > 0.5 {
           NSBezierPath.strokeLine(
@@ -5530,7 +5578,8 @@ final class SpreadsheetGridNSView: NSView {
       rect.height >= 12
     else { return [] }
     var marks: [HiddenRunChevron] = []
-    let x = rect.maxX - 13
+    // At the header's left edge: row numbers are centered and long ones reached the right edge.
+    let x = rect.minX + 3
     if sheet.isRowHidden(row + 1) {
       marks.append(
         HiddenRunChevron(
@@ -5567,13 +5616,13 @@ final class SpreadsheetGridNSView: NSView {
     return marks
   }
 
+  /// In a translucent accent, drawn before the header's number or letter so that sits on top.
   private func drawHiddenRunChevrons(_ marks: [HiddenRunChevron]) {
     guard !marks.isEmpty else { return }
-    theme.gridLine.setStroke()
     for mark in marks {
       let r = mark.rect
       let path = NSBezierPath()
-      path.lineWidth = 1.5
+      path.lineWidth = 1.75
       path.lineCapStyle = .round
       path.lineJoinStyle = .round
       switch mark.direction {
@@ -5594,6 +5643,7 @@ final class SpreadsheetGridNSView: NSView {
         path.line(to: NSPoint(x: r.minX, y: r.midY))
         path.line(to: NSPoint(x: r.maxX, y: r.maxY))
       }
+      theme.accent.withAlphaComponent(0.55).setStroke()
       path.stroke()
     }
   }
@@ -6222,9 +6272,7 @@ final class SpreadsheetGridNSView: NSView {
     let charts = viewModel.activeSheet.charts
     let live = Set(charts.map(\.id))
     for id in Array(chartHosts.keys) where !live.contains(id) {
-      chartHosts[id]?.removeFromSuperview()
-      chartHosts.removeValue(forKey: id)
-      chartHostSnapshots.removeValue(forKey: id)
+      removeChartHost(id: id)
     }
     for chart in charts {
       let rect = chartRect(for: chart)
@@ -6256,7 +6304,8 @@ final class SpreadsheetGridNSView: NSView {
         host = existing
       } else {
         let created = OnSheetChartHost(
-          rootView: OnSheetChartCard(chart: chart, viewModel: viewModel))
+          rootView: OnSheetChartCard(
+            chart: chart, viewModel: viewModel, hover: chartHover(for: chart.id)))
         created.sizingOptions = []
         created.safeAreaRegions = []
         created.translatesAutoresizingMaskIntoConstraints = true
@@ -6269,7 +6318,8 @@ final class SpreadsheetGridNSView: NSView {
         host = created
       }
       if chartHostSnapshots[chart.id] != snapshot {
-        host.rootView = OnSheetChartCard(chart: chart, viewModel: viewModel)
+        host.rootView = OnSheetChartCard(
+          chart: chart, viewModel: viewModel, hover: chartHover(for: chart.id))
         chartHostSnapshots[chart.id] = snapshot
       }
       host.isHidden = false
@@ -6283,11 +6333,130 @@ final class SpreadsheetGridNSView: NSView {
         host.needsLayout = true
       }
     }
+    layoutImportedCharts(viewModel)
+  }
+
+  /// Places charts from other apps where the file put them. They draw from the cells they name.
+  private func layoutImportedCharts(_ viewModel: SpreadsheetViewModel) {
+    let placements = viewModel.importedChartPlacements
+    let live = Set(placements.map(\.id))
+    for id in Array(importedChartHosts.keys) where !live.contains(id) {
+      removeImportedChartHost(id: id)
+    }
+    let sheetID = viewModel.activeSheet.id
+    for placement in placements {
+      let rect = importedChartRect(placement)
+      let local = OnSheetChartGeometry.hostFrame(chartRect: rect, layerFrame: chartLayerView.frame)
+      guard rect.width >= 1, rect.height >= 1, local.width.isFinite, local.height.isFinite,
+        local.width >= 1, local.height >= 1, local.origin.x.isFinite, local.origin.y.isFinite
+      else {
+        removeImportedChartHost(id: placement.id)
+        continue
+      }
+      let snapshot = ImportedChartSnapshot(
+        placement: placement, selected: viewModel.selectedImportedChartID == placement.id,
+        sheetID: sheetID, contentRevision: viewModel.contentRevision,
+        engineRevision: viewModel.formulaEngine.cacheRevision)
+      let host: ImportedChartHost
+      if let existing = importedChartHosts[placement.id] {
+        host = existing
+      } else {
+        let created = ImportedChartHost(
+          rootView: ImportedChartCard(
+            placement: placement, viewModel: viewModel,
+            hover: importedChartHover(for: placement.id)))
+        created.sizingOptions = []
+        created.safeAreaRegions = []
+        created.translatesAutoresizingMaskIntoConstraints = true
+        created.focusRingType = .none
+        created.frame = local
+        chartLayerView.addSubview(created)
+        importedChartHosts[placement.id] = created
+        host = created
+      }
+      if importedChartSnapshots[placement.id] != snapshot {
+        host.rootView = ImportedChartCard(
+          placement: placement, viewModel: viewModel,
+          hover: importedChartHover(for: placement.id))
+        importedChartSnapshots[placement.id] = snapshot
+      }
+      host.isHidden = false
+      if host.frame != local {
+        host.frame = local
+        host.needsLayout = true
+      }
+    }
+  }
+
+  private func removeImportedChartHost(id: Int) {
+    importedChartHosts[id]?.removeFromSuperview()
+    importedChartHosts.removeValue(forKey: id)
+    importedChartSnapshots.removeValue(forKey: id)
+    importedChartHovers.removeValue(forKey: id)
+  }
+
+  private func chartHover(for id: UUID) -> ChartHover {
+    if let hover = chartHovers[id] { return hover }
+    let hover = ChartHover()
+    chartHovers[id] = hover
+    return hover
+  }
+
+  private func importedChartHover(for id: Int) -> ChartHover {
+    if let hover = importedChartHovers[id] { return hover }
+    let hover = ChartHover()
+    importedChartHovers[id] = hover
+    return hover
+  }
+
+  /// Hands the pointer to the chart under it and clears every other chart's.
+  private func updateChartHover(at point: NSPoint?) {
+    func place(_ hover: ChartHover?, in host: NSView) {
+      guard let hover else { return }
+      var location: CGPoint?
+      if let point, !host.isHidden {
+        let local = host.convert(point, from: self)
+        if host.bounds.contains(local) { location = local }
+      }
+      if hover.location != location { hover.location = location }
+    }
+    for (id, host) in chartHosts { place(chartHovers[id], in: host) }
+    for (id, host) in importedChartHosts { place(importedChartHovers[id], in: host) }
+  }
+
+  /// A drawing anchor's cells and offsets (12,700 EMU to a point) in grid coordinates.
+  private func importedChartRect(_ placement: SpreadsheetViewModel.ImportedChartPlacement) -> NSRect
+  {
+    let scale = zoomScale
+    func point(_ marker: DrawingMarker) -> NSPoint {
+      NSPoint(
+        x: xForColumn(marker.col) + CGFloat(marker.colOffset) / 12_700 * scale,
+        y: yForRow(marker.row) + CGFloat(marker.rowOffset) / 12_700 * scale)
+    }
+    let origin = point(placement.from)
+    let end: NSPoint
+    if let to = placement.to {
+      end = point(to)
+    } else {
+      let size = placement.size ?? CGSize(width: 480, height: 288)
+      end = NSPoint(x: origin.x + size.width * scale, y: origin.y + size.height * scale)
+    }
+    return NSRect(
+      x: origin.x, y: origin.y, width: max(0, end.x - origin.x), height: max(0, end.y - origin.y))
   }
 
   func scrollChartIntoView(id: UUID) {
     guard let chart = viewModel?.activeSheet.charts.first(where: { $0.id == id }) else { return }
-    let rect = chartRect(for: chart)
+    scrollIntoView(chartRect(for: chart))
+  }
+
+  func scrollImportedChartIntoView(id: Int) {
+    guard let placement = viewModel?.importedChartPlacements.first(where: { $0.id == id })
+    else { return }
+    scrollIntoView(importedChartRect(placement))
+  }
+
+  private func scrollIntoView(_ rect: NSRect) {
     let visible = contentRect
     if rect.width > visible.width {
       scrollOrigin.x -= visible.minX - rect.minX
@@ -6314,12 +6483,16 @@ final class SpreadsheetGridNSView: NSView {
     }
     chartHosts.removeAll()
     chartHostSnapshots.removeAll()
+    for id in Array(importedChartHosts.keys) {
+      removeImportedChartHost(id: id)
+    }
   }
 
   private func removeChartHost(id: UUID) {
     chartHosts[id]?.removeFromSuperview()
     chartHosts.removeValue(forKey: id)
     chartHostSnapshots.removeValue(forKey: id)
+    chartHovers.removeValue(forKey: id)
   }
 
   private func chartRect(for chart: SheetChart) -> NSRect {
@@ -6352,6 +6525,85 @@ final class SpreadsheetGridNSView: NSView {
       return .resizeUpDown
     case .topLeft, .topRight, .bottomLeft, .bottomRight:
       return .crosshair
+    }
+  }
+
+  /// The chart from the file under `point`, topmost first.
+  private func importedChartHitTest(at point: NSPoint)
+    -> SpreadsheetViewModel.ImportedChartPlacement?
+  {
+    guard contentRect.contains(point), !pointIsCoveredByFrozenPane(point),
+      let placements = viewModel?.importedChartPlacements
+    else { return nil }
+    let selected = viewModel?.selectedImportedChartID
+    return placements.reversed().first { placement in
+      var rect = importedChartRect(placement)
+      guard rect.width >= 8, rect.height >= 8 else { return false }
+      // A selected chart's handles sit on its border, half outside it. Grab all of each one.
+      if placement.id == selected {
+        rect = rect.insetBy(dx: -chartHandleThickness / 2, dy: -chartHandleThickness / 2)
+      }
+      return rect.contains(point)
+    }
+  }
+
+  /// The frame a drag gives a chart from the file: moved by the body, or resized by an edge
+  /// or corner. Its top-left stays inside the sheet and it keeps a readable size.
+  private static func importedChartFrame(
+    _ drag: ImportedChartDrag, dx: CGFloat, dy: CGFloat, headerSize: CGFloat
+  ) -> NSRect {
+    let start = drag.startRect
+    let minWidth: CGFloat = 120
+    let minHeight: CGFloat = 80
+    var minX = start.minX
+    var minY = start.minY
+    var maxX = start.maxX
+    var maxY = start.maxY
+    switch drag.handle {
+    case .body:
+      minX = max(headerSize, start.minX + dx)
+      minY = max(headerSize, start.minY + dy)
+      return NSRect(x: minX, y: minY, width: start.width, height: start.height)
+    case .left, .topLeft, .bottomLeft:
+      minX = min(max(headerSize, start.minX + dx), maxX - minWidth)
+    case .right, .topRight, .bottomRight:
+      maxX = max(start.maxX + dx, minX + minWidth)
+    case .top, .bottom:
+      break
+    }
+    switch drag.handle {
+    case .top, .topLeft, .topRight:
+      minY = min(max(headerSize, start.minY + dy), maxY - minHeight)
+    case .bottom, .bottomLeft, .bottomRight:
+      maxY = max(start.maxY + dy, minY + minHeight)
+    default:
+      break
+    }
+    return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+  }
+
+  /// Writes the moved or resized chart's anchor cells. Offsets are stored in EMU at 100% zoom.
+  private func commitImportedChartDrag(_ drag: ImportedChartDrag, dx: CGFloat, dy: CGFloat) {
+    guard let viewModel,
+      let placement = viewModel.importedChartPlacements.first(where: { $0.id == drag.id })
+    else { return }
+    let scale = zoomScale
+    func marker(at point: NSPoint) -> DrawingMarker {
+      let col = max(0, columnAtContent(x: point.x))
+      let row = max(0, rowAtContent(y: point.y))
+      return DrawingMarker(
+        col: col, colOffset: Int(max(0, (point.x - xForColumn(col)) / scale * 12_700)),
+        row: row, rowOffset: Int(max(0, (point.y - yForRow(row)) / scale * 12_700)))
+    }
+    let rect = Self.importedChartFrame(drag, dx: dx, dy: dy, headerSize: headerSize)
+    let from = marker(at: NSPoint(x: rect.minX, y: rect.minY))
+    let to = placement.to == nil ? nil : marker(at: NSPoint(x: rect.maxX, y: rect.maxY))
+    if drag.handle == .body {
+      viewModel.moveImportedChart(placement.id, from: from, to: to)
+    } else {
+      viewModel.resizeImportedChart(
+        placement.id, from: from, to: to,
+        size: CGSize(width: rect.width / scale, height: rect.height / scale))
     }
   }
 
@@ -6813,7 +7065,7 @@ final class SpreadsheetGridNSView: NSView {
           continue
         }
         let hasCell = sheet.cells[address] != nil
-        if !hasCell, case .none = role { continue }
+        if !hasCell, case .none = role, !sheet.tableContains(address) { continue }
         let cell = sheet.cell(at: address)
         guard let rect = paintRect(for: address, merge: mergeRange(from: role)) else { continue }
         guard isCellRectInContentArea(rect), dirtyRect.intersects(rect) else { continue }
@@ -6901,7 +7153,7 @@ final class SpreadsheetGridNSView: NSView {
           continue
         }
         let hasCell = sheet.cells[address] != nil
-        if !hasCell, case .none = role { continue }
+        if !hasCell, case .none = role, !sheet.tableContains(address) { continue }
         let cell = sheet.cell(at: address)
         guard let rect = paintRect(for: address, merge: mergeRange(from: role)) else { continue }
         guard dirtyRect.intersects(rect) else { continue }
@@ -7583,15 +7835,16 @@ final class SpreadsheetGridNSView: NSView {
         path.lineWidth = 1.5 * zoomScale
         tileStroke(path, color: color)
       } else if glyph == .greenArrow {
-        path.move(to: NSPoint(x: box.midX, y: box.maxY))
-        path.line(to: NSPoint(x: box.minX + 1, y: box.minY + size * 0.35))
-        path.line(to: NSPoint(x: box.maxX - 1, y: box.minY + size * 0.35))
-        path.close()
-        tileFillPath(path, color: color)
-      } else {
+        // Flipped grid: the green arrow's tip is at the top, the red arrow's at the bottom.
         path.move(to: NSPoint(x: box.midX, y: box.minY))
         path.line(to: NSPoint(x: box.minX + 1, y: box.maxY - size * 0.35))
         path.line(to: NSPoint(x: box.maxX - 1, y: box.maxY - size * 0.35))
+        path.close()
+        tileFillPath(path, color: color)
+      } else {
+        path.move(to: NSPoint(x: box.midX, y: box.maxY))
+        path.line(to: NSPoint(x: box.minX + 1, y: box.minY + size * 0.35))
+        path.line(to: NSPoint(x: box.maxX - 1, y: box.minY + size * 0.35))
         path.close()
         tileFillPath(path, color: color)
       }
@@ -7608,9 +7861,10 @@ final class SpreadsheetGridNSView: NSView {
       path.lineCapStyle = .round
       switch glyph {
       case .greenCheck:
+        // The grid is flipped: larger y is lower. The tick dips down, then rises to the right.
         path.move(to: NSPoint(x: box.minX + size * 0.15, y: box.midY))
-        path.line(to: NSPoint(x: box.midX - size * 0.05, y: box.minY + size * 0.2))
-        path.line(to: NSPoint(x: box.maxX - size * 0.1, y: box.maxY - size * 0.15))
+        path.line(to: NSPoint(x: box.midX - size * 0.05, y: box.maxY - size * 0.2))
+        path.line(to: NSPoint(x: box.maxX - size * 0.1, y: box.minY + size * 0.15))
       case .yellowDash:
         path.move(to: NSPoint(x: box.minX + size * 0.15, y: box.midY))
         path.line(to: NSPoint(x: box.maxX - size * 0.15, y: box.midY))
@@ -7696,10 +7950,16 @@ final class SpreadsheetGridNSView: NSView {
     guard let viewModel, let sheet = layoutSheet else { return }
     // Clip each pane's wash to that pane. A cell scrolled part-way under the
     // headers or a frozen pane must not show through the corner or across the freeze.
+    let shaded = viewModel.duplicateHighlightCells
+    let shade = (viewModel.duplicateHighlight?.unique == true ? NSColor.systemGreen : .systemRed)
+      .withAlphaComponent(0.28)
     for (rows, cols, clip) in onScreenSelectionRegions() {
       guard clip.width > 0.5, clip.height > 0.5, dirtyRect.intersects(clip) else { continue }
       NSGraphicsContext.saveGraphicsState()
       NSBezierPath(rect: clip).addClip()
+      if !shaded.isEmpty {
+        drawDuplicateShading(shaded, color: shade, rows: rows, cols: cols, in: dirtyRect)
+      }
       drawSelectionWash(
         in: dirtyRect,
         rowRange: rows,
@@ -7717,31 +7977,56 @@ final class SpreadsheetGridNSView: NSView {
     drawHeaderSelectionChrome(in: dirtyRect)
   }
 
+  /// The temporary Duplicates highlight, over the cells it marks in one pane.
+  private func drawDuplicateShading(
+    _ cells: Set<CellAddress>, color: NSColor, rows: ClosedRange<Int>, cols: ClosedRange<Int>,
+    in dirtyRect: NSRect
+  ) {
+    color.setFill()
+    for row in rows where rowHeight(at: row) > 0 {
+      for col in cols where cells.contains(CellAddress(row: row, col: col)) {
+        let rect = cellBorderRect(minRow: row, minCol: col, maxRow: row, maxCol: col)
+        if rect.intersects(dirtyRect) { rect.fill() }
+      }
+    }
+  }
+
   /// A small corner triangle on each cell that has a comment, as other spreadsheet apps draw it.
+  /// A small speech bubble in the top-right corner of each cell with a comment. A red corner
+  /// triangle read as an error, or as part of a dropdown.
   private func drawCommentMarks(in dirtyRect: NSRect, sheet: Sheet) {
     let comments = sheet.fileExtras.comments
     guard !comments.isEmpty else { return }
-    let size = 6 * zoomScale
+    let width = 8 * zoomScale
+    let height = 6.5 * zoomScale
+    let inset = 1.5 * zoomScale
     for comment in comments {
       let address = sheet.mergeAnchor(for: comment.address)
       let span = sheet.mergeContaining(address) ?? CellRange(start: address, end: address)
       let n = span.normalized
       let rect = cellBorderRect(
         minRow: n.minRow, minCol: n.minCol, maxRow: n.maxRow, maxCol: n.maxCol)
-      guard rect.width > size, rect.height > size, dirtyRect.intersects(rect),
+      guard rect.width > width * 2, rect.height > height + inset * 2, dirtyRect.intersects(rect),
         isCellRectInContentArea(rect)
       else { continue }
       let clip = paneClipRect(for: span)
       guard clip.width > 0.5, clip.height > 0.5 else { continue }
       NSGraphicsContext.saveGraphicsState()
       NSBezierPath(rect: clip).addClip()
-      let mark = NSBezierPath()
-      mark.move(to: NSPoint(x: rect.maxX - size, y: rect.minY))
-      mark.line(to: NSPoint(x: rect.maxX, y: rect.minY))
-      mark.line(to: NSPoint(x: rect.maxX, y: rect.minY + size))
-      mark.close()
-      NSColor.systemRed.setFill()
-      mark.fill()
+      // Flipped: y grows down, so the tail hangs below the bubble's left side.
+      let tail = 2 * zoomScale
+      let body = NSRect(
+        x: rect.maxX - inset - width, y: rect.minY + inset, width: width, height: height - tail)
+      let bubble = NSBezierPath(roundedRect: body, xRadius: 2 * zoomScale, yRadius: 2 * zoomScale)
+      bubble.move(to: NSPoint(x: body.minX + 2 * zoomScale, y: body.maxY - 0.5))
+      bubble.line(to: NSPoint(x: body.minX + 2 * zoomScale, y: body.maxY + tail))
+      bubble.line(to: NSPoint(x: body.minX + 5 * zoomScale, y: body.maxY - 0.5))
+      bubble.close()
+      NSColor.systemYellow.setFill()
+      bubble.fill()
+      NSColor.systemOrange.setStroke()
+      bubble.lineWidth = max(0.75, 0.75 * zoomScale)
+      bubble.stroke()
       NSGraphicsContext.restoreGraphicsState()
     }
   }
@@ -8141,13 +8426,14 @@ final class SpreadsheetGridNSView: NSView {
       visible.fill()
       selectionFill.setFill()
       visible.fill()
+      // Under the label, so the number or letter stays readable.
+      drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
       drawHeaderLabel(
         A1Notation.columnLabel(for: col) as NSString,
         centeredIn: visible,
         clip: visible,
         color: labelColor
       )
-      drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
       accent.setStroke()
       let border = NSBezierPath()
       border.lineWidth = 2
@@ -8174,13 +8460,14 @@ final class SpreadsheetGridNSView: NSView {
       visible.fill()
       selectionFill.setFill()
       visible.fill()
+      // Under the label, so the number or letter stays readable.
+      drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
       drawHeaderLabel(
         "\(row + 1)" as NSString,
         centeredIn: visible,
         clip: visible,
         color: labelColor
       )
-      drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
       accent.setStroke()
       let border = NSBezierPath()
       border.lineWidth = 2
@@ -9015,6 +9302,12 @@ final class SpreadsheetGridNSView: NSView {
       for rect in painted { clip.appendRect(rect) }
       clip.addClip()
       let union = painted.dropFirst().reduce(painted[0]) { $0.union($1) }
+      // The fills above cover the gridlines on the cells' edges. A full redraw draws them
+      // after the fills; without this, a whole row lost its lines after AutoSum until the next
+      // full redraw, as AutoSum leaves the selection where it was.
+      if !visibleRegionIsMostlyBordered() {
+        drawGridLines(in: union)
+      }
       drawScrollableOverflowText(in: union, onlyRows: rows)
       ctx.restoreGraphicsState()
     }
@@ -9133,11 +9426,13 @@ final class SpreadsheetGridNSView: NSView {
     updateCursor(for: point)
     updateErrorToolTip(at: point)
     updateCommentCard(at: point)
+    updateChartHover(at: point)
   }
 
   override func mouseExited(with event: NSEvent) {
     super.mouseExited(with: event)
     hideCommentCard()
+    updateChartHover(at: nil)
   }
 
   private func updateErrorToolTip(at point: NSPoint) {
@@ -9307,6 +9602,33 @@ final class SpreadsheetGridNSView: NSView {
     }
     viewModel?.selectChart(id: nil)
 
+    if let placement = importedChartHitTest(at: point), let host = importedChartHosts[placement.id]
+    {
+      let rect = importedChartRect(placement)
+      let wasSelected = viewModel?.selectedImportedChartID == placement.id
+      viewModel?.selectImportedChart(placement.id)
+      if event.clickCount >= 2 {
+        viewModel?.beginEditImportedChart(placement.id)
+        needsDisplay = true
+        return
+      }
+      var handle = OnSheetChartGeometry.ChartFrameHandle.body
+      if wasSelected,
+        let hit = OnSheetChartGeometry.frameHandle(
+          at: point, in: rect, thickness: chartHandleThickness)
+      {
+        handle = hit
+      }
+      activeImportedChartDrag = ImportedChartDrag(
+        id: placement.id, handle: handle, startPoint: point, startRect: rect,
+        startHostFrame: host.frame)
+      isDraggingSelection = false
+      layoutOnSheetCharts()
+      needsDisplay = true
+      return
+    }
+    viewModel?.selectImportedChart(nil)
+
     if handleImageMouseDown(at: point, event: event) {
       needsDisplay = true
       return
@@ -9417,6 +9739,23 @@ final class SpreadsheetGridNSView: NSView {
       return
     }
 
+    if let drag = activeImportedChartDrag {
+      // A click that wobbles a point is still a click, not a move.
+      if !drag.hasMoved,
+        hypot(point.x - drag.startPoint.x, point.y - drag.startPoint.y) < 3
+      {
+        return
+      }
+      activeImportedChartDrag?.hasMoved = true
+      let rect = Self.importedChartFrame(
+        drag, dx: point.x - drag.startPoint.x, dy: point.y - drag.startPoint.y,
+        headerSize: headerSize)
+      importedChartHosts[drag.id]?.frame = rect.offsetBy(
+        dx: drag.startHostFrame.minX - drag.startRect.minX,
+        dy: drag.startHostFrame.minY - drag.startRect.minY)
+      return
+    }
+
     if let drag = activeChartDrag {
       if point != drag.startPoint {
         activeChartDrag?.hasMoved = true
@@ -9483,6 +9822,18 @@ final class SpreadsheetGridNSView: NSView {
   override func mouseUp(with event: NSEvent) {
     stopAutoscrollTimer()
 
+    if let drag = activeImportedChartDrag {
+      activeImportedChartDrag = nil
+      if drag.hasMoved {
+        let point = convert(event.locationInWindow, from: nil)
+        commitImportedChartDrag(
+          drag, dx: point.x - drag.startPoint.x, dy: point.y - drag.startPoint.y)
+      }
+      layoutOnSheetCharts()
+      needsDisplay = true
+      return
+    }
+
     if let drag = activeChartDrag {
       if drag.hasMoved {
         let point = convert(event.locationInWindow, from: nil)
@@ -9537,6 +9888,7 @@ final class SpreadsheetGridNSView: NSView {
 
   override func scrollWheel(with event: NSEvent) {
     hideCommentCard()
+    updateChartHover(at: nil)
     let invert = AppSettings.shared.invertScrollDirection
     let previousOrigin = scrollOrigin
     scrollOrigin.x += event.scrollingDeltaX
@@ -9612,6 +9964,16 @@ final class SpreadsheetGridNSView: NSView {
       return chartContextMenu()
     }
 
+    if let viewModel, contentRect.contains(point),
+      let placement = importedChartHitTest(at: point)
+    {
+      viewModel.selectChart(id: nil)
+      viewModel.selectImportedChart(placement.id)
+      layoutOnSheetCharts()
+      needsDisplay = true
+      return importedChartContextMenu()
+    }
+
     if let viewModel, contentRect.contains(point), let hit = imageHitTest(at: point) {
       viewModel.selectImage(id: hit.id, bringToFront: true)
       needsDisplay = true
@@ -9635,6 +9997,7 @@ final class SpreadsheetGridNSView: NSView {
         needsDisplay = true
       case .content:
         viewModel.selectChart(id: nil)
+        viewModel.selectImportedChart(nil)
         viewModel.selectImage(id: nil)
         let address = addressAtContent(point: point)
         if !viewModel.isAddressSelected(address) {
@@ -9686,6 +10049,68 @@ final class SpreadsheetGridNSView: NSView {
     return menu
   }
 
+  private func importedChartContextMenu() -> NSMenu {
+    let menu = NSMenu()
+    addMenuItem(menu, "Edit Chart…", #selector(handleMenuEditImportedChart(_:)))
+    addMenuItem(menu, "Duplicate Chart", #selector(handleMenuDuplicateImportedChart(_:)))
+    menu.addItem(.separator())
+    addMenuItem(menu, "Bring to Front", #selector(handleMenuImportedChartToFront(_:)))
+    addMenuItem(menu, "Send to Back", #selector(handleMenuImportedChartToBack(_:)))
+    menu.addItem(.separator())
+    addMenuItem(menu, "Delete Chart", #selector(handleMenuDeleteImportedChart(_:)))
+    return menu
+  }
+
+  @objc private func handleMenuEditImportedChart(_ sender: Any?) {
+    guard let id = viewModel?.selectedImportedChartID else { return }
+    viewModel?.beginEditImportedChart(id)
+  }
+
+  @objc private func handleMenuDuplicateImportedChart(_ sender: Any?) {
+    guard let id = viewModel?.selectedImportedChartID else { return }
+    viewModel?.duplicateImportedChart(id)
+    layoutOnSheetCharts()
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuImportedChartToFront(_ sender: Any?) {
+    guard let id = viewModel?.selectedImportedChartID else { return }
+    viewModel?.reorderImportedChart(id, toFront: true)
+    layoutOnSheetCharts()
+  }
+
+  @objc private func handleMenuImportedChartToBack(_ sender: Any?) {
+    guard let id = viewModel?.selectedImportedChartID else { return }
+    viewModel?.reorderImportedChart(id, toFront: false)
+    layoutOnSheetCharts()
+  }
+
+  @objc private func handleMenuDeleteImportedChart(_ sender: Any?) {
+    guard let id = viewModel?.selectedImportedChartID else { return }
+    viewModel?.deleteImportedChart(id)
+    layoutOnSheetCharts()
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuCreateTable(_ sender: Any?) {
+    viewModel?.createTable()
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuRemoveTable(_ sender: Any?) {
+    guard let viewModel, let index = viewModel.selectedTableIndex else { return }
+    viewModel.removeTable(at: index)
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuTableStyle(_ sender: NSMenuItem) {
+    guard let viewModel, let index = viewModel.selectedTableIndex,
+      let name = sender.representedObject as? String
+    else { return }
+    viewModel.setTableStyle(name, at: index)
+    needsDisplay = true
+  }
+
   @objc private func handleMenuEditChart(_ sender: Any?) {
     guard let id = viewModel?.selectedChartID else { return }
     viewModel?.beginEditChart(id: id)
@@ -9718,6 +10143,23 @@ final class SpreadsheetGridNSView: NSView {
 
   private func addPrimaryContextActions(to menu: NSMenu) {
     guard let viewModel else { return }
+
+    if let table = viewModel.selectedTableIndex {
+      let styles = NSMenu(title: "Table Style")
+      let current = viewModel.tableStyleName(at: table)
+      for style in SpreadsheetViewModel.tableStyles {
+        let item = addMenuItem(styles, style.title, #selector(handleMenuTableStyle(_:)))
+        item.representedObject = style.name
+        item.state = style.name == current ? .on : .off
+      }
+      let stylesItem = menu.addItem(withTitle: "Table Style", action: nil, keyEquivalent: "")
+      stylesItem.submenu = styles
+      addMenuItem(menu, "Remove Table", #selector(handleMenuRemoveTable(_:)))
+    } else {
+      let create = addMenuItem(menu, "Create Table", #selector(handleMenuCreateTable(_:)))
+      create.isEnabled = viewModel.newTableRange != nil
+    }
+    menu.addItem(.separator())
 
     addMenuItem(menu, "Create a Filter", #selector(handleMenuCreateFilter(_:)))
     let clearFilter = addMenuItem(menu, "Clear Filter", #selector(handleMenuClearFilter(_:)))
@@ -10058,6 +10500,12 @@ final class SpreadsheetGridNSView: NSView {
         needsDisplay = true
         return
       }
+      if let imported = viewModel.selectedImportedChartID {
+        viewModel.deleteImportedChart(imported)
+        layoutOnSheetCharts()
+        needsDisplay = true
+        return
+      }
       if viewModel.selectedImageID != nil {
         viewModel.deleteSelectedImage()
         needsDisplay = true
@@ -10070,8 +10518,19 @@ final class SpreadsheetGridNSView: NSView {
         needsDisplay = true
         return
       }
+      if viewModel.selectedImportedChartID != nil {
+        viewModel.selectImportedChart(nil)
+        layoutOnSheetCharts()
+        needsDisplay = true
+        return
+      }
       if viewModel.selectedImageID != nil {
         viewModel.selectImage(id: nil)
+        needsDisplay = true
+        return
+      }
+      if viewModel.duplicateHighlight != nil {
+        viewModel.clearDuplicateHighlight()
         needsDisplay = true
         return
       }

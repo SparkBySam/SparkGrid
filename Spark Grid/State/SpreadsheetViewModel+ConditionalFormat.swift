@@ -15,8 +15,10 @@ extension SpreadsheetViewModel {
   func resolvedPaint(at address: CellAddress) -> ConditionalPaint {
     let rules = activeSheet.conditionalFormats
     let cell = activeSheet.cell(at: address)
+    // A table's style sits under the cell's own format and under highlight rules.
+    let base = activeSheet.formatWithTableStyle(at: address)
     guard !rules.isEmpty else {
-      return ConditionalPaint(format: cell.format)
+      return ConditionalPaint(format: base)
     }
     if conditionalFormatCacheRevision != contentRevision {
       conditionalFormatCache.removeAll(keepingCapacity: true)
@@ -30,7 +32,7 @@ extension SpreadsheetViewModel {
     let text = formulaEngine.displayString(at: address, sheet: activeSheet, format: cell.format)
     let resolved = ConditionalFormatEvaluator.resolvedPaint(
       at: address,
-      base: cell.format,
+      base: base,
       rules: rules,
       value: value,
       displayString: text,
@@ -180,7 +182,7 @@ extension SpreadsheetViewModel {
     )
   }
 
-  private func applyConditionalFormats(
+  func applyConditionalFormats(
     _ rules: [ConditionalFormatRule],
     undoBefore: [ConditionalFormatRule],
     actionName: String,

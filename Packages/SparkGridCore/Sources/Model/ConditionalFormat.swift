@@ -228,12 +228,37 @@ public nonisolated enum ConditionalFormatPredicate: Codable, Equatable, Sendable
   case textContains(String)
   case blanks
   case nonBlanks
+  /// Values that appear more than once in the rule's range. Text matches ignoring case; blanks
+  /// are never marked.
+  case duplicateValues
+  /// Values that appear exactly once in the rule's range.
+  case uniqueValues
   /// Formula relative to the top-left of the rule range (Excel-style).
   case formula(String)
   /// 2- or 3-color scale; style fills come from interpolation, not `rule.style`.
   case colorScale([ColorScaleStop])
   case dataBar(DataBarStyle)
   case iconSet(IconSetStyle)
+
+  /// A duplicate or unique rule as the formula it means over `range`, for the rule's first cell:
+  /// `=AND(A2<>"",COUNTIF($A$2:$C$9,A2)>1)`. Other rules return nil.
+  public func countingRule(over range: CellRange) -> ConditionalFormatPredicate? {
+    let comparison: String
+    switch self {
+    case .duplicateValues: comparison = ">1"
+    case .uniqueValues: comparison = "=1"
+    default: return nil
+    }
+    let n = range.normalized
+    func absolute(_ address: CellAddress) -> String {
+      let a1 = address.a1
+      let letters = a1.prefix { $0.isLetter }
+      return "$\(letters)$\(a1.dropFirst(letters.count))"
+    }
+    let first = CellAddress(row: n.minRow, col: n.minCol)
+    let span = "\(absolute(first)):\(absolute(CellAddress(row: n.maxRow, col: n.maxCol)))"
+    return .formula(#"=AND(\#(first.a1)<>"",COUNTIF(\#(span),\#(first.a1))\#(comparison))"#)
+  }
 
   public var title: String {
     switch self {
@@ -250,6 +275,8 @@ public nonisolated enum ConditionalFormatPredicate: Codable, Equatable, Sendable
     case .textContains(let s): return "Text contains “\(s)”"
     case .blanks: return "Blanks"
     case .nonBlanks: return "Non-blanks"
+    case .duplicateValues: return "Duplicate values"
+    case .uniqueValues: return "Unique values"
     case .formula(let f): return "Formula: \(f)"
     case .colorScale(let stops): return "Color scale (\(stops.count) stops)"
     case .dataBar: return "Data bars"
@@ -275,7 +302,7 @@ public nonisolated enum ConditionalFormatPredicate: Codable, Equatable, Sendable
       return s
     case .formula(let f):
       return f
-    case .blanks, .nonBlanks, .colorScale, .dataBar, .iconSet:
+    case .blanks, .nonBlanks, .duplicateValues, .uniqueValues, .colorScale, .dataBar, .iconSet:
       return nil
     }
   }
@@ -291,7 +318,7 @@ public nonisolated enum ConditionalFormatPredicate: Codable, Equatable, Sendable
 
   public var editsValues: Bool {
     switch self {
-    case .blanks, .nonBlanks, .colorScale, .dataBar, .iconSet:
+    case .blanks, .nonBlanks, .duplicateValues, .uniqueValues, .colorScale, .dataBar, .iconSet:
       return false
     default:
       return true
@@ -348,7 +375,7 @@ public nonisolated enum ConditionalFormatPredicate: Codable, Equatable, Sendable
       guard !formula.isEmpty else { return nil }
       if !formula.hasPrefix("=") { formula = "=\(formula)" }
       return .formula(formula)
-    case .blanks, .nonBlanks, .colorScale, .dataBar, .iconSet:
+    case .blanks, .nonBlanks, .duplicateValues, .uniqueValues, .colorScale, .dataBar, .iconSet:
       return self
     }
   }
@@ -374,19 +401,38 @@ public nonisolated struct ConditionalFormatRule: Identifiable, Codable, Equatabl
   public var stopIfTrue: Bool
   public var predicate: ConditionalFormatPredicate
   public var style: ConditionalFormatStyle
+  /// An icon set's thresholds as the file wrote them, lowest first. The first is where the
+  /// lowest icon starts; each one after is where the next icon starts. Nil means 0, 33 and 67
+  /// percent of the range.
+  public var iconThresholds: [DataBarBound]?
+  /// The icon set runs the other way: the first icon for the lowest values.
+  public var iconReverse: Bool?
 
   public init(
     id: UUID = UUID(),
     range: CellRange,
     stopIfTrue: Bool = true,
     predicate: ConditionalFormatPredicate,
-    style: ConditionalFormatStyle = ConditionalFormatStyle()
+    style: ConditionalFormatStyle = ConditionalFormatStyle(),
+    iconThresholds: [DataBarBound]? = nil,
+    iconReverse: Bool? = nil
   ) {
     self.id = id
     self.range = range
     self.stopIfTrue = stopIfTrue
     self.predicate = predicate
     self.style = style
+    self.iconThresholds = iconThresholds
+    self.iconReverse = iconReverse
+  }
+
+  /// What an icon set is drawn and saved with: the file's thresholds, or 0, 33 and 67 percent.
+  public var resolvedIconThresholds: [DataBarBound] {
+    if let iconThresholds, iconThresholds.count == 3 { return iconThresholds }
+    return [
+      DataBarBound(type: .percent, value: 0), DataBarBound(type: .percent, value: 33),
+      DataBarBound(type: .percent, value: 67),
+    ]
   }
 
   public func edited(rangeText: String, primary: String, secondary: String)
@@ -465,6 +511,8 @@ public nonisolated enum ConditionalFormatEvaluator {
         guard
           let glyph = iconGlyph(
             style: style,
+            thresholds: rule.resolvedIconThresholds,
+            reverse: rule.iconReverse == true,
             value: value,
             range: rule.range,
             numericValuesInRange: numericValuesInRange
@@ -477,7 +525,7 @@ public nonisolated enum ConditionalFormatEvaluator {
       default:
         guard
           matches(
-            rule.predicate,
+            rule.predicate.countingRule(over: rule.range) ?? rule.predicate,
             value: value,
             displayString: displayString,
             numberFormat: numberFormat,
@@ -552,6 +600,9 @@ public nonisolated enum ConditionalFormatEvaluator {
     evaluateFormula: (String, CellAddress, CellAddress) -> CellValue
   ) -> Bool {
     switch predicate {
+    case .duplicateValues, .uniqueValues:
+      // `resolvedPaint` turns these into a COUNTIF over the rule's range first.
+      return false
     case .blanks:
       return value == .blank || displayString.isEmpty
     case .nonBlanks:
@@ -654,23 +705,37 @@ public nonisolated enum ConditionalFormatEvaluator {
 
   private static func iconGlyph(
     style: IconSetStyle,
+    thresholds: [DataBarBound],
+    reverse: Bool,
     value: CellValue,
     range: CellRange,
     numericValuesInRange: (CellRange) -> [Double]
   ) -> IconSetGlyph? {
     guard let cellValue = value.asNumber else { return nil }
     let values = numericValuesInRange(range).sorted()
-    guard !values.isEmpty else { return nil }
-    let p67 = percentile(values, p: 67)
-    let p33 = percentile(values, p: 33)
-    let tier: Int
-    if cellValue >= p67 {
+    guard let lowest = values.first, let highest = values.last, thresholds.count == 3 else {
+      return nil
+    }
+    // A percent threshold is a share of the way from the lowest value to the highest,
+    // not a percentile.
+    func position(_ bound: DataBarBound) -> Double {
+      switch bound.type {
+      case .min: return lowest
+      case .max: return highest
+      case .number: return bound.value ?? lowest
+      case .percent: return lowest + (highest - lowest) * (bound.value ?? 0) / 100
+      case .percentile: return percentile(values, p: bound.value ?? 50)
+      }
+    }
+    var tier: Int
+    if cellValue >= position(thresholds[2]) {
       tier = 0
-    } else if cellValue >= p33 {
+    } else if cellValue >= position(thresholds[1]) {
       tier = 1
     } else {
       tier = 2
     }
+    if reverse { tier = 2 - tier }
     switch style {
     case .threeTrafficLights:
       return [.greenCircle, .yellowCircle, .redCircle][tier]

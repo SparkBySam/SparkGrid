@@ -10,6 +10,8 @@ struct InsertChartSheet: View {
   @State private var kind: SheetChart.Kind = .bar
   @State private var categoryColumn: Int = 0
   @State private var valueColumn: Int = 0
+  /// More value columns, each its own series.
+  @State private var extraValueColumns: [Int] = []
   @State private var hasHeaderRow = true
   @State private var valueMode: SheetChart.ValueMode = .values
   @State private var didConfigure = false
@@ -72,6 +74,8 @@ struct InsertChartSheet: View {
       dataRange: dataRange,
       categoryColumn: categoryColumn,
       valueColumn: valueColumn,
+      extraValueColumns: kind.allowsMoreSeries && valueMode == .values
+        ? extraValueColumns.filter { $0 != valueColumn } : [],
       hasHeaderRow: hasHeaderRow,
       valueMode: valueMode,
       anchorRow: anchorRow,
@@ -218,6 +222,8 @@ struct InsertChartSheet: View {
     case .bar: return "chart.bar.fill"
     case .line: return "chart.xyaxis.line"
     case .area: return "chart.line.uptrend.xyaxis"
+    case .pie: return "chart.pie.fill"
+    case .scatter: return "chart.dots.scatter"
     }
   }
 
@@ -282,7 +288,7 @@ struct InsertChartSheet: View {
             .tint(SparkStyle.accent)
         }
         SparkDialogDivider()
-        SparkDialogRow(label: "Labels") {
+        SparkDialogRow(label: kind == .scatter ? "X values" : "Labels") {
           Picker("Labels", selection: $categoryColumn) {
             ForEach(columnOptions) { option in
               Text(option.displayName).tag(option.column)
@@ -312,9 +318,40 @@ struct InsertChartSheet: View {
             .labelsHidden()
             .fixedSize()
           }
+          if kind.allowsMoreSeries {
+            SparkDialogDivider()
+            SparkDialogRow(label: "More series") {
+              moreSeriesMenu
+            }
+          }
         }
       }
     }
+  }
+
+  /// Numeric columns other than the labels and the first value column, each a check.
+  private var moreSeriesMenu: some View {
+    let choices = columnOptions.filter {
+      $0.column != categoryColumn && $0.column != valueColumn && $0.isMostlyNumeric
+    }
+    let chosen = extraValueColumns.filter { column in choices.contains { $0.column == column } }
+    return Menu(chosen.isEmpty ? "None" : "\(chosen.count) more") {
+      ForEach(choices) { option in
+        Toggle(
+          option.displayName,
+          isOn: Binding(
+            get: { extraValueColumns.contains(option.column) },
+            set: { on in
+              if on {
+                extraValueColumns.append(option.column)
+              } else {
+                extraValueColumns.removeAll { $0 == option.column }
+              }
+            }))
+      }
+    }
+    .fixedSize()
+    .disabled(choices.isEmpty)
   }
 
   @ViewBuilder
@@ -423,6 +460,7 @@ struct InsertChartSheet: View {
   private func load(_ chart: SheetChart) {
     draftID = chart.id
     kind = chart.kind
+    extraValueColumns = chart.extraValueColumns
     keptAnchor = KeptAnchor(
       row: chart.anchorRow,
       col: chart.anchorCol,

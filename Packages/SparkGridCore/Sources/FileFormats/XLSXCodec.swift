@@ -750,6 +750,14 @@ public nonisolated enum XLSXCodec {
     return MinimalZip.archive(files: files)
   }
 
+  /// Every part's path in a package, for checks that walk the whole file.
+  public static func zipEntryNames(archiveData: Data) -> [String]? {
+    guard let archive = try? Archive(data: archiveData, accessMode: .read, pathEncoding: nil) else {
+      return nil
+    }
+    return archive.map(\.path)
+  }
+
   public static func zipEntryData(archiveData: Data, entryPath: String) -> Data? {
     let cached = ZipPackage.cachedEntry(at: entryPath)
     if cached.0 { return cached.1 }

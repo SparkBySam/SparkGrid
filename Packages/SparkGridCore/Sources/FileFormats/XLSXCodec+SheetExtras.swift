@@ -266,6 +266,10 @@ extension XLSXCodec {
         } else {
           predicate = nil
         }
+      case "duplicateValues":
+        predicate = .duplicateValues
+      case "uniqueValues":
+        predicate = .uniqueValues
       case "containsBlanks":
         predicate = .blanks
       case "notContainsBlanks":
@@ -288,10 +292,23 @@ extension XLSXCodec {
       default:
         ruleStyle = style
       }
+      // An icon set keeps its own thresholds and direction.
+      var iconThresholds: [DataBarBound]?
+      var iconReverse: Bool?
+      if case .iconSet = predicate {
+        iconThresholds = iconSetThresholds(in: ruleBody)
+        if ruleBody.range(
+          of: #"<(?:x14:)?iconSet\b[^>]*\breverse="(?:1|true)""#, options: .regularExpression)
+          != nil
+        {
+          iconReverse = true
+        }
+      }
       for range in ranges {
         sheet.conditionalFormats.append(
           ConditionalFormatRule(
-            range: range, stopIfTrue: stop, predicate: predicate, style: ruleStyle)
+            range: range, stopIfTrue: stop, predicate: predicate, style: ruleStyle,
+            iconThresholds: iconThresholds, iconReverse: iconReverse)
         )
       }
     }
@@ -621,6 +638,11 @@ extension XLSXCodec {
           let dxfId = dxfIndex(rule.style)
           xml +=
             #"<cfRule type="notContainsBlanks" dxfId="\#(dxfId)" priority="\#(priority)"\#(stop)/>"#
+        case .duplicateValues, .uniqueValues:
+          let dxfId = dxfIndex(rule.style)
+          let type = rule.predicate == .duplicateValues ? "duplicateValues" : "uniqueValues"
+          xml +=
+            #"<cfRule type="\#(type)" dxfId="\#(dxfId)" priority="\#(priority)"\#(stop)/>"#
         case .formula(let raw):
           let dxfId = dxfIndex(rule.style)
           let formula = raw.hasPrefix("=") ? String(raw.dropFirst()) : raw
@@ -640,8 +662,10 @@ extension XLSXCodec {
           xml +=
             #"<cfRule type="dataBar" priority="\#(priority)"\#(stop)><dataBar\#(show)>\#(dataBarBoundsXML(style))<color rgb="FF\#(rgbHex(style.color))"/></dataBar></cfRule>"#
         case .iconSet(let style):
+          let reverse = rule.iconReverse == true ? #" reverse="1""# : ""
+          let cfvos = rule.resolvedIconThresholds.map { cfvoXML($0.type, $0.value) }.joined()
           xml +=
-            #"<cfRule type="iconSet" priority="\#(priority)"\#(stop)><iconSet iconSet="\#(style.excelName)"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule>"#
+            #"<cfRule type="iconSet" priority="\#(priority)"\#(stop)><iconSet iconSet="\#(style.excelName)"\#(reverse)>\#(cfvos)</iconSet></cfRule>"#
         }
       }
       xml += "</conditionalFormatting>"
@@ -763,6 +787,10 @@ extension XLSXCodec {
     case .nonBlanks:
       return
         #"<x14:cfRule type="notContainsBlanks" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))</x14:cfRule>"#
+    case .duplicateValues, .uniqueValues:
+      let type = rule.predicate == .duplicateValues ? "duplicateValues" : "uniqueValues"
+      return
+        #"<x14:cfRule type="\#(type)" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))</x14:cfRule>"#
     case .formula(let raw):
       let formula = raw.hasPrefix("=") ? String(raw.dropFirst()) : raw
       return
@@ -782,8 +810,11 @@ extension XLSXCodec {
       return
         #"<x14:cfRule type="dataBar" priority="\#(priority)"\#(stop)><x14:dataBar\#(show)>\#(dataBarBoundsXML(style, prefix: "x14:"))<x14:color rgb="FF\#(rgbHex(style.color))"/></x14:dataBar></x14:cfRule>"#
     case .iconSet(let style):
+      let reverse = rule.iconReverse == true ? #" reverse="1""# : ""
+      let cfvos = rule.resolvedIconThresholds.map { cfvoXML($0.type, $0.value, prefix: "x14:") }
+        .joined()
       return
-        #"<x14:cfRule type="iconSet" priority="\#(priority)"\#(stop)><x14:iconSet iconSet="\#(style.excelName)"><x14:cfvo type="percent" val="0"/><x14:cfvo type="percent" val="33"/><x14:cfvo type="percent" val="67"/></x14:iconSet></x14:cfRule>"#
+        #"<x14:cfRule type="iconSet" priority="\#(priority)"\#(stop)><x14:iconSet iconSet="\#(style.excelName)"\#(reverse)>\#(cfvos)</x14:iconSet></x14:cfRule>"#
     }
   }
 
@@ -973,6 +1004,31 @@ extension XLSXCodec {
       DataBarStyle(
         color: color, showValue: showValue,
         low: bounds.first ?? nil, high: bounds.count > 1 ? bounds[1] : nil))
+  }
+
+  /// The three `cfvo` thresholds of a three-icon set, or nil when the file has another count.
+  private static func iconSetThresholds(in body: String) -> [DataBarBound]? {
+    let ns = body as NSString
+    let cfvos =
+      (try? NSRegularExpression(
+        pattern: #"<(?:x14:)?cfvo\b([^>]*)/?\s*>([\s\S]*?</(?:x14:)?cfvo>)?"#))?
+      .matches(in: body, range: NSRange(location: 0, length: ns.length))
+      .map { match -> DataBarBound in
+        let attrs = ns.substring(with: match.range(at: 1))
+        var value = attributeValue(attrs, name: "val").flatMap(Double.init)
+        // Newer files put the value in a child `<xm:f>` element.
+        if value == nil, match.range(at: 2).location != NSNotFound {
+          let inner = ns.substring(with: match.range(at: 2))
+          if let f = inner.range(of: #"<(?:xm:)?f>([^<]*)</"#, options: .regularExpression) {
+            value = Double(
+              inner[f].replacingOccurrences(
+                of: #"</?(?:xm:)?f>|</"#, with: "", options: .regularExpression))
+          }
+        }
+        return DataBarBound(
+          type: cfvoType(attributeValue(attrs, name: "type") ?? "percent"), value: value)
+      } ?? []
+    return cfvos.count == 3 ? cfvos : nil
   }
 
   private static func cfvoType(_ raw: String) -> ColorScaleStop.StopType {

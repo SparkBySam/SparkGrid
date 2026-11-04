@@ -902,34 +902,94 @@ public final class WorkbookSession {
     axis: FormulaRewriter.Axis,
     change: FormulaRewriter.StructureChange
   ) {
+    // A formula on another sheet can reach the changed sheet only by naming it, so the rest are
+    // skipped unparsed. A name with a quote is written with it doubled ('O''Brien'), which still
+    // contains each part; searching for the longest part keeps the check a byte scan.
+    let needle = Array(
+      (mutatedSheetName.components(separatedBy: "'").max { $0.utf8.count < $1.utf8.count }
+        ?? mutatedSheetName).utf8)
+    struct Candidate {
+      var sheetIndex: Int
+      var address: CellAddress
+      var raw: String
+    }
+    var candidates: [Candidate] = []
     for sheetIndex in workbook.sheets.indices {
-      let sheetName = workbook.sheets[sheetIndex].name
-      var cells = workbook.sheets[sheetIndex].cells
-      var changed = false
-      for (address, cell) in cells where FormulaSyntax.isFormula(cell.raw) {
-        let next = FormulaRewriter.shiftForStructure(
-          cell.raw,
-          formulaSheetName: sheetName,
-          mutatedSheetName: mutatedSheetName,
-          axis: axis,
-          change: change
-        )
-        if next != cell.raw {
-          var updated = cell
-          updated.raw = next
-          // A moved reference keeps its answer. One that now points at deleted cells does not,
-          // so its saved result goes and the file asks to be calculated on open.
-          if next.contains("#REF!"), !cell.raw.contains("#REF!") {
-            updated.importedFormulaResult = nil
-            updated.importedFormulaValueType = nil
-          }
-          cells[address] = updated
-          changed = true
+      let sheet = workbook.sheets[sheetIndex]
+      let isMutatedSheet = sheet.name.caseInsensitiveCompare(mutatedSheetName) == .orderedSame
+      for (address, cell) in sheet.cells where FormulaSyntax.isFormula(cell.raw) {
+        if !isMutatedSheet, !Self.containsIgnoringASCIICase(cell.raw, needle) { continue }
+        candidates.append(Candidate(sheetIndex: sheetIndex, address: address, raw: cell.raw))
+      }
+    }
+    guard !candidates.isEmpty else { return }
+
+    // Every formula on a sheet the others read can need shifting: about 100,000 on the stress
+    // workbook's Orders sheet, 2.1 s one at a time. Parsing is independent, so it runs in chunks.
+    let sheetNames = workbook.sheets.map(\.name)
+    let chunkSize = 2_048
+    let chunkCount = (candidates.count + chunkSize - 1) / chunkSize
+    var results = [[(Int, String)]](repeating: [], count: chunkCount)
+    let lock = NSLock()
+    candidates.withUnsafeBufferPointer { buffer in
+      DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
+        var shifted: [(Int, String)] = []
+        for index in (chunk * chunkSize)..<min(buffer.count, (chunk + 1) * chunkSize) {
+          let candidate = buffer[index]
+          let next = FormulaRewriter.shiftForStructure(
+            candidate.raw,
+            formulaSheetName: sheetNames[candidate.sheetIndex],
+            mutatedSheetName: mutatedSheetName,
+            axis: axis,
+            change: change
+          )
+          if next != candidate.raw { shifted.append((index, next)) }
         }
+        lock.lock()
+        results[chunk] = shifted
+        lock.unlock()
       }
-      if changed {
-        workbook.sheets[sheetIndex].cells = cells
+    }
+
+    for (index, next) in results.joined() {
+      let candidate = candidates[index]
+      guard var updated = workbook.sheets[candidate.sheetIndex].cells[candidate.address] else {
+        continue
       }
+      // A moved reference keeps its answer. One that now points at deleted cells does not,
+      // so its saved result goes and the file asks to be calculated on open.
+      if next.contains("#REF!"), !candidate.raw.contains("#REF!") {
+        updated.importedFormulaResult = nil
+        updated.importedFormulaValueType = nil
+      }
+      updated.raw = next
+      workbook.sheets[candidate.sheetIndex].cells[candidate.address] = updated
+    }
+  }
+
+  /// True when `text` contains `needle`, ignoring case. A plain byte scan for ASCII names;
+  /// Foundation's case-insensitive search took 1.4 s over 114,609 formulas.
+  static func containsIgnoringASCIICase(_ text: String, _ needle: [UInt8]) -> Bool {
+    guard !needle.isEmpty else { return true }
+    guard needle.allSatisfy({ $0 < 0x80 }) else {
+      return text.range(
+        of: String(decoding: needle, as: UTF8.self), options: .caseInsensitive) != nil
+    }
+    @inline(__always) func fold(_ byte: UInt8) -> UInt8 {
+      byte >= 0x41 && byte <= 0x5A ? byte | 0x20 : byte
+    }
+    let folded = needle.map(fold)
+    var text = text
+    return text.withUTF8 { bytes in
+      guard bytes.count >= folded.count else { return false }
+      for start in 0...(bytes.count - folded.count) where fold(bytes[start]) == folded[0] {
+        var offset = 1
+        while offset < folded.count, fold(bytes[start + offset]) == folded[offset] {
+          offset += 1
+        }
+        if offset == folded.count { return true }
+      }
+      return false
     }
   }
 

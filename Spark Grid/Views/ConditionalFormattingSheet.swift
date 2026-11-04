@@ -47,6 +47,12 @@ struct ConditionalFormattingSheet: View {
 
   // Icon Sets
   @State private var iconSetStyle: IconSetStyle = .threeTrafficLights
+  /// The first icon from this value up, and the second from `iconLower`.
+  @State private var iconUpper = DataBarBound(type: .percent, value: 67)
+  @State private var iconLower = DataBarBound(type: .percent, value: 33)
+  /// The lowest threshold, kept as the file wrote it.
+  @State private var iconFloor = DataBarBound(type: .percent, value: 0)
+  @State private var iconReverse = false
 
   enum RuleType: String, CaseIterable, Identifiable {
     case highlightCells = "Highlight Cells"
@@ -69,11 +75,13 @@ struct ConditionalFormattingSheet: View {
     case textContains = "Text contains"
     case blanks = "Blanks"
     case nonBlanks = "Non-blanks"
+    case duplicates = "Duplicate values"
+    case unique = "Unique values"
     var id: String { rawValue }
 
     var needsValue: Bool {
       switch self {
-      case .blanks, .nonBlanks: return false
+      case .blanks, .nonBlanks, .duplicates, .unique: return false
       default: return true
       }
     }
@@ -408,10 +416,85 @@ struct ConditionalFormattingSheet: View {
           Text(style.title).tag(style)
         }
       }
-      Text("Icons are assigned by percentile thresholds (33% / 67%) within the range.")
+      let icons = Self.iconSymbols(iconSetStyle, reversed: iconReverse)
+      iconThresholdRow(icons[0], bound: $iconUpper)
+      iconThresholdRow(icons[1], bound: $iconLower)
+      LabeledContent {
+        Text("for everything lower")
+          .foregroundStyle(.secondary)
+      } label: {
+        iconLabel(icons[2])
+      }
+      Toggle("Reverse icon order", isOn: $iconReverse)
+      Text(iconThresholdHelp)
         .font(.caption)
         .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
+  }
+
+  private var iconThresholdHelp: String {
+    var text =
+      "Percent is a share of the way from the lowest value to the highest. Percentile ranks "
+      + "the values. Number is the value itself."
+    if Self.thresholdsCross(upper: iconUpper, lower: iconLower) {
+      text += " The first threshold is below the second, so the middle icon never shows."
+    }
+    return text
+  }
+
+  private static func thresholdsCross(upper: DataBarBound, lower: DataBarBound) -> Bool {
+    upper.type == lower.type && (upper.value ?? 0) < (lower.value ?? 0)
+  }
+
+  private func iconThresholdRow(_ icon: (String, Color), bound: Binding<DataBarBound>)
+    -> some View
+  {
+    LabeledContent {
+      HStack(spacing: 6) {
+        Text("when ≥")
+          .foregroundStyle(.secondary)
+        TextField(
+          "",
+          value: Binding(
+            get: { bound.wrappedValue.value ?? 0 }, set: { bound.wrappedValue.value = $0 }),
+          format: .number
+        )
+        .textFieldStyle(.roundedBorder)
+        .multilineTextAlignment(.trailing)
+        .frame(width: 70)
+        Picker("", selection: bound.type) {
+          Text("Percent").tag(ColorScaleStop.StopType.percent)
+          Text("Percentile").tag(ColorScaleStop.StopType.percentile)
+          Text("Number").tag(ColorScaleStop.StopType.number)
+        }
+        .labelsHidden()
+        .frame(width: 110)
+      }
+    } label: {
+      iconLabel(icon)
+    }
+  }
+
+  private func iconLabel(_ icon: (String, Color)) -> some View {
+    Image(systemName: icon.0)
+      .foregroundStyle(icon.1)
+      .font(.system(size: 14, weight: .semibold))
+      .frame(width: 22)
+  }
+
+  /// Top to bottom: the icon for the highest values first.
+  private static func iconSymbols(_ style: IconSetStyle, reversed: Bool) -> [(String, Color)] {
+    let icons: [(String, Color)]
+    switch style {
+    case .threeTrafficLights:
+      icons = [("circle.fill", .green), ("circle.fill", .yellow), ("circle.fill", .red)]
+    case .threeArrows:
+      icons = [("arrow.up", .green), ("arrow.right", .yellow), ("arrow.down", .red)]
+    case .threeSymbols:
+      icons = [("checkmark", .green), ("minus", .yellow), ("xmark", .red)]
+    }
+    return reversed ? icons.reversed() : icons
   }
 
   @ViewBuilder
@@ -538,7 +621,9 @@ struct ConditionalFormattingSheet: View {
         range: range,
         stopIfTrue: false,
         predicate: .iconSet(iconSetStyle),
-        style: ConditionalFormatStyle()
+        style: ConditionalFormatStyle(),
+        iconThresholds: [iconFloor, iconLower, iconUpper],
+        iconReverse: iconReverse ? true : nil
       )
     }
   }
@@ -623,6 +708,10 @@ struct ConditionalFormattingSheet: View {
       return .blanks
     case .nonBlanks:
       return .nonBlanks
+    case .duplicates:
+      return .duplicateValues
+    case .unique:
+      return .uniqueValues
     }
   }
 
@@ -692,6 +781,12 @@ struct ConditionalFormattingSheet: View {
     case .nonBlanks:
       ruleType = .highlightCells
       highlightKind = .nonBlanks
+    case .duplicateValues:
+      ruleType = .highlightCells
+      highlightKind = .duplicates
+    case .uniqueValues:
+      ruleType = .highlightCells
+      highlightKind = .unique
     case .formula(let f):
       ruleType = .formula
       formulaText = f
@@ -721,6 +816,11 @@ struct ConditionalFormattingSheet: View {
     case .iconSet(let style):
       ruleType = .iconSets
       iconSetStyle = style
+      let thresholds = rule.resolvedIconThresholds
+      iconFloor = thresholds[0]
+      iconLower = thresholds[1]
+      iconUpper = thresholds[2]
+      iconReverse = rule.iconReverse == true
     }
   }
 

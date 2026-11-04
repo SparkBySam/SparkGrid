@@ -123,7 +123,8 @@ struct SpreadsheetWindowView: View {
       contentLines: formulaContentLines,
       expanded: isFormulaBarExpanded
     )
-    let hasCharts = !viewModel.activeSheet.charts.isEmpty
+    let hasCharts =
+      !viewModel.activeSheet.charts.isEmpty || !viewModel.importedChartPlacements.isEmpty
     let chromeHeight = SpreadsheetChrome.topHeight(
       showLabels: settings.showToolbarLabels,
       showingFormulaError: showingFormulaError,
@@ -194,8 +195,22 @@ struct SpreadsheetWindowView: View {
     ) {
       InsertChartSheet(viewModel: viewModel)
     }
+    .sheet(isPresented: $viewModel.isDuplicatesSheetPresented) {
+      DuplicatesSheet(viewModel: viewModel)
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { viewModel.editingImportedChartID != nil },
+        set: { if !$0 { viewModel.editingImportedChartID = nil } })
+    ) {
+      if let id = viewModel.editingImportedChartID {
+        EditImportedChartSheet(viewModel: viewModel, chartID: id)
+      }
+    }
     .focusedValue(\.spreadsheetViewModel, viewModel)
     .onAppear {
+      // A file's own charts are listed but don't open the panel over the sheet.
+      if viewModel.activeSheet.charts.isEmpty { isChartsPanelCollapsed = true }
       viewModel.undoManager = undoManager
       viewModel.restoreFilterFromActiveSheet()
       registerWithAppDelegate(viewModel)

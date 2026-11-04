@@ -19,24 +19,28 @@ extension XLSXCodec {
     var drawingBody = ""
     var drawingRels = ""
     var relId = 1
+    // Each object in a drawing needs its own `cNvPr` id; repeats are a file error.
+    var objectID = 1
 
     for (chartIndex, chart) in sheet.charts.enumerated() {
       let chartNum = sheetIndex * 100 + chartIndex + 1
       files["xl/charts/chart\(chartNum).xml"] = Data(
         excelChartXML(chart, sheetName: sheet.name).utf8)
-      drawingBody += twoCellAnchorXML(chart: chart, chartRelId: "rId\(relId)")
+      objectID += 1
+      drawingBody += twoCellAnchorXML(chart: chart, chartRelId: "rId\(relId)", objectID: objectID)
       drawingRels += """
         <Relationship Id="rId\(relId)" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart\(chartNum).xml"/>
         """
       relId += 1
     }
 
-    for (imageIndex, image) in sheet.images.enumerated() {
+    for image in sheet.images {
       globalImageIndex += 1
       let mediaName = mediaFileName(for: image, index: globalImageIndex)
       files["xl/media/\(mediaName)"] = image.imageData
+      objectID += 1
       drawingBody += oneCellAnchorImageXML(
-        image: image, relId: "rId\(relId)", pictureId: imageIndex + 1)
+        image: image, relId: "rId\(relId)", pictureId: objectID)
       drawingRels += """
         <Relationship Id="rId\(relId)" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/\(mediaName)"/>
         """
@@ -46,7 +50,9 @@ extension XLSXCodec {
     for (index, chart) in sheet.fileExtras.foreignCharts.enumerated() {
       let name = keptChartFileName(sheetNumber: sheetNum, index: index)
       files["xl/charts/\(name)"] = chart.chartXML
-      drawingBody += foreignChartAnchorXML(chart, relationshipID: "rId\(relId)")
+      objectID += 1
+      drawingBody += DrawingAnchorXML.withObjectID(
+        foreignChartAnchorXML(chart, relationshipID: "rId\(relId)"), objectID)
       drawingRels += """
         <Relationship Id="rId\(relId)" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/\(name)"/>
         """
@@ -111,7 +117,9 @@ extension XLSXCodec {
     """
   }
 
-  private static func twoCellAnchorXML(chart: SheetChart, chartRelId: String) -> String {
+  private static func twoCellAnchorXML(chart: SheetChart, chartRelId: String, objectID: Int)
+    -> String
+  {
     let endRow = chart.anchorRow + chart.rowSpan
     let endCol = chart.anchorCol + chart.colSpan
     let fromCol = SheetImage.emu(fromPoints: chart.originXOffset)
@@ -124,10 +132,10 @@ extension XLSXCodec {
         <xdr:to><xdr:col>\(endCol)</xdr:col><xdr:colOff>\(toCol)</xdr:colOff><xdr:row>\(endRow)</xdr:row><xdr:rowOff>\(toRow)</xdr:rowOff></xdr:to>
         <xdr:graphicFrame macro="">
           <xdr:nvGraphicFramePr>
-            <xdr:cNvPr id="2" name="\(escapeXML(chart.title))"/>
+            <xdr:cNvPr id="\(objectID)" name="\(escapeXML(chart.title))"/>
             <xdr:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></xdr:cNvGraphicFramePr>
           </xdr:nvGraphicFramePr>
-          <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>
+          <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
           <a:graphic>
             <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
               <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="\(chartRelId)"/>
@@ -157,8 +165,23 @@ extension XLSXCodec {
     // as both cats and a placeholder val ref so the part remains valid.
     let exportValRef = chart.valueMode == .count ? catRef : valRef
 
-    let seriesBody = seriesXML(chart, catRef: catRef, valRef: exportValRef)
+    var seriesBody = seriesXML(chart, catRef: catRef, valRef: exportValRef)
+    // More series read the same rows from their own columns and take their header as a name.
+    if chart.valueMode == .values, chart.kind.allowsMoreSeries {
+      for (offset, column) in chart.extraValueColumns.enumerated() {
+        let ref =
+          "'\(safeSheet)'!\(CellAddress(row: dataStartRow, col: column).a1):\(CellAddress(row: n.maxRow, col: column).a1)"
+        let nameRef =
+          hasHeader ? "'\(safeSheet)'!\(CellAddress(row: n.minRow, col: column).a1)" : nil
+        seriesBody += extraSeriesXML(
+          chart, index: offset + 1, catRef: catRef, valRef: ref, nameRef: nameRef)
+      }
+    }
     let seriesInner: String
+    var axes = """
+      \(axisXML(tag: "c:catAx", id: "1", position: "b", cross: "2", title: chart.categoryAxisTitle, gridlines: chart.showsGridlines))
+      \(axisXML(tag: "c:valAx", id: "2", position: "l", cross: "1", title: chart.valueAxisTitle, gridlines: chart.showsGridlines))
+      """
     switch chart.kind {
     case .bar:
       seriesInner = """
@@ -185,6 +208,28 @@ extension XLSXCodec {
           <c:axId val="1"/><c:axId val="2"/>
         </c:areaChart>
         """
+    case .pie:
+      seriesInner = """
+        <c:pieChart>
+          <c:varyColors val="1"/>
+          \(seriesBody)
+          <c:firstSliceAng val="0"/>
+        </c:pieChart>
+        """
+      axes = ""
+    case .scatter:
+      seriesInner = """
+        <c:scatterChart>
+          <c:scatterStyle val="lineMarker"/>
+          <c:varyColors val="0"/>
+          \(seriesBody)
+          <c:axId val="1"/><c:axId val="2"/>
+        </c:scatterChart>
+        """
+      axes = """
+        \(axisXML(tag: "c:valAx", id: "1", position: "b", cross: "2", title: chart.categoryAxisTitle, gridlines: chart.showsGridlines))
+        \(axisXML(tag: "c:valAx", id: "2", position: "l", cross: "1", title: chart.valueAxisTitle, gridlines: chart.showsGridlines))
+        """
     }
 
     return """
@@ -195,8 +240,7 @@ extension XLSXCodec {
           <c:plotArea>
             <c:layout/>
             \(seriesInner)
-            \(axisXML(tag: "c:catAx", id: "1", position: "b", cross: "2", title: chart.categoryAxisTitle, gridlines: chart.showsGridlines))
-            \(axisXML(tag: "c:valAx", id: "2", position: "l", cross: "1", title: chart.valueAxisTitle, gridlines: chart.showsGridlines))
+            \(axes)
           </c:plotArea>
           \(legendXML(chart))
         </c:chart>
@@ -216,8 +260,10 @@ extension XLSXCodec {
         <c:spPr><a:ln w="19050">\(fill)</a:ln></c:spPr>
         <c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr>\(fill)</c:spPr></c:marker>
         """
-    case .bar, .area:
+    case .bar, .area, .pie:
       shape = "<c:spPr>\(fill)</c:spPr>"
+    case .scatter:
+      shape = scatterShapeXML(fill)
     }
     let points = chart.pointColors.keys.sorted().compactMap { index -> String? in
       guard let point = chart.pointColors[index] else { return nil }
@@ -232,19 +278,84 @@ extension XLSXCodec {
         <c:tx><c:v>\(escapeXML(name))</c:v></c:tx>
         \(shape)
         \(points)
-        <c:cat><c:strRef><c:f>\(escapeXML(catRef))</c:f></c:strRef></c:cat>
-        <c:val><c:numRef><c:f>\(escapeXML(valRef))</c:f></c:numRef></c:val>
+        \(pointsXML(chart.kind, catRef: catRef, valRef: valRef))
       </c:ser>
       """
   }
+
+  /// A further series in its own color from the palette, named by its header cell.
+  private static func extraSeriesXML(
+    _ chart: SheetChart, index: Int, catRef: String, valRef: String, nameRef: String?
+  ) -> String {
+    let color = seriesPalette[index % seriesPalette.count]
+    let fill = solidFillXML(color)
+    let name =
+      nameRef.map { "<c:tx><c:strRef><c:f>\(escapeXML($0))</c:f></c:strRef></c:tx>" }
+      ?? "<c:tx><c:v>Series \(index + 1)</c:v></c:tx>"
+    let shape: String
+    switch chart.kind {
+    case .line:
+      shape = """
+        <c:spPr><a:ln w="19050">\(fill)</a:ln></c:spPr>
+        <c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr>\(fill)</c:spPr></c:marker>
+        """
+    case .scatter:
+      shape = scatterShapeXML(fill)
+    case .bar, .area, .pie:
+      shape = "<c:spPr>\(fill)</c:spPr>"
+    }
+    return """
+      <c:ser>
+        <c:idx val="\(index)"/><c:order val="\(index)"/>
+        \(name)
+        \(shape)
+        \(pointsXML(chart.kind, catRef: catRef, valRef: valRef))
+      </c:ser>
+      """
+  }
+
+  /// Category and value references; a scatter chart's are its X and Y numbers.
+  private static func pointsXML(_ kind: SheetChart.Kind, catRef: String, valRef: String) -> String {
+    if kind == .scatter {
+      return """
+        <c:xVal><c:numRef><c:f>\(escapeXML(catRef))</c:f></c:numRef></c:xVal>
+        <c:yVal><c:numRef><c:f>\(escapeXML(valRef))</c:f></c:numRef></c:yVal>
+        <c:smooth val="0"/>
+        """
+    }
+    return """
+      <c:cat><c:strRef><c:f>\(escapeXML(catRef))</c:f></c:strRef></c:cat>
+      <c:val><c:numRef><c:f>\(escapeXML(valRef))</c:f></c:numRef></c:val>
+      """
+  }
+
+  /// Markers only: a scatter chart from Spark Grid plots points, not a connecting line.
+  private static func scatterShapeXML(_ fill: String) -> String {
+    """
+    <c:spPr><a:ln><a:noFill/></a:ln></c:spPr>
+    <c:marker><c:symbol val="circle"/><c:size val="6"/><c:spPr>\(fill)</c:spPr></c:marker>
+    """
+  }
+
+  /// Colors for series after the first, which uses the chart's own series color.
+  static let seriesPalette: [CodableColor] = [
+    CodableColor(red: 0.18, green: 0.45, blue: 0.86, alpha: 1),
+    CodableColor(red: 0.93, green: 0.49, blue: 0.19, alpha: 1),
+    CodableColor(red: 0.44, green: 0.68, blue: 0.28, alpha: 1),
+    CodableColor(red: 1.0, green: 0.75, blue: 0.0, alpha: 1),
+    CodableColor(red: 0.6, green: 0.4, blue: 0.75, alpha: 1),
+    CodableColor(red: 0.36, green: 0.61, blue: 0.84, alpha: 1),
+  ]
 
   private static func pointShapeXML(_ fill: String, kind: SheetChart.Kind) -> String {
     switch kind {
     case .line:
       return
         "<c:marker><c:symbol val=\"circle\"/><c:spPr>\(fill)</c:spPr></c:marker><c:spPr><a:ln>\(fill)</a:ln></c:spPr>"
-    case .bar, .area:
+    case .bar, .area, .pie:
       return "<c:spPr>\(fill)</c:spPr>"
+    case .scatter:
+      return "<c:marker><c:symbol val=\"circle\"/><c:spPr>\(fill)</c:spPr></c:marker>"
     }
   }
 

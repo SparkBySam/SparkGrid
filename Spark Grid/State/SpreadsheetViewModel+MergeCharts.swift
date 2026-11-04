@@ -150,7 +150,11 @@ extension SpreadsheetViewModel {
   }
 
   func selectChart(id: UUID?, scroll: Bool = true) {
-    if id != nil { selectedImageID = nil }
+    // Selecting a chart deselects the others. Clearing it leaves a file chart's selection.
+    if id != nil {
+      selectedImageID = nil
+      selectedImportedChartID = nil
+    }
     let changed = selectedChartID != id
     selectedChartID = id
     if scroll, let id {
@@ -256,6 +260,7 @@ extension SpreadsheetViewModel {
 
   func requestScrollToChart(_ id: UUID) {
     chartScrollID = id
+    importedChartScrollID = nil
     chartScrollToken &+= 1
   }
 

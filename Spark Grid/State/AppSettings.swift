@@ -41,8 +41,37 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
   case bold
   case italic
   case underline
+  case autoSum
 
   var id: String { rawValue }
+
+  /// Where the action sits in Settings.
+  enum Group: String, CaseIterable, Identifiable {
+    case edit = "Edit"
+    case formulas = "Formulas"
+    case format = "Format"
+    case file = "File"
+    var id: String { rawValue }
+  }
+
+  var group: Group {
+    switch self {
+    case .copy, .cut, .paste, .undo, .redo: return .edit
+    case .copyFormulas, .pasteFormulas, .convertToValues, .autoSum: return .formulas
+    case .bold, .italic, .underline: return .format
+    case .save: return .file
+    }
+  }
+
+  var detail: String {
+    switch self {
+    case .copyFormulas: return "Copies the formulas, not their results"
+    case .pasteFormulas: return "Pastes formulas and adjusts their references"
+    case .convertToValues: return "Replaces the selected formulas with their results"
+    case .autoSum: return "Adds the numbers above or to the left"
+    default: return ""
+    }
+  }
 
   var displayName: String {
     switch self {
@@ -58,11 +87,12 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
     case .bold: return "Bold"
     case .italic: return "Italic"
     case .underline: return "Underline"
+    case .autoSum: return "AutoSum"
     }
   }
 }
 
-struct StoredShortcut: Codable, Equatable {
+struct StoredShortcut: Codable, Equatable, Hashable {
   var key: String
   var modifiers: UInt
 
@@ -179,6 +209,30 @@ final class AppSettings {
     persistShortcuts()
   }
 
+  func defaultShortcut(for action: HotkeyAction) -> StoredShortcut {
+    Self.defaultShortcuts[action] ?? .default
+  }
+
+  func resetShortcut(for action: HotkeyAction) {
+    setShortcut(defaultShortcut(for: action), for: action)
+  }
+
+  /// The other action already using `shortcut`, if any.
+  func action(using shortcut: StoredShortcut, except action: HotkeyAction) -> HotkeyAction? {
+    HotkeyAction.allCases.first { $0 != action && self.shortcut(for: $0) == shortcut }
+  }
+
+  /// Menu commands that can't be reassigned, by their shortcut.
+  static let reservedShortcuts: [StoredShortcut: String] = {
+    let command = NSEvent.ModifierFlags.command.rawValue
+    let pairs: [(String, String)] = [
+      ("q", "Quit"), ("w", "Close"), ("n", "New"), ("o", "Open"), ("p", "Print"),
+      ("a", "Select All"), ("f", "Find"), ("h", "Hide"), ("m", "Minimize"), (",", "Settings"),
+    ]
+    return Dictionary(
+      uniqueKeysWithValues: pairs.map { (StoredShortcut(key: $0.0, modifiers: command), $0.1) })
+  }()
+
   func resetShortcutsToDefaults() {
     shortcuts = Self.defaultShortcuts
     persistShortcuts()
@@ -249,6 +303,8 @@ final class AppSettings {
     .bold: StoredShortcut(key: "b", modifiers: NSEvent.ModifierFlags.command.rawValue),
     .italic: StoredShortcut(key: "i", modifiers: NSEvent.ModifierFlags.command.rawValue),
     .underline: StoredShortcut(key: "u", modifiers: NSEvent.ModifierFlags.command.rawValue),
+    .autoSum: StoredShortcut(
+      key: "t", modifiers: NSEvent.ModifierFlags.command.union(.shift).rawValue),
   ]
 }
 

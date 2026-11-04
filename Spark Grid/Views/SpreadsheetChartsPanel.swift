@@ -12,7 +12,7 @@ struct SpreadsheetChartsPanel: View {
 
   var body: some View {
     let charts = viewModel.activeSheet.charts
-    if charts.isEmpty {
+    if charts.isEmpty, viewModel.importedChartPlacements.isEmpty {
       EmptyView()
     } else {
       Group {
@@ -80,6 +80,9 @@ struct SpreadsheetChartsPanel: View {
         VStack(alignment: .leading, spacing: 12) {
           ForEach(charts) { chart in
             chartCard(chart)
+          }
+          ForEach(viewModel.importedChartPlacements) { placement in
+            importedChartCard(placement)
           }
         }
         .padding(10)
@@ -179,6 +182,73 @@ struct SpreadsheetChartsPanel: View {
     )
   }
 
+  /// A chart that came with the file: what it shows, where it sits, and Edit and Delete.
+  private func importedChartCard(_ placement: SpreadsheetViewModel.ImportedChartPlacement)
+    -> some View
+  {
+    let chart = placement.chart
+    let title = chart.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let selected = viewModel.selectedImportedChartID == placement.id
+    let count = chart.series.count
+    let subtitle =
+      "\(EditImportedChartSheet.title(chart.kind))\(chart.isStacked ? ", stacked" : ""), "
+      + "\(count) series"
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(title.isEmpty ? "Untitled chart" : title)
+            .font(.system(size: 13, weight: .semibold))
+            .lineLimit(2)
+          Text(subtitle)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+          Text(Self.placementText(placement))
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        Spacer(minLength: 0)
+        Button("Edit") {
+          viewModel.beginEditImportedChart(placement.id)
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 11, weight: .medium))
+        .help("Edit the chart's type, titles and series")
+        Button {
+          viewModel.deleteImportedChart(placement.id)
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 20, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Delete chart")
+      }
+      ImportedChartPlot(chart: chart, series: viewModel.importedChartSeries(chart))
+        .frame(height: 150)
+        .allowsHitTesting(false)
+    }
+    .padding(10)
+    .background(SparkStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .strokeBorder(selected ? SparkStyle.accent : Color.clear, lineWidth: 2)
+    )
+    .contentShape(Rectangle())
+    .onTapGesture { viewModel.showImportedChart(placement.id) }
+  }
+
+  /// `Over H18:L26`, or `At H18` for a chart anchored at one cell.
+  static func placementText(_ placement: SpreadsheetViewModel.ImportedChartPlacement) -> String {
+    let from = CellAddress(row: placement.from.row, col: placement.from.col)
+    guard let to = placement.to else { return "At \(from.a1)" }
+    let end = CellAddress(row: to.row, col: to.col)
+    return "Over \(CellRange(start: from, end: end).a1Label)"
+  }
+
   private func plottedPoints(for chart: SheetChart) -> [ChartPreviewSeries.Point] {
     ChartPreviewSeries.points(
       for: chart,
@@ -256,6 +326,8 @@ struct SpreadsheetChartsPanel: View {
 struct SheetChartView: View {
   let chart: SheetChart
   let viewModel: SpreadsheetViewModel
+  /// Set on the sheet, where pointing at a bar or point names its value.
+  var hover: ChartHover?
 
   private struct Point: Identifiable {
     let id: Int
@@ -340,12 +412,17 @@ struct SheetChartView: View {
   }
 
   var body: some View {
-    GeometryReader { geo in
-      chartStack(in: geo.size)
-    }
-    .onAppear { refreshPoints() }
-    .onChange(of: cacheToken) { _, _ in
-      refreshPoints()
+    if chart.usesSeriesPlot {
+      let plot = viewModel.seriesPlot(for: chart)
+      ImportedChartPlot(chart: plot.chart, series: plot.series, hover: hover)
+    } else {
+      GeometryReader { geo in
+        chartStack(in: geo.size)
+      }
+      .onAppear { refreshPoints() }
+      .onChange(of: cacheToken) { _, _ in
+        refreshPoints()
+      }
     }
   }
 
@@ -555,7 +632,8 @@ struct SheetChartView: View {
     // including on the 440×200 Insert Chart preview.
     Chart(points) { point in
       switch chart.kind {
-      case .bar:
+      case .bar, .pie, .scatter:
+        // Pie and scatter draw in the series plot; this path only sees bar, line and area.
         BarMark(
           x: .value("Category", Double(point.id)),
           y: .value("Value", point.value)
@@ -597,6 +675,7 @@ struct SheetChartView: View {
     }
     .chartYScale(domain: yDomain)
     .chartXScale(domain: xDomain)
+    .chartOverlay { proxy in hoverLayer(proxy, points: points) }
     .chartPlotStyle { plot in
       plot.padding(.bottom, bottomPadding)
     }
@@ -708,6 +787,31 @@ struct SheetChartView: View {
     cachedToken = token
   }
 
+  /// The category and value under the pointer. Categories sit at whole-number positions.
+  private func hoverLayer(_ proxy: ChartProxy, points: [Point]) -> some View {
+    GeometryReader { geo in
+      if let location = hover?.location, let plotAnchor = proxy.plotFrame {
+        let origin = geo.frame(in: .named(ChartHover.space)).origin
+        let local = CGPoint(x: location.x - origin.x, y: location.y - origin.y)
+        let plot = geo[plotAnchor]
+        if plot.contains(local),
+          let position = proxy.value(atX: local.x - plot.minX, as: Double.self)
+        {
+          let index = Int(position.rounded())
+          if let point = points.first(where: { $0.id == index }) {
+            ChartHoverBubble(
+              text:
+                "\(point.label)\n\(point.value.formatted(.number.precision(.fractionLength(0...2))))"
+            )
+            .position(
+              x: min(max(local.x, 60), max(60, geo.size.width - 60)), y: max(16, local.y - 22))
+          }
+        }
+      }
+    }
+    .allowsHitTesting(false)
+  }
+
   private static func computePoints(
     chart: SheetChart,
     viewModel: SpreadsheetViewModel
@@ -751,12 +855,14 @@ extension ChartMarkPalette.RGB {
 struct OnSheetChartCard: View {
   let chart: SheetChart
   var viewModel: SpreadsheetViewModel
+  var hover: ChartHover?
 
   var body: some View {
     let selected = viewModel.selectedChartID == chart.id
     GeometryReader { geo in
       cardContent(in: geo.size)
     }
+    .coordinateSpace(name: ChartHover.space)
     .background(SparkStyle.canvas, in: RoundedRectangle(cornerRadius: 6))
     .overlay(
       RoundedRectangle(cornerRadius: 6)
@@ -797,7 +903,7 @@ struct OnSheetChartCard: View {
               .frame(maxWidth: .infinity, alignment: .leading)
               .frame(height: titleHeight)
           }
-          SheetChartView(chart: chart, viewModel: viewModel)
+          SheetChartView(chart: chart, viewModel: viewModel, hover: hover)
             .frame(width: innerWidth, height: chartHeight)
         }
         .frame(width: innerWidth, height: innerHeight, alignment: .topLeading)
@@ -815,7 +921,7 @@ struct OnSheetChartCard: View {
 }
 
 /// Corner and edge handles drawn on a selected on-sheet chart.
-private struct ChartFrameHandleMarks: View {
+struct ChartFrameHandleMarks: View {
   var body: some View {
     GeometryReader { geo in
       let size = geo.size

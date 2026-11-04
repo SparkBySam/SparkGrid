@@ -67,6 +67,8 @@ struct SpreadsheetGridView: NSViewRepresentable {
       context.coordinator.lastChartScrollToken = viewModel.chartScrollToken
       if let id = viewModel.chartScrollID {
         nsView.scrollChartIntoView(id: id)
+      } else if let id = viewModel.importedChartScrollID {
+        nsView.scrollImportedChartIntoView(id: id)
       }
     }
     nsView.layoutOnSheetCharts()

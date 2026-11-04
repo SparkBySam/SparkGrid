@@ -426,7 +426,7 @@ extension SpreadsheetViewModel {
   }
 
   /// Range used when Create Filter is invoked from a single selected cell.
-  private func filterRangeForSingleCell(_ seed: CellAddress) -> CellRange {
+  func filterRangeForSingleCell(_ seed: CellAddress) -> CellRange {
     if let region = contiguousRegion(around: seed),
       region.normalized.maxRow > region.normalized.minRow
     {
@@ -639,6 +639,64 @@ extension SpreadsheetViewModel {
         originRows: originRows)
     }
     notifyGridRefresh()
+  }
+
+  /// What Remove Duplicates did, for the message that follows it.
+  enum RemoveDuplicatesOutcome: Equatable {
+    case removed(count: Int, kept: Int)
+    case noneFound
+    /// A filter is hiding rows in the range; clear it first.
+    case filterHidesRows
+    case nothingToCheck
+  }
+
+  /// Removes rows that repeat an earlier row in the compared columns, ignoring case. The first
+  /// of each stays and the rows below close up, as one undo step.
+  @discardableResult
+  func removeDuplicates(_ request: DuplicateRequest) -> RemoveDuplicatesOutcome {
+    commitEditIfNeeded()
+    let range = request.range
+    let hasHeader = request.hasHeader
+    let n = range.normalized
+    let firstDataRow = n.minRow + (hasHeader ? 1 : 0)
+    guard firstDataRow < n.maxRow, !request.columns.isEmpty else { return .nothingToCheck }
+    if filterState != nil, (firstDataRow...n.maxRow).contains(where: isRowHiddenByFilter) {
+      return .filterHidesRows
+    }
+    let repeats = scanDuplicates(request).repeatRows.sorted()
+    guard !repeats.isEmpty else { return .noneFound }
+    let repeatSet = Set(repeats)
+    let kept = (firstDataRow...n.maxRow).filter { !repeatSet.contains($0) }
+
+    let rangeLabel = range.a1Label
+    undoManager?.beginUndoGrouping()
+    // The repeats move below the rows that stay, then those bottom rows are cleared.
+    guard
+      applyCommand(
+        "data.sort",
+        [
+          "sheet": activeSheet.name, "range": rangeLabel, "column": String(n.minCol),
+          "header": hasHeader ? "true" : "false",
+          "order": (kept + repeats).map(String.init).joined(separator: ","),
+        ],
+        incremental: false)
+    else {
+      undoManager?.endUndoGrouping()
+      return .nothingToCheck
+    }
+    registerSortUndo(
+      sheetName: activeSheet.name, rangeLabel: rangeLabel, column: n.minCol,
+      hasHeader: hasHeader, firstDataRow: firstDataRow, appliedOrder: lastSortOrder,
+      action: "Remove Duplicates")
+    clearRange(
+      CellRange(
+        start: CellAddress(row: n.maxRow - repeats.count + 1, col: n.minCol),
+        end: CellAddress(row: n.maxRow, col: n.maxCol)),
+      actionName: "Remove Duplicates")
+    undoManager?.endUndoGrouping()
+    undoManager?.setActionName("Remove Duplicates")
+    notifyGridRefresh()
+    return .removed(count: repeats.count, kept: kept.count)
   }
 
   /// Undo for a sort keeps the row order, not copies of the workbook. On a 15,000-row sheet each

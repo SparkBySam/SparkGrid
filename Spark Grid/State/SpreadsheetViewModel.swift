@@ -11,6 +11,8 @@ enum GridContentInvalidation {
   case cells(Set<CellAddress>)
   /// The rest of an open file arrived. Repaint stored values. Keep scroll and selection.
   case repaint
+  /// Values on another sheet changed. Charts here that read them draw again; cells stay.
+  case charts
 }
 
 /// UI state and mutations for the active workbook. Undo integrates with the document undo manager.
@@ -87,14 +89,22 @@ final class SpreadsheetViewModel {
   var selectedImageID: UUID?
   /// Selected on-sheet chart, if any.
   var selectedChartID: UUID?
+  /// Selected chart from the file, by its place among the sheet's kept charts.
+  var selectedImportedChartID: Int?
+  /// Chart from the file open in the Edit Chart sheet.
+  var editingImportedChartID: Int?
   /// Chart opened in the Insert Chart sheet for editing. Nil while inserting.
   var editingChartID: UUID?
   /// Bumped when the grid should scroll an on-sheet chart into view.
   var chartScrollToken = 0
   var chartScrollID: UUID?
+  /// A chart from the file to scroll into view, used when `chartScrollID` is nil.
+  var importedChartScrollID: Int?
 
   /// Insert Chart sheet presentation.
   var isInsertChartPresented = false
+  /// The Duplicates sheet (Data → Find Duplicates…).
+  var isDuplicatesSheetPresented = false
   var pendingChartKind: SheetChart.Kind = .bar
 
   // MARK: - Find / Replace
@@ -132,6 +142,13 @@ final class SpreadsheetViewModel {
   var isRestoringFilterFromSheet = false
   /// Cache for conditional-format overlays (invalidated with contentRevision).
   var conditionalFormatCache: [CellAddress: ConditionalPaint] = [:]
+  /// Charts from other apps, read once per chart part. Nil marks a part Spark Grid cannot draw.
+  @ObservationIgnored var importedChartCache: [Data: ImportedChart?] = [:]
+  /// The selection's sum and counts, kept until the cells or the selection change.
+  @ObservationIgnored var selectionStatsCache: (key: SelectionStatsKey, stats: SelectionStats)?
+  /// Duplicates or unique values shaded on the sheet until cleared. Not saved in the file.
+  var duplicateHighlight: DuplicateRequest?
+  @ObservationIgnored var duplicateScanCache: (key: DuplicateScanKey, scan: DuplicateScan)?
   var conditionalFormatCacheRevision: Int = -1
   /// Numbers in each conditional-format range, reset with `conditionalFormatCache`.
   var conditionalRangeNumbers: [ConditionalRangeKey: [Double]] = [:]
@@ -222,6 +239,9 @@ final class SpreadsheetViewModel {
   private static let fullPaintCellCount = 256
 
   private func publishExternalChanges(_ changes: [String: Set<CellAddress>]) {
+    if !activeSheet.fileExtras.foreignCharts.isEmpty {
+      onGridInvalidation?(.charts)
+    }
     let active = activeSheet.name
     let addresses =
       changes.first { $0.key.caseInsensitiveCompare(active) == .orderedSame }?.value ?? []
@@ -1378,6 +1398,8 @@ final class SpreadsheetViewModel {
     }
     syncEditTextFromSelection()
     isEditing = false
+    // Charts from the file are numbered per sheet.
+    selectedImportedChartID = nil
   }
 
   func deleteSheet(at index: Int) {
@@ -2595,7 +2617,7 @@ final class SpreadsheetViewModel {
   }
 
   /// Clears the cells in `range` on rows the filter shows. Hidden rows keep their values, as in Excel.
-  private func clearRange(_ range: CellRange, actionName: String = "Clear") {
+  func clearRange(_ range: CellRange, actionName: String = "Clear") {
     undoManager?.beginUndoGrouping()
     let addresses = activeSheet.cells.keys.filter {
       range.contains($0) && !isRowHiddenByFilter($0.row)

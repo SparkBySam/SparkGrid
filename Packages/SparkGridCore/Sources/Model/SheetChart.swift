@@ -10,6 +10,8 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     case bar
     case line
     case area
+    case pie
+    case scatter
 
     public var id: String { rawValue }
 
@@ -18,8 +20,13 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
       case .bar: return "Bar"
       case .line: return "Line"
       case .area: return "Area"
+      case .pie: return "Pie"
+      case .scatter: return "Scatter"
       }
     }
+
+    /// Pie slices come from one series.
+    public var allowsMoreSeries: Bool { self != .pie }
   }
 
   /// How Y values are produced from the data range.
@@ -48,6 +55,8 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
   public var categoryColumn: Int?
   /// Absolute column index used for Y values when `valueMode == .values`.
   public var valueColumn: Int?
+  /// More value columns, each drawn as its own series after `valueColumn`.
+  public var extraValueColumns: [Int]
   public var hasHeaderRow: Bool
   public var valueMode: ValueMode
   /// Top-left of the on-sheet chart frame, in cell coordinates.
@@ -92,6 +101,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     dataRange: CellRange,
     categoryColumn: Int? = nil,
     valueColumn: Int? = nil,
+    extraValueColumns: [Int] = [],
     hasHeaderRow: Bool = true,
     valueMode: ValueMode = .values,
     anchorRow: Int,
@@ -116,6 +126,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     self.dataRange = dataRange
     self.categoryColumn = categoryColumn
     self.valueColumn = valueColumn
+    self.extraValueColumns = extraValueColumns
     self.hasHeaderRow = hasHeaderRow
     self.valueMode = valueMode
     self.anchorRow = anchorRow
@@ -137,7 +148,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
 
   public enum CodingKeys: String, CodingKey {
     case id, kind, title, dataRange
-    case categoryColumn, valueColumn, hasHeaderRow, valueMode
+    case categoryColumn, valueColumn, extraValueColumns, hasHeaderRow, valueMode
     case anchorRow, anchorCol, rowSpan, colSpan
     case originXOffset, originYOffset, endXOffset, endYOffset
     case seriesColor, pointColors, showsLegend, showsGridlines
@@ -152,6 +163,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     dataRange = try c.decode(CellRange.self, forKey: .dataRange)
     categoryColumn = try c.decodeIfPresent(Int.self, forKey: .categoryColumn)
     valueColumn = try c.decodeIfPresent(Int.self, forKey: .valueColumn)
+    extraValueColumns = try c.decodeIfPresent([Int].self, forKey: .extraValueColumns) ?? []
     hasHeaderRow = try c.decodeIfPresent(Bool.self, forKey: .hasHeaderRow) ?? true
     valueMode = try c.decodeIfPresent(ValueMode.self, forKey: .valueMode) ?? .values
     anchorRow = try c.decodeIfPresent(Int.self, forKey: .anchorRow) ?? 0
@@ -183,6 +195,9 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     try c.encode(dataRange, forKey: .dataRange)
     try c.encodeIfPresent(categoryColumn, forKey: .categoryColumn)
     try c.encodeIfPresent(valueColumn, forKey: .valueColumn)
+    if !extraValueColumns.isEmpty {
+      try c.encode(extraValueColumns, forKey: .extraValueColumns)
+    }
     try c.encode(hasHeaderRow, forKey: .hasHeaderRow)
     try c.encode(valueMode, forKey: .valueMode)
     try c.encode(anchorRow, forKey: .anchorRow)
@@ -206,11 +221,17 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
   /// Bar and line use the first palette swatch. Area uses a steady blue.
   public static func defaultSeriesColor(for kind: Kind) -> CodableColor {
     switch kind {
-    case .bar, .line:
+    case .bar, .line, .pie, .scatter:
       return CodableColor(red: 0.18, green: 0.45, blue: 0.86, alpha: 1)
     case .area:
       return CodableColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1)
     }
+  }
+
+  /// Pie, scatter, and charts with more than one series are drawn by the series plot, the
+  /// same one that draws charts from other apps.
+  public var usesSeriesPlot: Bool {
+    kind == .pie || kind == .scatter || (valueMode == .values && !extraValueColumns.isEmpty)
   }
 
   /// Series color, or the kind's default when the series color is unset.

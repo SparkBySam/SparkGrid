@@ -138,6 +138,19 @@ public final class FormulaEngine {
   /// A reference can also surface another cell's formula source when that
   /// precedent has not been calculated yet. The sheet calculates it.
   /// The answer check walks this function. `recalculateEntireWorkbook` does not.
+  /// A cell's value on any sheet of the workbook, as a formula on another sheet would read it.
+  /// Charts use it: a chart on Dashboard can plot Monthly Summary's totals.
+  public func value(onSheet sheetName: String, at address: CellAddress) -> CellValue {
+    if sheetName.caseInsensitiveCompare(activeSheetName) == .orderedSame,
+      let sheet = workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheetName) == .orderedSame
+      })
+    {
+      return sheetDisplayValue(at: address, sheet: sheet)
+    }
+    return resolveForeign(sheetName: sheetName, address: address)
+  }
+
   public func sheetDisplayValue(at address: CellAddress, sheet: Sheet, cell: Cell? = nil)
     -> CellValue
   {
@@ -533,6 +546,7 @@ public final class FormulaEngine {
   /// Installs a background calculation and lets painting read it.
   public func installCalculatedResults(_ results: [String: [CellAddress: CellValue]]) {
     recalculatedSheetValues = results
+    revision &+= 1
     let key = sheetKey(activeSheetName)
     if let active = results[key] {
       for (address, value) in active where !Self.isFormulaText(value) {

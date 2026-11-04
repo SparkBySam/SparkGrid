@@ -117,6 +117,39 @@ final class XLSXExportTests: XCTestCase {
     XCTAssertEqual(paint.dataBarFraction ?? 0, 0.5, accuracy: 1e-9)
   }
 
+  /// An icon set from a file keeps its own thresholds (here 10 and 50) and its reversed order
+  /// through a save, and those thresholds pick the icons.
+  func testIconSetKeepsItsThresholdsAndDirection() throws {
+    let a1 = CellAddress(row: 0, col: 0)
+    var sheet = Sheet(name: "Data")
+    for (row, value) in ["5", "20", "80"].enumerated() {
+      sheet.setCell(Cell(raw: value), at: CellAddress(row: row, col: 0))
+    }
+    let thresholds = [
+      DataBarBound(type: .number, value: 0), DataBarBound(type: .number, value: 10),
+      DataBarBound(type: .number, value: 50),
+    ]
+    sheet.conditionalFormats = [
+      ConditionalFormatRule(
+        range: CellRange(start: a1, end: CellAddress(row: 2, col: 0)),
+        predicate: .iconSet(.threeTrafficLights), iconThresholds: thresholds, iconReverse: true)
+    ]
+    let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [sheet]))
+    let rule = try XCTUnwrap(
+      XLSXCodec.importWorkbook(from: data).sheets[0].conditionalFormats.first)
+    XCTAssertEqual(rule.iconThresholds, thresholds)
+    XCTAssertEqual(rule.iconReverse, true)
+    let icons = [5.0, 20, 80].map { value in
+      ConditionalFormatEvaluator.resolvedPaint(
+        at: a1, base: nil, rules: [rule], value: .number(value), displayString: "",
+        numberFormat: nil, numericValuesInRange: { _ in [5, 20, 80] },
+        evaluateFormula: { _, _, _ in .blank }
+      ).icon
+    }
+    // Reversed: the lowest values get the first (green) icon.
+    XCTAssertEqual(icons, [.greenCircle, .yellowCircle, .redCircle])
+  }
+
   /// A bar with min and max ends still starts at 0, as it always has.
   func testDataBarWithMinAndMaxKeepsTheAutomaticScale() throws {
     let a1 = CellAddress(row: 0, col: 0)

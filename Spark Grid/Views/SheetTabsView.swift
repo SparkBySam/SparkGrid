@@ -24,7 +24,10 @@ struct SheetTabsView: View {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 1) {
           ForEach(visibleSheets, id: \.element.id) { index, sheet in
-            sheetTab(name: sheet.name, isActive: index == viewModel.workbook.activeSheetIndex) {
+            sheetTab(
+              name: sheet.name, color: sheet.fileExtras.tabColorHex,
+              isActive: index == viewModel.workbook.activeSheetIndex
+            ) {
               viewModel.selectSheet(at: index)
             }
             .background {
@@ -53,6 +56,22 @@ struct SheetTabsView: View {
                 sheetToRename = index
                 renameText = sheet.name
               }
+              Menu("Tab Color") {
+                ForEach(Self.tabColors, id: \.hex) { choice in
+                  Button {
+                    viewModel.setTabColor(choice.hex, at: index)
+                  } label: {
+                    Label {
+                      Text(choice.name)
+                    } icon: {
+                      Image(nsImage: Self.swatch(choice.hex))
+                    }
+                  }
+                }
+                Divider()
+                Button("No Color") { viewModel.setTabColor(nil, at: index) }
+                  .disabled(sheet.fileExtras.tabColorHex == nil)
+              }
               Button("Hide") {
                 viewModel.setSheetHidden(true, at: index)
               }
@@ -78,6 +97,37 @@ struct SheetTabsView: View {
       }
 
       Spacer(minLength: 0)
+
+      if let summary = viewModel.duplicateHighlightSummary {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(viewModel.duplicateHighlight?.unique == true ? Color.green : Color.red)
+            .frame(width: 7, height: 7)
+          Text(summary)
+            .font(.system(size: 11))
+            .foregroundStyle(SparkStyle.label)
+            .monospacedDigit()
+          Button {
+            viewModel.isDuplicatesSheetPresented = true
+          } label: {
+            Text("Remove…")
+          }
+          .buttonStyle(.link)
+          .font(.system(size: 11))
+          .opacity(viewModel.duplicateHighlight?.unique == true ? 0 : 1)
+          Button {
+            viewModel.clearDuplicateHighlight()
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .foregroundStyle(SparkStyle.secondaryLabel)
+          }
+          .buttonStyle(.plain)
+          .help("Clear the highlight (Esc)")
+        }
+        .padding(.horizontal, 8)
+      }
+
+      SelectionStatsMenu(viewModel: viewModel)
 
       if let counts = viewModel.filterRowCounts {
         HStack(spacing: 6) {
@@ -140,8 +190,35 @@ struct SheetTabsView: View {
     )
   }
 
-  private func sheetTab(name: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
+  static let tabColors: [(name: String, hex: String)] = [
+    ("Red", "E5484D"), ("Orange", "F08A24"), ("Yellow", "F2C94C"), ("Green", "34A853"),
+    ("Teal", "14B8A6"), ("Blue", "4472C4"), ("Purple", "8B5CF6"), ("Pink", "EC4899"),
+    ("Gray", "8E8E93"),
+  ]
+
+  /// A small round chip for the menu. Menus draw images, not SwiftUI shapes.
+  static func swatch(_ hex: String) -> NSImage {
+    let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+      (Self.nsColor(hex) ?? .gray).setFill()
+      NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+      return true
+    }
+    image.isTemplate = false
+    return image
+  }
+
+  static func nsColor(_ hex: String) -> NSColor? {
+    guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+    return NSColor(
+      srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+      blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+  }
+
+  private func sheetTab(
+    name: String, color: String?, isActive: Bool, action: @escaping () -> Void
+  ) -> some View {
+    let tint = color.flatMap(Self.nsColor).map(Color.init(nsColor:))
+    return Button(action: action) {
       Text(name)
         .font(.system(size: 11, weight: isActive ? .semibold : .regular))
         .foregroundStyle(isActive ? SparkStyle.label : SparkStyle.secondaryLabel)
@@ -152,10 +229,14 @@ struct SheetTabsView: View {
             SparkStyle.chrome
           }
         }
+        .background {
+          // A colored tab is tinted, as other spreadsheet apps show it.
+          if let tint, !isActive { tint.opacity(0.18) }
+        }
         .overlay(alignment: .bottom) {
           Rectangle()
-            .fill(isActive ? SparkStyle.accent : Color.clear)
-            .frame(height: 2)
+            .fill(tint ?? (isActive ? SparkStyle.accent : Color.clear))
+            .frame(height: isActive ? 3 : 2)
         }
         .contentShape(Rectangle())
     }

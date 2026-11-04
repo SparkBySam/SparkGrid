@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct SpreadsheetStructureCommands: Commands {
   @FocusedValue(\.spreadsheetViewModel) private var focusedViewModel: SpreadsheetViewModel?
+  @Bindable private var settings = AppSettings.shared
 
   private var viewModel: SpreadsheetViewModel? {
     focusedViewModel ?? (NSApp.delegate as? SparkGridAppDelegate)?.resolvedSpreadsheetViewModel()
@@ -129,6 +130,15 @@ struct SpreadsheetStructureCommands: Commands {
     }
 
     CommandMenu("Insert") {
+      Button("AutoSum") { viewModel?.autoSum() }
+        .keyboardShortcut(
+          settings.keyEquivalent(for: .autoSum), modifiers: settings.eventModifiers(for: .autoSum)
+        )
+        .disabled(viewModel == nil)
+
+      Button("Table") { viewModel?.createTable() }
+        .disabled(viewModel?.newTableRange == nil)
+
       Button("Picture…") {
         Self.insertPicture(viewModel: viewModel)
       }

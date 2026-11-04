@@ -117,6 +117,15 @@ extension SpreadsheetViewModel {
   }
 
   /// Changes the active sheet's kept file parts as one undoable step.
+  /// Colors a sheet's tab. Saved in the sheet's own properties, as other apps keep it.
+  func setTabColor(_ hex: String?, at index: Int) {
+    guard workbook.sheets.indices.contains(index) else { return }
+    if index != workbook.activeSheetIndex { selectSheet(at: index) }
+    updateFileExtras(actionName: hex == nil ? "Remove Tab Color" : "Tab Color") { extras in
+      extras.tabColorHex = hex
+    }
+  }
+
   func updateFileExtras(actionName: String, _ change: (inout SheetFileExtras) -> Void) {
     commitEditIfNeeded()
     let before = activeSheet.fileExtras
