@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Spark Grid changelog — 1.1.1 is out</title>
-  <meta name="description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <title>Spark Grid changelog — 1.2 is out</title>
+  <meta name="description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
   <link rel="canonical" href="https://sparkgridapp.com/changelog" />
-  <meta property="og:title" content="Spark Grid changelog — 1.1.1 is out" />
-  <meta property="og:description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <meta property="og:title" content="Spark Grid changelog — 1.2 is out" />
+  <meta property="og:description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Spark Grid" />
   <meta property="og:locale" content="en_US" />
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Spark Grid changelog — 1.1.1 is out" />
-  <meta name="twitter:description" content="Spark Grid 1.1.1 is out on the Mac App Store. Spreadsheets. No account. Filters you can work in, tabs you can drag, and fixes that keep your files as you left them." />
+  <meta name="twitter:title" content="Spark Grid changelog — 1.2 is out" />
+  <meta name="twitter:description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
   <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
   <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <link rel="icon" type="image/png" href="/favicon.png" />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/launch">What’s in 1.1</a>
+      <a href="/changelog">What’s in 1.2</a>
       <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Legal</a>
@@ -44,10 +44,48 @@
   <article class="page">
     <h1>Changelog</h1>
     <p class="pitch">Spreadsheets. No account.</p>
-    <p>Spark Grid 1.1.1 is out on the Mac App Store. October 29, 2026.</p>
-    <p>Filters you can work in, tabs you can drag, and fixes that keep your files exactly as you left them.</p>
+    <p>Spark Grid 1.2 is out on the Mac App Store. November 4, 2026.</p>
+    <p>Your files come back exactly as you saved them, with dropdown lists, comments, hidden rows and sheets, and much more.</p>
 
-    <h2>What’s new in 1.1.1</h2>
+    <h2>What’s new in 1.2</h2>
+    <ul>
+      <li>Saving keeps everything a workbook had: hidden rows, columns, and sheets, grouped rows, tab colors, protection, page setup, dropdown lists, comments, links, tables, charts, and pivot tables.</li>
+      <li>Dropdown lists: pick a value from a cell’s list, or make your own with Data &gt; Dropdown List.</li>
+      <li>Comments: rest the pointer on a cell with a red corner to read its comment. Add and edit them from the cell’s menu.</li>
+      <li>Hide and unhide rows, columns, and sheets. Small arrows in the headers mark hidden rows and columns; click one to show them again. Hide Sheet and Unhide Sheet are in the Sheet menu.</li>
+      <li>Filter by rule: contains, begins with, greater than, between, top and bottom, and dates.</li>
+      <li>The fill handle continues numbers, dates, numbered text, and month and day names. Option-drag copies.</li>
+      <li>Type a cell or name into the name box to go there. F2 edits the selected cell.</li>
+      <li>37 more functions, including MAXIFS, MINIFS, and the #NUM! error.</li>
+      <li>The formula bar shows percents and dates the way the cell does, and typing a date stores a date.</li>
+    </ul>
+
+    <h2>Improved in 1.2</h2>
+    <ul>
+      <li>Files without saved results open and calculate much faster.</li>
+      <li>Scrolling draws cells right away instead of filling them in.</li>
+      <li>Large format changes, such as alternating row colors on thousands of rows, apply in one step and undo in one step.</li>
+      <li>Frozen rows and columns have a clearer edge.</li>
+      <li>In dark mode, text on light cell colors stays readable.</li>
+    </ul>
+
+    <h2>Fixed in 1.2</h2>
+    <ul>
+      <li>After a sort, formula columns show the right results for their rows.</li>
+      <li>Highlighting rules stay on after you save and reopen a file.</li>
+      <li>Totals that add up the same range on two sheets each use their own sheet.</li>
+      <li>Data bars keep their scale when you save.</li>
+      <li>Typing in a cell and then switching sheets no longer copies the text to the other sheet.</li>
+      <li>Undo after switching sheets returns you to where you were.</li>
+      <li>Selecting a merged cell highlights all of it.</li>
+      <li>ROUND no longer shows -0.</li>
+      <li>Open shows only spreadsheet files.</li>
+    </ul>
+
+    <h2>1.1.1</h2>
+    <p>October 29, 2026. Filters you can work in, tabs you can drag, and fixes that keep your files exactly as you left them.</p>
+
+    <h3>What’s new in 1.1.1</h3>
     <ul>
       <li>A filter panel on every column: search its values, see how many rows hold each one, and sort A to Z or Z to A. Click the same sort again to put the rows back.</li>
       <li>The tab bar shows how many rows a filter is showing, with one click to clear it. Filter changes can be undone.</li>
@@ -56,7 +94,7 @@
       <li>⌘-click or ⌘-drag removes cells, rows, or columns from a selection.</li>
     </ul>
 
-    <h2>Fixed in 1.1.1</h2>
+    <h3>Fixed in 1.1.1</h3>
     <ul>
       <li>Formatting comes back when you reopen a file that has conditional formatting. It was saved in the file all along; opening it dropped it.</li>
       <li>Sorting, filling, and pasting formulas keep their brackets, so <code>(1-F3)</code> stays grouped and the result stays right.</li>
@@ -121,7 +159,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/launch">What’s in 1.1</a>
+      <a href="/changelog">What’s in 1.2</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Terms &amp; licenses</a>
       <a href="/support">Support</a>
