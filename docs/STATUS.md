@@ -1,8 +1,20 @@
 # Status
 
-Updated: 2026-11-01. Commit this file in the same commit as the work it describes.
+Updated: 2026-11-04. Commit this file in the same commit as the work it describes.
 
-## 1.2 release (version 1.2, build 6)
+## 1.3 (version 1.3, build 7), not yet submitted
+
+1.2 (build 6) is in App Review. 1.3 is on `claude/1.3` (Spark-Grid#79, SparkGrid#3). Release notes are in `docs/release-notes-1.3.md`; `docs/BUGS.md` lists the fixes.
+
+- Charts from files (`ForeignChart`) are read by `ImportedChartReader` and drawn by `ImportedChartView`, live from their cells. Move, resize, duplicate, reorder and delete edit the kept anchor (`DrawingAnchorXML`); Edit Chart rewrites the kept chart part with `ImportedChartWriter` (XMLDocument), changing only what was edited.
+- Saving numbers every object in a drawing, and the drawing part is valid XML again (`</xdr:xfrm>`; since Oct 15 it closed with `</a:xfrm>`).
+- Highlight styles write both `fgColor` and `bgColor` for a solid fill.
+- Duplicates (`SpreadsheetViewModel+Duplicates`), tables (`SpreadsheetViewModel+Tables`, `SheetTable+Style`), tab colors (`SheetFileExtras+TabColor`), icon thresholds, selection stats and AutoSum, and tabbed Settings.
+- Row insert: formulas on other sheets that don't name the changed sheet are skipped by a byte scan, and the rest are shifted in parallel.
+- Checked: an edited stress workbook opens in Excel with no repair prompt and imports into Numbers; a table from the app's template opens in Excel as a styled table.
+- Still to check by hand: Remove Duplicates, Undo, save; a changed shortcut after a relaunch. Still to make: App Store screenshots and a preview video.
+
+
 
 1.1.1 shipped on 2026-10-29. 1.2 follows `Future Features.md`: compatibility first. The bug bash (PR #77) is merged; `docs/BUGS.md` lists what is open. Release notes are in `docs/release-notes-1.2.md`.
 

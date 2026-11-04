@@ -844,7 +844,7 @@ extension XLSXCodec {
     var fillXML = ""
     if let rgb = style.fillColor.map(rgbHex) {
       fillXML =
-        #"<x14:fill><x14:patternFill patternType="solid"><x14:bgColor rgb="FF\#(rgb)"/></x14:patternFill></x14:fill>"#
+        #"<x14:fill><x14:patternFill patternType="solid"><x14:fgColor rgb="FF\#(rgb)"/><x14:bgColor rgb="FF\#(rgb)"/></x14:patternFill></x14:fill>"#
     }
     return "<x14:dxf>\(fontXML)\(fillXML)</x14:dxf>"
   }
@@ -861,9 +861,11 @@ extension XLSXCodec {
       }
       let fontXML = font.isEmpty ? "" : "<font>\(font)</font>"
       var fillXML = ""
+      // Excel reads a highlight's solid fill from bgColor; other apps read fgColor. Both say the
+      // same color, as Excel itself accepts.
       if let rgb = style.fillColor.map(rgbHex) {
         fillXML =
-          #"<fill><patternFill patternType="solid"><bgColor rgb="FF\#(rgb)"/></patternFill></fill>"#
+          #"<fill><patternFill patternType="solid"><fgColor rgb="FF\#(rgb)"/><bgColor rgb="FF\#(rgb)"/></patternFill></fill>"#
       }
       body += "<dxf>\(fontXML)\(fillXML)</dxf>"
     }
