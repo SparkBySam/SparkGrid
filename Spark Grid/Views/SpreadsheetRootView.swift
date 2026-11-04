@@ -1,3 +1,4 @@
+import AppKit
 import SparkGridCore
 import SwiftUI
 
@@ -29,21 +30,39 @@ struct SpreadsheetRootView: View {
 }
 
 /// Title updates live here so the root view does not refresh when dirty state changes.
+/// The title goes on this document's own window, which may not be the one in front: a file
+/// opened in the background, or one of several open documents.
 private struct SpreadsheetWindowTitle: View {
   @Bindable var store: SpreadsheetDocumentStore
 
   var body: some View {
-    Color.clear
+    WindowTitleSetter(title: store.displayTitle)
       .frame(width: 0, height: 0)
-      .onAppear {
-        WindowTitleUpdater.apply(title: store.displayTitle)
-      }
-      .onChange(of: store.displayTitle) { _, title in
-        WindowTitleUpdater.apply(title: title)
-      }
-      .onChange(of: store.isDirty) { _, _ in
-        WindowTitleUpdater.apply(title: store.displayTitle)
-      }
+  }
+}
+
+private struct WindowTitleSetter: NSViewRepresentable {
+  let title: String
+
+  func makeNSView(context: Context) -> TitleView { TitleView() }
+
+  func updateNSView(_ view: TitleView, context: Context) {
+    view.title = title
+    view.apply()
+  }
+
+  final class TitleView: NSView {
+    var title = ""
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      apply()
+    }
+
+    func apply() {
+      guard let window, window.title != title else { return }
+      window.title = title
+    }
   }
 }
 

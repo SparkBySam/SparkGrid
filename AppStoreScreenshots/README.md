@@ -1,6 +1,6 @@
 # App Store screenshots
 
-Ready for App Store Connect → your Mac app version → **Screenshots**.
+For App Store Connect → your Mac app version → **Screenshots**. Made for 1.3 (November 2026).
 
 ## Apple requirements (met)
 
@@ -8,27 +8,28 @@ Ready for App Store Connect → your Mac app version → **Screenshots**.
 |-------------|--------|
 | Size | **2880 × 1800** (accepted Mac size) |
 | Aspect | **16:10** |
-| Format | PNG, **RGB, no alpha** |
-| Count | 1–10 (we have **4**) |
-
-Accepted sizes also include 1280×800, 1440×900, 2560×1600 — we standardized on the largest.
+| Format | JPEG, quality 95, full color (4:4:4), **RGB, no alpha**. Under 1 MB each, the repo's limit. Lossless PNG masters are kept outside the repo. |
+| Count | 1–10 (we have **9**) |
 
 ## Upload these (in order)
 
-1. `01-pipeline-2880x1800.png` — main workbook / pipeline grid  
-2. `02-weekly-calls-2880x1800.png` — second sheet + conditional formatting  
-3. `03-totals-formula-2880x1800.png` — totals / formula bar  
-4. `04-about-2880x1800.png` — About Spark Grid *(optional — see note)*
+1. `01-pipeline` — a formatted pipeline sheet: money and percents, data bars, a highlight rule, dropdowns, a comment, a formula in the formula bar
+2. `02-charts` — color scale heat map and two charts from the file
+3. `03-edit-chart` — Edit Chart
+4. `04-duplicate-highlights` — Find Duplicates, repeated rows shaded
+5. `05-table` — a styled table with traffic-light icons
+6. `06-settings` — Settings → Shortcuts
+7. `07-pipeline-light` — the pipeline sheet in light mode
+8. `08-charts-light` — the charts sheet in light mode
+9. `09-chart-panel-light` — a selected chart with its handles, and the Charts panel
 
-## Note on About screenshot
+## How they are made
 
-`04` previously showed **Buy me a coffee**. That tip jar was removed from the app for Guideline 3.1.1 — do **not** upload screenshot 04. Use **01–03** only.
+Everything in them is made up. `source/make_showcase_workbook.py` builds the workbook (run with an interpreter that has openpyxl). Each window is captured without its shadow (`screencapture -x -o -l WINDOW_ID`) from a test build with its own bundle ID, opened with `open -g -n`, at a 1476 × 900 point window.
+
+- `source/compose.py RAW.png OUT.png` puts a capture on the dark backdrop at 2880 × 1800 with a soft shadow (saved as PNG; convert to JPEG quality 95 with 4:4:4 color for the repo). The test window is behind other windows while it is captured, so its close, minimize and zoom buttons are grey; the script draws them in their normal colors. `--keep-buttons` leaves them grey (for a window behind Settings).
+- `source/overlay.py MAIN.png PANEL.png DX DY OUT.png` lays a second window (Settings) over the main capture.
 
 ## Do not upload
 
-- `_raw*` working captures  
 - Website images under `web/images/` (wrong size / have alpha)
-
-## How we made them
-
-Window framed ~1440×900 @2× → 2880×1782, padded to 2880×1800, alpha flattened onto charcoal.

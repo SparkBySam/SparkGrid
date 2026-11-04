@@ -27,6 +27,8 @@ Fixed
 • Workbooks saved with a chart now open cleanly in other spreadsheet apps.
 • Highlighting rules show in other spreadsheet apps after you save.
 • Workbooks keep all their highlighting rules when they open.
+• Opening a workbook while Spark Grid is already open no longer quits the app.
+• Text in workbooks from other spreadsheet apps stays readable in light and dark mode, and keeps its color when you save.
 • Closing Settings closes only Settings.
 • A row keeps its gridlines after AutoSum.
 • Icon set checkmarks are the right way up.
@@ -38,8 +40,8 @@ Charts from your files, right on the sheet: move, resize and edit them. Plus Fin
 
 ## Before submitting
 
-- New App Store screenshots: charts on the sheet, Edit Chart, Find Duplicates, a table, Settings.
-- App preview video.
+- App Store screenshots: done, in `AppStoreScreenshots/` (nine JPEGs, in upload order).
+- App preview videos: done, in `Claude outputs/App Store 1.3 previews/` (over the repo's 1 MB limit, so not committed).
 
 ## Website and press, on release day
 

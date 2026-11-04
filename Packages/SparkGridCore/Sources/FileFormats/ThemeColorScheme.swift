@@ -12,10 +12,12 @@ public struct ThemeColorScheme: Sendable {
     self.colorsByName = colorsByName
   }
 
-  /// SpreadsheetML `theme` attribute indices (ThemeColorValues).
+  /// SpreadsheetML `theme` attribute indices. Excel numbers the first four light first:
+  /// 0 is light 1 (the background), 1 is dark 1 (text), 2 is light 2, 3 is dark 2. The default
+  /// font's `theme="1"` is black text.
   public func color(themeIndex: Int, tint: Double = 0) -> CodableColor? {
     let names = [
-      "dk1", "lt1", "dk2", "lt2",
+      "lt1", "dk1", "lt2", "dk2",
       "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
       "hlink", "folHlink",
     ]
@@ -128,6 +130,17 @@ public enum ThemeColorLookup {
     return scheme.color(themeIndex: theme, tint: tint)
   }
 
+  /// A font whose color is `theme="1"` (dark 1) with no tint, or `auto="1"`.
+  static func isAutomaticText(_ fontBody: String) -> Bool {
+    guard
+      let range = fontBody.range(of: #"<(\w+:)?color\b[^>]*>"#, options: .regularExpression)
+    else { return false }
+    let tag = String(fontBody[range])
+    if attribute(tag, "auto") == "1" { return true }
+    guard attribute(tag, "theme") == "1", attribute(tag, "rgb") == nil else { return false }
+    return (attribute(tag, "tint").flatMap(Double.init) ?? 0) == 0
+  }
+
   public static func parseStyleColors(stylesXML: String, scheme: ThemeColorScheme)
     -> ThemeResolvedStyleColors
   {
@@ -146,6 +159,9 @@ public enum ThemeColorLookup {
           range: NSRange(location: 0, length: ns.length)
         ).enumerated() {
           let body = ns.substring(with: match.range(at: 1))
+          // Excel's default text is dark 1 with no tint: automatic text, which follows light
+          // and dark mode like a cell with no color. Read as a fixed color, it was white.
+          if isAutomaticText(body) { continue }
           if let color = firstThemeOrRGBColor(in: body, scheme: scheme) {
             result.fontColorsById[index] = color
           }

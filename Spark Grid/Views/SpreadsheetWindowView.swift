@@ -272,14 +272,6 @@ struct SpreadsheetWindowView: View {
   }
 }
 
-enum WindowTitleUpdater {
-  static func apply(title: String) {
-    DispatchQueue.main.async {
-      NSApp.keyWindow?.title = title
-    }
-  }
-}
-
 #Preview {
   SpreadsheetWindowView(store: SpreadsheetDocumentStore())
 }

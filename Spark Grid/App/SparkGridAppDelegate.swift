@@ -42,6 +42,34 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     return editor
   }()
 
+  /// Files opened from Finder or `open` after launch arrive as an Apple Event. SwiftUI's own
+  /// handler closed the spreadsheet window to open the file in a new one; with a single window,
+  /// that quit the app. Once the window is up, the event comes here instead and the file opens
+  /// in the window that is there. A file the app is launched with still goes through SwiftUI,
+  /// which opens the window for it.
+  private func takeOverOpenDocumentsEvent() {
+    NSAppleEventManager.shared().setEventHandler(
+      self,
+      andSelector: #selector(handleOpenDocuments(_:withReply:)),
+      forEventClass: AEEventClass(kCoreEventClass),
+      andEventID: AEEventID(kAEOpenDocuments))
+  }
+
+  @objc private func handleOpenDocuments(
+    _ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor
+  ) {
+    guard let list = event.paramDescriptor(forKeyword: keyDirectObject) else { return }
+    var urls: [URL] = []
+    if list.numberOfItems == 0, let url = list.fileURLValue {
+      urls.append(url)
+    } else if list.numberOfItems > 0 {
+      for index in 1...list.numberOfItems {
+        if let url = list.atIndex(index)?.fileURLValue { urls.append(url) }
+      }
+    }
+    application(NSApp, open: urls)
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     guard let url = urls.first else { return }
     openExternalFile(url)
@@ -89,6 +117,7 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     Self.current = self
+    takeOverOpenDocumentsEvent()
     installPrintKeyMonitor()
     installSaveKeyMonitor()
     configureMainWindow()

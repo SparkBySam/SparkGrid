@@ -300,7 +300,12 @@ extension SpreadsheetViewModel {
 
   private func chartValue(sheetName: String?, at address: CellAddress) -> CellValue? {
     guard let sheet = chartSheet(named: sheetName) else { return nil }
-    let value = formulaEngine.value(onSheet: sheet.name, at: address)
+    // The sheet being edited is read from the view's own copy. The engine's copy of it is
+    // replaced only on a full rebuild, so a typed value read old until then.
+    let value =
+      sheet.id == activeSheet.id
+      ? formulaEngine.sheetDisplayValue(at: address, sheet: sheet)
+      : formulaEngine.value(onSheet: sheet.name, at: address)
     if case .error = value { return nil }
     return value
   }

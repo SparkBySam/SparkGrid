@@ -29,6 +29,10 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 
 | # | Bug | Fixed in |
 | --- | --- | --- |
+| | Typing a value did not update a chart from the file that reads it, or recolor the rest of a color scale, data bar or icon set range, until the sheet was redrawn (switching sheets) | 1.3 (`claude/1.3`) |
+| | Opening a file into a running Spark Grid (Finder, `open`) quit the app: SwiftUI closed the only window to open the file in a new one. In 1.2 too | 1.3 (`claude/1.3`) |
+| | Excel's default text color (`theme="1"`) was read as white: numbers vanished on light fills in dark mode, and the color was saved back as white. Theme colors 0 to 3 were in the wrong order | 1.3 (`claude/1.3`) |
+| | The window title stayed "Spark Grid" when a file opened while the app was in the background | 1.3 (`claude/1.3`) |
 | | Google Sheets showed no conditional formatting in files saved by Spark Grid: each rule was also written to an extension block with a made-up id | 1.3 (`claude/1.3`) |
 | | Opening a file with rules in both the sheet and Excel's extension block kept only the extension's rules | 1.3 (`claude/1.3`) |
 | 6 | Charts from other apps are kept on save but not drawn | 1.3 (`claude/1.3`) |

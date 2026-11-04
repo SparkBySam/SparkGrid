@@ -769,6 +769,7 @@ final class SpreadsheetGridNSView: NSView {
     var contentRevision: Int
     /// Bumps when calculated values arrive from the background, such as another sheet's totals.
     var engineRevision: Int
+    var series: [SpreadsheetViewModel.ImportedChartSeriesData]
   }
 
   private struct ChartHostSnapshot: Equatable {
@@ -6353,17 +6354,18 @@ final class SpreadsheetGridNSView: NSView {
         removeImportedChartHost(id: placement.id)
         continue
       }
+      let series = viewModel.importedChartSeries(placement.chart)
       let snapshot = ImportedChartSnapshot(
         placement: placement, selected: viewModel.selectedImportedChartID == placement.id,
         sheetID: sheetID, contentRevision: viewModel.contentRevision,
-        engineRevision: viewModel.formulaEngine.cacheRevision)
+        engineRevision: viewModel.formulaEngine.cacheRevision, series: series)
       let host: ImportedChartHost
       if let existing = importedChartHosts[placement.id] {
         host = existing
       } else {
         let created = ImportedChartHost(
           rootView: ImportedChartCard(
-            placement: placement, viewModel: viewModel,
+            placement: placement, series: series, viewModel: viewModel,
             hover: importedChartHover(for: placement.id)))
         created.sizingOptions = []
         created.safeAreaRegions = []
@@ -6376,7 +6378,7 @@ final class SpreadsheetGridNSView: NSView {
       }
       if importedChartSnapshots[placement.id] != snapshot {
         host.rootView = ImportedChartCard(
-          placement: placement, viewModel: viewModel,
+          placement: placement, series: series, viewModel: viewModel,
           hover: importedChartHover(for: placement.id))
         importedChartSnapshots[placement.id] = snapshot
       }
@@ -8961,7 +8963,19 @@ final class SpreadsheetGridNSView: NSView {
   /// unless a wrapped row actually changes height.
   func invalidateDisplayedCells(_ changed: Set<CellAddress>) {
     guard let viewModel, !changed.isEmpty else { return }
-    let addresses = Self.withOverflowNeighbors(changed, sheet: viewModel.activeSheet)
+    let neighbors = Self.withOverflowNeighbors(changed, sheet: viewModel.activeSheet)
+    // A color scale, data bar, icon set or duplicate rule colors every cell from the whole
+    // range, so one edited value can change all of them.
+    guard
+      let addresses = Self.withRangeRuleCells(
+        neighbors, rules: viewModel.activeSheet.conditionalFormats)
+    else {
+      testingInvalidateReason = "range-rule full"
+      advanceTileCalcGeneration()
+      reloadContent(resetScrollPosition: false)
+      return
+    }
+    if addresses.count != neighbors.count { advanceTileCalcGeneration() }
     if scrollSurfacesPresented {
       testingInvalidateReason = "scroll-surfaces"
       reloadContent(resetScrollPosition: false)
@@ -9011,6 +9025,35 @@ final class SpreadsheetGridNSView: NSView {
     limitPaintTo = nil
     testingInvalidateReason +=
       " partial \(addresses.count) onscreen \(anyOnScreen) dirty \(needsDisplay) layer \(layer?.needsDisplay() == true)"
+  }
+
+  /// The cells to repaint once rules that read their whole range are counted: `changed` plus
+  /// every cell of such a rule that a changed cell is in. Nil when that is too many to repaint
+  /// one by one.
+  static func withRangeRuleCells(_ changed: Set<CellAddress>, rules: [ConditionalFormatRule])
+    -> Set<CellAddress>?
+  {
+    var result = changed
+    for rule in rules {
+      switch rule.predicate {
+      case .colorScale, .dataBar, .iconSet, .duplicateValues, .uniqueValues: break
+      default: continue
+      }
+      let range = rule.range.normalized
+      guard
+        changed.contains(where: {
+          $0.row >= range.minRow && $0.row <= range.maxRow && $0.col >= range.minCol
+            && $0.col <= range.maxCol
+        })
+      else { continue }
+      let rows = range.maxRow - range.minRow + 1
+      let cols = range.maxCol - range.minCol + 1
+      guard rows * cols + result.count <= 4_096 else { return nil }
+      for row in range.minRow...range.maxRow {
+        for col in range.minCol...range.maxCol { result.insert(CellAddress(row: row, col: col)) }
+      }
+    }
+    return result
   }
 
   /// Text spills over empty cells beside it. When a cell changes, the cells its old or new text

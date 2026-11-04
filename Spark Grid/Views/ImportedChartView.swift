@@ -18,13 +18,15 @@ final class ChartHover {
 /// chart part, so other apps open the same chart.
 struct ImportedChartCard: View {
   let placement: SpreadsheetViewModel.ImportedChartPlacement
+  /// Read by the grid before the card is built. Read inside `body`, an edited value did not
+  /// always redraw the chart, because nothing the card was given had changed.
+  let series: [SpreadsheetViewModel.ImportedChartSeriesData]
   var viewModel: SpreadsheetViewModel
   var hover: ChartHover?
 
   private var selected: Bool { viewModel.selectedImportedChartID == placement.id }
 
   var body: some View {
-    let series = viewModel.importedChartSeries(placement.chart)
     GeometryReader { geo in
       let pad: CGFloat = 8
       let title = placement.chart.title.trimmingCharacters(in: .whitespacesAndNewlines)
