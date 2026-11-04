@@ -317,9 +317,10 @@ typealias Cell = SparkGridCore.Cell
         guard xml.contains("type=\"cellIs\""), xml.contains("conditionalFormatting") else {
           return Result(name: "highlight export", passed: false, detail: "missing cellIs CF in XML")
         }
-        guard xml.contains("x14:conditionalFormatting"), styles.contains("<cellStyles") else {
+        // One copy of each rule: a second copy in an extension block hid them in other apps.
+        guard !xml.contains("x14:conditionalFormatting"), styles.contains("<cellStyles") else {
           return Result(
-            name: "highlight export", passed: false, detail: "missing x14 CF or cellStyles")
+            name: "highlight export", passed: false, detail: "extra x14 CF or missing cellStyles")
         }
         let imported = try XLSXCodec.importWorkbook(from: data)
         guard imported.activeSheet.conditionalFormats.count == 1,

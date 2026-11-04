@@ -25,6 +25,8 @@ Improved
 
 Fixed
 • Workbooks saved with a chart now open cleanly in other spreadsheet apps.
+• Highlighting rules show in other spreadsheet apps after you save.
+• Workbooks keep all their highlighting rules when they open.
 • Closing Settings closes only Settings.
 • A row keeps its gridlines after AutoSum.
 • Icon set checkmarks are the right way up.

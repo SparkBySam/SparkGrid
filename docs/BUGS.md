@@ -29,6 +29,8 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 
 | # | Bug | Fixed in |
 | --- | --- | --- |
+| | Google Sheets showed no conditional formatting in files saved by Spark Grid: each rule was also written to an extension block with a made-up id | 1.3 (`claude/1.3`) |
+| | Opening a file with rules in both the sheet and Excel's extension block kept only the extension's rules | 1.3 (`claude/1.3`) |
 | 6 | Charts from other apps are kept on save but not drawn | 1.3 (`claude/1.3`) |
 | | Sheet tab colors from other apps were kept on save but not shown, and couldn't be set | 1.3 (`claude/1.3`) |
 | | Files saved with a Spark Grid chart had an invalid drawing part (`<xdr:xfrm>` closed as `</a:xfrm>`), so strict apps could ask to repair them and drop the chart. Since Oct 15 | 1.3 (`claude/1.3`) |

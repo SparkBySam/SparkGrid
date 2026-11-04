@@ -118,23 +118,23 @@ extension XLSXCodec {
     dxfs: [ConditionalFormatStyle],
     themeScheme: ThemeColorScheme
   ) {
-    let x14Blocks = extractX14ConditionalFormattingBlocks(from: xml)
-    if !x14Blocks.isEmpty {
-      let before = sheet.conditionalFormats.count
-      for block in x14Blocks {
-        importConditionalFormattingBlock(
-          sqref: block.sqref,
-          body: block.body,
-          into: &sheet,
-          dxfs: dxfs,
-          themeScheme: themeScheme,
-          x14Formulas: true
-        )
-      }
-      if sheet.conditionalFormats.count > before {
-        return
-      }
+    // Excel keeps most rules in the sheet and some only in the extension, so both are read.
+    // Spark Grid 1.2 and earlier also copied every sheet rule into an extension block with its
+    // own id; those copies are skipped.
+    let x14Blocks =
+      xml.contains(legacySparkGridExtensionURI)
+      ? [] : extractX14ConditionalFormattingBlocks(from: xml)
+    for block in x14Blocks {
+      importConditionalFormattingBlock(
+        sqref: block.sqref,
+        body: block.body,
+        into: &sheet,
+        dxfs: dxfs,
+        themeScheme: themeScheme,
+        x14Formulas: true
+      )
     }
+    let x14Text = x14Blocks.map(\.body).joined()
 
     let blockPattern = #"<conditionalFormatting\b([^>]*)>(.*?)</conditionalFormatting>"#
     guard
@@ -152,13 +152,35 @@ extension XLSXCodec {
       guard let sqref = attributeValue(attrs, name: "sqref") else { continue }
       importConditionalFormattingBlock(
         sqref: sqref,
-        body: body,
+        body: withoutRulesLinked(into: x14Text, from: body),
         into: &sheet,
         dxfs: dxfs,
         themeScheme: themeScheme,
         x14Formulas: false
       )
     }
+  }
+
+  /// The extension id Spark Grid 1.2 and earlier wrote. Excel's own is `{78C0D931-…}`.
+  private static let legacySparkGridExtensionURI = "{78C0FAFA-122D-4D67-B399-A730565E8757}"
+
+  /// Drops sheet rules that point at an extension rule already read (`<x14:id>`), as Excel
+  /// does for data bars, so the rule opens once with the extension's fuller settings.
+  private static func withoutRulesLinked(into x14Text: String, from body: String) -> String {
+    guard body.contains("x14:id"), !x14Text.isEmpty,
+      let regex = try? NSRegularExpression(
+        pattern: #"<cfRule\b(?:(?!</cfRule>).)*?<x14:id>\s*([^<\s]+)\s*</x14:id>.*?</cfRule>"#,
+        options: [.dotMatchesLineSeparators])
+    else { return body }
+    let ns = body as NSString
+    var result = body
+    for match in regex.matches(in: body, range: NSRange(location: 0, length: ns.length)).reversed()
+    {
+      let id = ns.substring(with: match.range(at: 1))
+      guard x14Text.contains(id), let range = Range(match.range, in: result) else { continue }
+      result.removeSubrange(range)
+    }
+    return result
   }
 
   private struct ConditionalFormattingBlock {
@@ -671,182 +693,6 @@ extension XLSXCodec {
       xml += "</conditionalFormatting>"
     }
     return xml
-  }
-
-  /// Excel 2010+ extension block (inline dxfs) — improves Mac Excel compatibility.
-  public static func x14ConditionalFormattingXML(_ rules: [ConditionalFormatRule]) -> String {
-    guard !rules.isEmpty else { return "" }
-    var grouped: [String: [(ConditionalFormatRule, Int)]] = [:]
-    for (priority, rule) in rules.enumerated() {
-      let n = rule.range.normalized
-      let start = CellAddress(row: n.minRow, col: n.minCol).a1
-      let end = CellAddress(row: n.maxRow, col: n.maxCol).a1
-      let sqref = start == end ? start : "\(start):\(end)"
-      grouped[sqref, default: []].append((rule, priority + 1))
-    }
-
-    var blocks = ""
-    for (sqref, items) in grouped.sorted(by: { $0.key < $1.key }) {
-      blocks +=
-        #"<x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">"#
-      blocks += #"<xm:sqref>\#(sqref)</xm:sqref>"#
-      for (rule, priority) in items {
-        blocks += x14CfRuleXML(rule, priority: priority)
-      }
-      blocks += "</x14:conditionalFormatting>"
-    }
-
-    return """
-      <extLst>
-        <ext uri="{78C0FAFA-122D-4D67-B399-A730565E8757}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">
-          <x14:conditionalFormattings>\(blocks)</x14:conditionalFormattings>
-        </ext>
-      </extLst>
-      """
-  }
-
-  private static func x14CfRuleXML(_ rule: ConditionalFormatRule, priority: Int) -> String {
-    let stop = rule.stopIfTrue ? "" : #" stopIfTrue="0""#
-    switch rule.predicate {
-    case .greaterThan(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "greaterThan",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .lessThan(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "lessThan",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .greaterOrEqual(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "greaterThanOrEqual",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .lessOrEqual(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "lessThanOrEqual",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .equal(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "equal",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .notEqual(let v):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "notEqual",
-        formulas: [stringFromNumber(v)],
-        style: rule.style
-      )
-    case .between(let a, let b):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "between",
-        formulas: [stringFromNumber(a), stringFromNumber(b)],
-        style: rule.style
-      )
-    case .notBetween(let a, let b):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "notBetween",
-        formulas: [stringFromNumber(a), stringFromNumber(b)],
-        style: rule.style
-      )
-    case .textContains(let text):
-      return x14CellIsRule(
-        priority: priority,
-        stop: stop,
-        operator: "containsText",
-        formulas: [text],
-        style: rule.style,
-        text: text
-      )
-    case .blanks:
-      return
-        #"<x14:cfRule type="containsBlanks" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))</x14:cfRule>"#
-    case .nonBlanks:
-      return
-        #"<x14:cfRule type="notContainsBlanks" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))</x14:cfRule>"#
-    case .duplicateValues, .uniqueValues:
-      let type = rule.predicate == .duplicateValues ? "duplicateValues" : "uniqueValues"
-      return
-        #"<x14:cfRule type="\#(type)" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))</x14:cfRule>"#
-    case .formula(let raw):
-      let formula = raw.hasPrefix("=") ? String(raw.dropFirst()) : raw
-      return
-        #"<x14:cfRule type="expression" priority="\#(priority)"\#(stop)>\#(x14DxfXML(rule.style))<xm:f>\#(escapeXML(formula))</xm:f></x14:cfRule>"#
-    case .colorScale(let stops):
-      var xml = #"<x14:cfRule type="colorScale" priority="\#(priority)"\#(stop)><x14:colorScale>"#
-      for stop in stops {
-        xml += cfvoXML(stop.type, stop.value, prefix: "x14:")
-      }
-      for stop in stops {
-        xml += #"<x14:color rgb="FF\#(rgbHex(stop.color))"/>"#
-      }
-      xml += "</x14:colorScale></x14:cfRule>"
-      return xml
-    case .dataBar(let style):
-      let show = style.showValue ? "" : #" showValue="0""#
-      return
-        #"<x14:cfRule type="dataBar" priority="\#(priority)"\#(stop)><x14:dataBar\#(show)>\#(dataBarBoundsXML(style, prefix: "x14:"))<x14:color rgb="FF\#(rgbHex(style.color))"/></x14:dataBar></x14:cfRule>"#
-    case .iconSet(let style):
-      let reverse = rule.iconReverse == true ? #" reverse="1""# : ""
-      let cfvos = rule.resolvedIconThresholds.map { cfvoXML($0.type, $0.value, prefix: "x14:") }
-        .joined()
-      return
-        #"<x14:cfRule type="iconSet" priority="\#(priority)"\#(stop)><x14:iconSet iconSet="\#(style.excelName)"\#(reverse)>\#(cfvos)</x14:iconSet></x14:cfRule>"#
-    }
-  }
-
-  private static func x14CellIsRule(
-    priority: Int,
-    stop: String,
-    operator op: String,
-    formulas: [String],
-    style: ConditionalFormatStyle,
-    text: String? = nil
-  ) -> String {
-    let textAttr = text.map { #" text="\#(escapeXML($0))""# } ?? ""
-    let formulaXML = formulas.map { #"<xm:f>\#(escapeXML($0))</xm:f>"# }.joined()
-    return
-      #"<x14:cfRule type="cellIs" priority="\#(priority)"\#(stop) operator="\#(op)"\#(textAttr)>\#(x14DxfXML(style))\#(formulaXML)</x14:cfRule>"#
-  }
-
-  private static func x14DxfXML(_ style: ConditionalFormatStyle) -> String {
-    guard style.hasAny else { return "" }
-    var font = ""
-    font += dxfToggleXML("x14:b", style.bold)
-    font += dxfToggleXML("x14:i", style.italic)
-    if let rgb = style.textColor.map(rgbHex) {
-      font += #"<x14:color rgb="FF\#(rgb)"/>"#
-    }
-    let fontXML = font.isEmpty ? "" : "<x14:font>\(font)</x14:font>"
-    var fillXML = ""
-    if let rgb = style.fillColor.map(rgbHex) {
-      fillXML =
-        #"<x14:fill><x14:patternFill patternType="solid"><x14:fgColor rgb="FF\#(rgb)"/><x14:bgColor rgb="FF\#(rgb)"/></x14:patternFill></x14:fill>"#
-    }
-    return "<x14:dxf>\(fontXML)\(fillXML)</x14:dxf>"
   }
 
   public static func dxfsXML(_ dxfs: [ConditionalFormatStyle]) -> String {

@@ -1619,7 +1619,6 @@ public nonisolated enum XLSXCodec {
       let parts = rels.tables.map { #"<tablePart r:id="rId\#($0)"/>"# }.joined()
       xml.append(utf8: #"<tableParts count="\#(rels.tables.count)">\#(parts)</tableParts>"#)
     }
-    xml.append(utf8: x14ConditionalFormattingXML(sheet.conditionalFormats))
     xml.append(ascii: "</worksheet>")
     return xml.data
   }
