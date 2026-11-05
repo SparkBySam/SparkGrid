@@ -12,6 +12,11 @@ public final class FormulaEngine {
   public private(set) var paintsStoredResultsOnly = false
   public init() {}
 
+  /// Skips the main-actor deinit hop that aborts in
+  /// `TaskLocal.StopLookupScope` on macOS 15.4–15.7 and 26.0–26.3.
+  /// A multi-sheet recalculation wave releases worker engines on dispatch threads.
+  nonisolated deinit {}
+
   private var valueCache: [CellAddress: CellValue] = [:]
   /// Computed values for sheets other than the one currently in `valueCache`.
   /// `activateSheet` swaps this with the working cache so a tab switch does not

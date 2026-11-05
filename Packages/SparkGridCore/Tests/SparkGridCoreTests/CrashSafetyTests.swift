@@ -160,4 +160,23 @@ final class CrashSafetyTests: XCTestCase {
     CrashRecoveryStore.noteCleanExit(in: directory)
     XCTAssertFalse(CrashRecoveryStore.needsRestore(in: directory))
   }
+
+  /// macOS 15.7 with Xcode 26.3 aborted with signal 6 when a `FormulaEngine` deinit
+  /// hopped to the main actor. Two independent sheets run as one wave on worker engines.
+  @MainActor
+  func testFormulaEngineReleasesOnWorkerThreads() {
+    let address = CellAddress(row: 0, col: 0)
+    let left = Sheet(name: "Left", cells: [address: Cell(raw: "=1+2")])
+    let right = Sheet(name: "Right", cells: [address: Cell(raw: "=2+3")])
+    let workbook = Workbook(sheets: [left, right])
+    var engine: FormulaEngine? = FormulaEngine()
+    engine?.recalculateEntireWorkbook(workbook, profile: false)
+    XCTAssertEqual(engine?.formulaResults(on: left)[address], .number(3))
+    XCTAssertEqual(engine?.formulaResults(on: right)[address], .number(5))
+    engine = nil
+
+    DispatchQueue.concurrentPerform(iterations: 8) { _ in
+      _ = FormulaEngine()
+    }
+  }
 }
