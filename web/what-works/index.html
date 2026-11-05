@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/launch">What’s in 1.1</a>
+      <a href="/changelog">What’s in 1.2</a>
       <a href="/changelog">Changelog</a>
       <a href="/support">Support</a>
       <a href="/press">Press</a>
@@ -43,7 +43,7 @@
   </header>
   <article class="page">
     <h1>What works</h1>
-    <p>Last updated: October 29, 2026 · Spark Grid 1.1.1</p>
+    <p>Last updated: November 4, 2026 · Spark Grid 1.2</p>
     <p class="pitch">
       You have a workbook already. Here is what Spark Grid does with it, and what it doesn’t do yet.
     </p>
@@ -65,14 +65,15 @@
     </ul>
 
     <h2>Formulas</h2>
-    <p>A formula cell shows its result. The formula stays in the formula bar. These 52 functions calculate:</p>
+    <p>A formula cell shows its result. The formula stays in the formula bar. These 91 functions calculate:</p>
     <ul>
-      <li><strong>Math:</strong> SUM, AVERAGE, COUNT, COUNTA, COUNTBLANK, MIN, MAX, ABS, ROUND, ROUNDUP, ROUNDDOWN, SUMPRODUCT</li>
-      <li><strong>Conditional totals:</strong> SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS. Criteria can use wildcards.</li>
-      <li><strong>Logic:</strong> IF, IFS, IFERROR, IFNA, AND, OR, NOT, TRUE</li>
-      <li><strong>Lookup:</strong> XLOOKUP, VLOOKUP, HLOOKUP, INDEX, MATCH, XMATCH, COLUMN</li>
-      <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER, SUBSTITUTE, CHAR</li>
-      <li><strong>Dates:</strong> DATE, YEAR, MONTH, DAY, TODAY, NOW</li>
+      <li><strong>Math:</strong> SUM, PRODUCT, ABS, ROUND, ROUNDUP, ROUNDDOWN, INT, MOD, POWER, SQRT, SIGN, PI, CEILING, CEILING.MATH, FLOOR, FLOOR.MATH, SUMPRODUCT, SEQUENCE</li>
+      <li><strong>Conditional totals:</strong> SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS, MAXIFS, MINIFS. Criteria can use wildcards.</li>
+      <li><strong>Statistics:</strong> AVERAGE, COUNT, COUNTA, COUNTBLANK, MIN, MAX, MEDIAN, LARGE, SMALL, RANK, RANK.EQ</li>
+      <li><strong>Logic:</strong> IF, IFS, IFERROR, IFNA, AND, OR, NOT, TRUE, FALSE, ISBLANK, ISNUMBER, ISTEXT, ISERROR</li>
+      <li><strong>Lookup:</strong> XLOOKUP, VLOOKUP, HLOOKUP, INDEX, MATCH, XMATCH, ROW, ROWS, COLUMN, COLUMNS</li>
+      <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, VALUE, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER, PROPER, SUBSTITUTE, FIND, SEARCH, EXACT, REPT, CHAR</li>
+      <li><strong>Dates:</strong> DATE, YEAR, MONTH, DAY, WEEKDAY, HOUR, MINUTE, SECOND, EDATE, EOMONTH, TODAY, NOW</li>
     </ul>
     <p>Any other function shows <code>#NAME?</code>. Missing a function you use? <a href="mailto:help@sparkgridapp.com?subject=Function%20request">Tell Sam which one</a>.</p>
 
@@ -82,14 +83,21 @@
       <li>Number formats keep the file’s format code: thousands separators, the currency symbol, and the date and time pattern.</li>
       <li>Conditional formatting: highlights, color scales, data bars, and three icon sets.</li>
       <li>Formatting comes back the same when you save and reopen, including in files with conditional formatting.</li>
+      <li>Saving keeps what Spark Grid doesn’t show or edit yet: grouped rows, tab colors, protection, page setup, links, tables, and pivot tables stay in the file.</li>
       <li>Merged cells. Titles draw across the merge at full size.</li>
       <li>Freeze panes. Frozen rows and columns stay put when you scroll.</li>
     </ul>
 
     <h2>Working in the sheet</h2>
     <ul>
-      <li>Selection, fill handle, zoom, and resizing rows and columns.</li>
+      <li>Selection, zoom, and resizing rows and columns.</li>
+      <li>The fill handle continues numbers, dates, numbered text, and month and day names. Option-drag copies.</li>
       <li>Filter any column from its header: search its values, see how many rows hold each one, and sort A to Z or Z to A. Click the same sort again to put the rows back. Undo works on filters.</li>
+      <li>Filter by rule: contains, begins with, greater than, between, top and bottom, and dates.</li>
+      <li>Dropdown lists: pick from a cell’s list, or make one with Data &gt; Dropdown List.</li>
+      <li>Comments: read one by resting the pointer on its cell, and add or edit them from the cell’s menu.</li>
+      <li>Hide and unhide rows, columns, and sheets.</li>
+      <li>The name box takes an address or a defined name. F2 edits the selected cell.</li>
       <li>Copy, cut, and delete skip rows a filter hides, as in Excel.</li>
       <li>Find and replace on the current sheet.</li>
       <li>⌘-arrow jumps to the edge of your data. Add Shift to select as you go.</li>
@@ -109,11 +117,8 @@
 
     <h2>Not there yet</h2>
     <ul>
-      <li>Spark Grid is not Excel or Numbers. No pivot tables, data-validation lists, comments, or live collaboration.</li>
+      <li>Spark Grid is not Excel or Numbers. Pivot tables stay in the file, but you can’t make or change them. No live collaboration.</li>
       <li>No pie or scatter charts, and no charts with more than one series.</li>
-      <li>The fill handle copies. It doesn’t continue 1, 2, 3 or a run of dates.</li>
-      <li>Filters pick from a list of values. They don’t filter by greater than, less than, or text contains yet.</li>
-      <li>The name box shows the address. It doesn’t take an address or a name. No F2 to edit.</li>
       <li>Pressing Space in Finder doesn’t preview a workbook in Spark Grid.</li>
     </ul>
 
@@ -138,7 +143,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/launch">What’s in 1.1</a>
+      <a href="/changelog">What’s in 1.2</a>
       <a href="/what-works">What works</a>
       <a href="/changelog">Changelog</a>
       <a href="/press">Press kit</a>
