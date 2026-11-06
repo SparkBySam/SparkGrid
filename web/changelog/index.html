@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Spark Grid changelog — 1.2 is out</title>
-  <meta name="description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
+  <title>Spark Grid changelog — 1.3 is out</title>
+  <meta name="description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
   <link rel="canonical" href="https://sparkgridapp.com/changelog" />
-  <meta property="og:title" content="Spark Grid changelog — 1.2 is out" />
-  <meta property="og:description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
+  <meta property="og:title" content="Spark Grid changelog — 1.3 is out" />
+  <meta property="og:description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Spark Grid" />
   <meta property="og:locale" content="en_US" />
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Spark Grid changelog — 1.2 is out" />
-  <meta name="twitter:description" content="Spark Grid 1.2 is out on the Mac App Store. Your files come back exactly as you saved them, with dropdown lists, comments, and hidden rows and sheets." />
+  <meta name="twitter:title" content="Spark Grid changelog — 1.3 is out" />
+  <meta name="twitter:description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
   <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
   <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <link rel="icon" type="image/png" href="/favicon.png" />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/changelog">What’s in 1.2</a>
+      <a href="/changelog">What’s in 1.3</a>
       <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Legal</a>
@@ -44,10 +44,48 @@
   <article class="page">
     <h1>Changelog</h1>
     <p class="pitch">Spreadsheets. No account.</p>
-    <p>Spark Grid 1.2 is out on the Mac App Store. November 4, 2026.</p>
-    <p>Your files come back exactly as you saved them, with dropdown lists, comments, hidden rows and sheets, and much more.</p>
+    <p>Spark Grid 1.3 is out on the Mac App Store. November 6, 2026.</p>
+    <p>Charts from your files now show on the sheet, and you can move, resize, and edit them. Plus duplicates, tables, tab colors, and a new Settings window.</p>
 
-    <h2>What’s new in 1.2</h2>
+    <h2>What’s new in 1.3</h2>
+    <ul>
+      <li>Charts saved in your workbooks appear on the sheet and update as you edit the cells they read. Rest the pointer on a chart to see its values.</li>
+      <li>Move and resize any chart, or right-click it to edit, duplicate, bring to front, or delete. Edit Chart changes the type, titles, legend, and each series’ cells and color.</li>
+      <li>Insert Chart makes pie and scatter charts, and charts with more than one series.</li>
+      <li>The Charts panel lists every chart on the sheet. Click one to go to it.</li>
+      <li>Find Duplicates: choose which columns must match, see the repeated rows, then highlight them or remove the extras. Highlights are temporary and clear with Esc.</li>
+      <li>Tables: Insert &gt; Table turns a block of cells into a table with a styled header and banded rows. Change its style or remove it from the cell’s menu. Tables in your files show their style.</li>
+      <li>The sum, average, and count of the selected cells show at the bottom right. AutoSum adds a total with ⇧⌘T.</li>
+      <li>Icon sets can use your own thresholds, as numbers, percents, or percentiles, and run in reverse.</li>
+      <li>Sheet tabs show their color, and you can set one from the tab’s menu.</li>
+    </ul>
+
+    <h2>Improved in 1.3</h2>
+    <ul>
+      <li>Settings has tabs for General, Shortcuts, and About. Change any shortcut, search them, and see when one is already in use. Autosave can be turned off or set to save less often.</li>
+      <li>Inserting a row or column on a large workbook is much faster.</li>
+      <li>Comments are marked with a small speech bubble.</li>
+      <li>The arrows that mark hidden rows and columns are easier to see.</li>
+    </ul>
+
+    <h2>Fixed in 1.3</h2>
+    <ul>
+      <li>Workbooks saved with a chart open cleanly in Excel and Numbers.</li>
+      <li>Highlighting rules show in Google Sheets after you save.</li>
+      <li>Workbooks keep all their highlighting rules when they open.</li>
+      <li>Opening a workbook while Spark Grid is already open no longer quits the app.</li>
+      <li>Text in workbooks from Excel stays readable in light and dark mode, and keeps its color when you save.</li>
+      <li>Charts and color scales update as soon as you type a new value.</li>
+      <li>Closing Settings closes only Settings.</li>
+      <li>A row keeps its gridlines after AutoSum.</li>
+      <li>Icon set checkmarks are the right way up.</li>
+      <li>Horizontal bar charts and area charts draw correctly.</li>
+    </ul>
+
+    <h2>1.2</h2>
+    <p>November 4, 2026. Your files come back exactly as you saved them, with dropdown lists, comments, hidden rows and sheets, and much more.</p>
+
+    <h3>What’s new in 1.2</h3>
     <ul>
       <li>Saving keeps everything a workbook had: hidden rows, columns, and sheets, grouped rows, tab colors, protection, page setup, dropdown lists, comments, links, tables, charts, and pivot tables.</li>
       <li>Dropdown lists: pick a value from a cell’s list, or make your own with Data &gt; Dropdown List.</li>
@@ -60,7 +98,7 @@
       <li>The formula bar shows percents and dates the way the cell does, and typing a date stores a date.</li>
     </ul>
 
-    <h2>Improved in 1.2</h2>
+    <h3>Improved in 1.2</h3>
     <ul>
       <li>Files without saved results open and calculate much faster.</li>
       <li>Scrolling draws cells right away instead of filling them in.</li>
@@ -69,7 +107,7 @@
       <li>In dark mode, text on light cell colors stays readable.</li>
     </ul>
 
-    <h2>Fixed in 1.2</h2>
+    <h3>Fixed in 1.2</h3>
     <ul>
       <li>After a sort, formula columns show the right results for their rows.</li>
       <li>Highlighting rules stay on after you save and reopen a file.</li>
@@ -159,7 +197,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/changelog">What’s in 1.2</a>
+      <a href="/changelog">What’s in 1.3</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Terms &amp; licenses</a>
       <a href="/support">Support</a>
