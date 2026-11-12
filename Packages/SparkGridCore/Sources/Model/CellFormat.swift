@@ -26,6 +26,15 @@ public nonisolated struct CellFormat: Codable, Equatable, Hashable, Sendable {
   /// Degrees for tilt/rotate, or `stackedTextRotation` (255) for one character per line (Excel OOXML).
   public var textRotation: Int = 0
   public var borders: CellBorders = .none
+  /// True when a protected sheet still lets people change this cell. Nil (the default) is locked,
+  /// as in other spreadsheet apps; stored this way so formats saved before 1.4 still decode.
+  public var unlocked: Bool?
+
+  /// Whether a protected sheet keeps this cell from being changed.
+  public var locked: Bool {
+    get { unlocked != true }
+    set { unlocked = newValue ? nil : true }
+  }
 
   public init(
     bold: Bool = false,

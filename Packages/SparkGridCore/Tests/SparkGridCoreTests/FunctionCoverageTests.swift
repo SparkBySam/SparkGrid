@@ -1,3 +1,4 @@
+import FileFormats
 import Formula
 import Foundation
 import Functions
@@ -336,6 +337,189 @@ final class FunctionCoverageTests: XCTestCase {
       numbers: ["A1": 1, "A2": 2, "A3": 3]
     ),
     "YEAR": Sample(formula: "YEAR(DATE(2020, 6, 15))", expect: .value(.number(2020))),
+    // 1.4 batch 2
+    "PMT": Sample(
+      formula: "PMT(0.05/12, 360, 200000)", expect: .numberBetween(-1073.65, -1073.64)),
+    "IPMT": Sample(
+      formula: "IPMT(0.1/12, 1, 36, 8000)", expect: .numberBetween(-66.67, -66.66)),
+    "PPMT": Sample(
+      formula: "PPMT(0.1/12, 1, 24, 2000)", expect: .numberBetween(-75.63, -75.61)),
+    "FV": Sample(
+      formula: "FV(0.06/12, 10, -200, -500, 1)", expect: .numberBetween(2581.4, 2581.41)),
+    "PV": Sample(
+      formula: "PV(0.08/12, 240, 500)", expect: .numberBetween(-59777.16, -59777.14)),
+    "NPER": Sample(
+      formula: "NPER(0.12/12, -100, -1000, 10000, 1)", expect: .numberBetween(59.673, 59.674)),
+    "RATE": Sample(
+      formula: "RATE(48, -200, 8000)", expect: .numberBetween(0.0077014, 0.0077015)),
+    "NPV": Sample(
+      formula: "NPV(0.1, -10000, 3000, 4200, 6800)", expect: .numberBetween(1188.43, 1188.45)),
+    "IRR": Sample(
+      formula: "IRR(A1:A6)", expect: .numberBetween(0.08663, 0.08664),
+      numbers: ["A1": -70000, "A2": 12000, "A3": 15000, "A4": 18000, "A5": 21000, "A6": 26000]),
+    "XNPV": Sample(
+      formula: "XNPV(0.09, A1:A5, B1:B5)", expect: .numberBetween(2086.64, 2086.66),
+      numbers: [
+        "A1": -10000, "A2": 2750, "A3": 4250, "A4": 3250, "A5": 2750, "B1": 39448, "B2": 39508,
+        "B3": 39751, "B4": 39859, "B5": 39904,
+      ]),
+    "XIRR": Sample(
+      formula: "XIRR(A1:A5, B1:B5)", expect: .numberBetween(0.37336, 0.37337),
+      numbers: [
+        "A1": -10000, "A2": 2750, "A3": 4250, "A4": 3250, "A5": 2750, "B1": 39448, "B2": 39508,
+        "B3": 39751, "B4": 39859, "B5": 39904,
+      ]),
+    "DAYS": Sample(
+      formula: "DAYS(45000, 44900)", expect: .value(.number(100))),
+    "DATEDIF": Sample(
+      formula: "DATEDIF(DATE(2001,6,1), DATE(2002,8,15), \"YD\")", expect: .value(.number(75))),
+    "NETWORKDAYS": Sample(
+      formula: "NETWORKDAYS(DATE(2012,10,1), DATE(2013,3,1), A1)", expect: .value(.number(109)),
+      numbers: ["A1": 41235]),
+    "WORKDAY": Sample(
+      formula: "WORKDAY(DATE(2008,10,1), 151)", expect: .value(.number(39933))),
+    "WEEKNUM": Sample(
+      formula: "WEEKNUM(DATE(2012,3,9), 2)", expect: .value(.number(11))),
+    "ISOWEEKNUM": Sample(
+      formula: "ISOWEEKNUM(DATE(2012,3,9))", expect: .value(.number(10))),
+    "STDEV": Sample(
+      formula: "STDEV(A1:A8)", expect: .numberBetween(2.13808, 2.13809),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "STDEV.S": Sample(
+      formula: "STDEV.S(A1:A8)", expect: .numberBetween(2.13808, 2.13809),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "STDEVP": Sample(
+      formula: "STDEVP(A1:A8)", expect: .value(.number(2)),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "STDEV.P": Sample(
+      formula: "STDEV.P(A1:A8)", expect: .value(.number(2)),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "VAR": Sample(
+      formula: "VAR(A1:A8)", expect: .numberBetween(4.5714, 4.5715),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "VAR.S": Sample(
+      formula: "VAR.S(A1:A8)", expect: .numberBetween(4.5714, 4.5715),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "VARP": Sample(
+      formula: "VARP(A1:A8)", expect: .value(.number(4)),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "VAR.P": Sample(
+      formula: "VAR.P(A1:A8)", expect: .value(.number(4)),
+      numbers: ["A1": 2, "A2": 4, "A3": 4, "A4": 4, "A5": 5, "A6": 5, "A7": 7, "A8": 9]),
+    "PERCENTILE": Sample(
+      formula: "PERCENTILE(A1:A4, 0.3)", expect: .numberBetween(1.8999999, 1.9000001),
+      numbers: ["A1": 1, "A2": 2, "A3": 3, "A4": 4]),
+    "PERCENTILE.INC": Sample(
+      formula: "PERCENTILE.INC(A1:A4, 0.3)", expect: .numberBetween(1.8999999, 1.9000001),
+      numbers: ["A1": 1, "A2": 2, "A3": 3, "A4": 4]),
+    "QUARTILE": Sample(
+      formula: "QUARTILE(A1:A8, 1)", expect: .value(.number(3.5)),
+      numbers: ["A1": 1, "A2": 2, "A3": 4, "A4": 7, "A5": 8, "A6": 9, "A7": 10, "A8": 12]),
+    "QUARTILE.INC": Sample(
+      formula: "QUARTILE.INC(A1:A8, 3)", expect: .value(.number(9.25)),
+      numbers: ["A1": 1, "A2": 2, "A3": 4, "A4": 7, "A5": 8, "A6": 9, "A7": 10, "A8": 12]),
+    "MODE": Sample(
+      formula: "MODE(5.6, 4, 4, 3, 2, 4)", expect: .value(.number(4))),
+    "MODE.SNGL": Sample(
+      formula: "MODE.SNGL(1, 2, 2, 3, 3)", expect: .value(.number(2))),
+    "CORREL": Sample(
+      formula: "CORREL(A1:A5, B1:B5)", expect: .numberBetween(0.997054, 0.997055),
+      numbers: [
+        "A1": 3, "A2": 2, "A3": 4, "A4": 5, "A5": 6, "B1": 9, "B2": 7, "B3": 12, "B4": 15, "B5": 17,
+      ]),
+    "SLOPE": Sample(
+      formula: "SLOPE(A1:A7, B1:B7)", expect: .numberBetween(0.305555, 0.305556),
+      numbers: [
+        "A1": 2, "A2": 3, "A3": 9, "A4": 1, "A5": 8, "A6": 7, "A7": 5, "B1": 6, "B2": 5, "B3": 11,
+        "B4": 7, "B5": 5, "B6": 4, "B7": 4,
+      ]),
+    "INTERCEPT": Sample(
+      formula: "INTERCEPT(A1:A5, B1:B5)", expect: .numberBetween(0.048387, 0.048388),
+      numbers: [
+        "A1": 2, "A2": 3, "A3": 9, "A4": 1, "A5": 8, "B1": 6, "B2": 5, "B3": 11, "B4": 7, "B5": 5,
+      ]),
+    "FORECAST": Sample(
+      formula: "FORECAST(30, A1:A5, B1:B5)", expect: .numberBetween(10.60725, 10.60726),
+      numbers: [
+        "A1": 6, "A2": 7, "A3": 9, "A4": 15, "A5": 21,
+        "B1": 20, "B2": 28, "B3": 31, "B4": 38, "B5": 40,
+      ]),
+    "FORECAST.LINEAR": Sample(
+      formula: "FORECAST.LINEAR(30, A1:A5, B1:B5)", expect: .numberBetween(10.60725, 10.60726),
+      numbers: [
+        "A1": 6, "A2": 7, "A3": 9, "A4": 15, "A5": 21,
+        "B1": 20, "B2": 28, "B3": 31, "B4": 38, "B5": 40,
+      ]),
+    "COUNTUNIQUE": Sample(
+      formula: "COUNTUNIQUE(1, 1, 2, \"a\", \"A\")", expect: .value(.number(3))),
+    "SUMSQ": Sample(
+      formula: "SUMSQ(3, 4)", expect: .value(.number(25))),
+    "MROUND": Sample(
+      formula: "MROUND(1.3, 0.2)", expect: .value(.number(1.4))),
+    "TRUNC": Sample(
+      formula: "TRUNC(-8.9)", expect: .value(.number(-8))),
+    "EXP": Sample(
+      formula: "EXP(1)", expect: .numberBetween(2.718281, 2.718282)),
+    "LN": Sample(
+      formula: "LN(86)", expect: .numberBetween(4.454347, 4.454348)),
+    "LOG": Sample(
+      formula: "LOG(8, 2)", expect: .value(.number(3))),
+    "LOG10": Sample(
+      formula: "LOG10(100)", expect: .value(.number(2))),
+    "FACT": Sample(
+      formula: "FACT(5)", expect: .value(.number(120))),
+    "GCD": Sample(
+      formula: "GCD(24, 36)", expect: .value(.number(12))),
+    "LCM": Sample(
+      formula: "LCM(5, 2)", expect: .value(.number(10))),
+    "EVEN": Sample(
+      formula: "EVEN(-1)", expect: .value(.number(-2))),
+    "ODD": Sample(
+      formula: "ODD(2)", expect: .value(.number(3))),
+    "SWITCH": Sample(
+      formula: "SWITCH(2, 1, \"a\", 2, \"b\")", expect: .value(.string("b"))),
+    "CHOOSE": Sample(
+      formula: "CHOOSE(2, \"a\", \"b\")", expect: .value(.string("b"))),
+    "XOR": Sample(
+      formula: "XOR(TRUE, FALSE, TRUE, TRUE)", expect: .value(.bool(true))),
+    "ISEVEN": Sample(
+      formula: "ISEVEN(2.5)", expect: .value(.bool(true))),
+    "ISODD": Sample(
+      formula: "ISODD(-5)", expect: .value(.bool(true))),
+    "ISLOGICAL": Sample(
+      formula: "ISLOGICAL(FALSE)", expect: .value(.bool(true))),
+    "ISNA": Sample(
+      formula: "ISNA(NA())", expect: .value(.bool(true))),
+    "ISERR": Sample(
+      formula: "ISERR(NA())", expect: .value(.bool(false))),
+    "NA": Sample(
+      formula: "NA()", expect: .value(.error(.na))),
+    "TEXTBEFORE": Sample(
+      formula: "TEXTBEFORE(\"Little Red Riding Hood's red hood\", \"hood\")",
+      expect: .value(.string("Little Red Riding Hood's red "))),
+    "TEXTAFTER": Sample(
+      formula: "TEXTAFTER(\"Little Red Riding Hood's red hood\", \"HOOD\", -1, 1)",
+      expect: .value(.string(""))),
+    "CLEAN": Sample(
+      formula: "CLEAN(CHAR(9) & \"Monthly\" & CHAR(10))", expect: .value(.string("Monthly"))),
+    "CODE": Sample(
+      formula: "CODE(\"A\")", expect: .value(.number(65))),
+    "UNICODE": Sample(
+      formula: "UNICODE(\"B\")", expect: .value(.number(66))),
+    "UNICHAR": Sample(
+      formula: "UNICHAR(66)", expect: .value(.string("B"))),
+    // No pivot table in this sheet: GETPIVOTDATA reports #REF!, as other apps do.
+    "GETPIVOTDATA": Sample(
+      formula: "GETPIVOTDATA(\"Sum of Amount\", A1)", expect: .value(.error(.ref))),
+    "HYPERLINK": Sample(
+      formula: "HYPERLINK(\"https://example.com\", \"Site\")", expect: .value(.string("Site"))),
+    // A spilling result shows its first value in the formula's cell.
+    "FILTER": Sample(
+      formula: "FILTER(SEQUENCE(3), SEQUENCE(3) > 1)", expect: .value(.number(2))),
+    "SORT": Sample(formula: "SORT(SEQUENCE(3, 1, 3, -1))", expect: .value(.number(1))),
+    "SORTBY": Sample(
+      formula: "SORTBY(SEQUENCE(3), SEQUENCE(3, 1, 3, -1))", expect: .value(.number(3))),
+    "UNIQUE": Sample(formula: "UNIQUE(SEQUENCE(2))", expect: .value(.number(1))),
   ]
 }
 
@@ -377,5 +561,77 @@ private enum AnswerProbe {
       return abs(left - right) < 1e-9
     }
     return false
+  }
+}
+
+/// Batch 2 details beyond the one sample per function, and the `_xlfn.` mark on save.
+@MainActor
+final class FunctionBatch2Tests: XCTestCase {
+  private func number(_ formula: String, _ numbers: [String: Double] = [:]) -> Double? {
+    FormulaProbe.eval(formula, numbers: numbers).asNumber
+  }
+
+  func testDatedifUnits() {
+    let span = "DATE(2001,6,1), DATE(2002,8,15)"
+    XCTAssertEqual(number("DATEDIF(\(span), \"Y\")"), 1)
+    XCTAssertEqual(number("DATEDIF(\(span), \"M\")"), 14)
+    XCTAssertEqual(number("DATEDIF(\(span), \"D\")"), 440)
+    XCTAssertEqual(number("DATEDIF(\(span), \"YM\")"), 2)
+    XCTAssertEqual(number("DATEDIF(\(span), \"MD\")"), 14)
+    XCTAssertEqual(
+      FormulaProbe.eval("DATEDIF(DATE(2002,1,1), DATE(2001,1,1), \"D\")"), .error(.num))
+  }
+
+  func testWorkingDays() {
+    XCTAssertEqual(number("NETWORKDAYS(DATE(2012,10,1), DATE(2013,3,1))"), 110)
+    XCTAssertEqual(number("NETWORKDAYS(DATE(2013,3,1), DATE(2012,10,1))"), -110)
+    // Friday plus one working day is Monday.
+    XCTAssertEqual(number("WORKDAY(DATE(2026,11,6), 1)"), number("DATE(2026,11,9)"))
+    XCTAssertEqual(number("WORKDAY(DATE(2026,11,9), -1)"), number("DATE(2026,11,6)"))
+  }
+
+  func testWeekNumbers() {
+    XCTAssertEqual(number("WEEKNUM(DATE(2012,3,9))"), 10)
+    XCTAssertEqual(number("ISOWEEKNUM(DATE(2021,1,1))"), 53)
+    XCTAssertEqual(number("WEEKNUM(DATE(2021,1,1), 21)"), 53)
+  }
+
+  func testLoanPartsAddUpToThePayment() {
+    let pmt = number("PMT(0.1/12, 24, 2000)") ?? 0
+    let ipmt = number("IPMT(0.1/12, 5, 24, 2000)") ?? 0
+    let ppmt = number("PPMT(0.1/12, 5, 24, 2000)") ?? 0
+    XCTAssertEqual(ipmt + ppmt, pmt, accuracy: 1e-9)
+    XCTAssertEqual(number("PMT(0, 10, 1000)"), -100)
+  }
+
+  func testNameThatLooksLikeACell() {
+    XCTAssertEqual(number("LOG10(1000)"), 3)
+  }
+
+  func testTextAroundOptions() {
+    XCTAssertEqual(
+      FormulaProbe.eval("TEXTAFTER(\"a-b-c\", \"-\", 2)"), .string("c"))
+    XCTAssertEqual(
+      FormulaProbe.eval("TEXTBEFORE(\"a-b-c\", \"-\", -1)"), .string("a-b"))
+    XCTAssertEqual(FormulaProbe.eval("TEXTBEFORE(\"abc\", \"x\")"), .error(.na))
+    XCTAssertEqual(
+      FormulaProbe.eval("TEXTBEFORE(\"abc\", \"x\", 1, 0, 0, \"none\")"), .string("none"))
+  }
+
+  func testSwitchDefaultAndNoMatch() {
+    XCTAssertEqual(FormulaProbe.eval("SWITCH(9, 1, \"a\", \"other\")"), .string("other"))
+    XCTAssertEqual(FormulaProbe.eval("SWITCH(9, 1, \"a\")"), .error(.na))
+  }
+
+  func testNewerFunctionsGetTheExcelPrefixOnSave() {
+    XCTAssertEqual(
+      ExcelFutureFunctions.prefixed("XLOOKUP(A1,B:B,C:C)+SUM(A1:A3)"),
+      "_xlfn.XLOOKUP(A1,B:B,C:C)+SUM(A1:A3)")
+    XCTAssertEqual(
+      ExcelFutureFunctions.prefixed("IFS(A1>1,\"DAYS(\",TRUE,stdev.s(B1:B3))"),
+      "_xlfn.IFS(A1>1,\"DAYS(\",TRUE,_xlfn.stdev.s(B1:B3))")
+    XCTAssertEqual(
+      ExcelFutureFunctions.prefixed("_xlfn.XLOOKUP(A1,'IFS(x'!A:A,B:B)"),
+      "_xlfn.XLOOKUP(A1,'IFS(x'!A:A,B:B)")
   }
 }

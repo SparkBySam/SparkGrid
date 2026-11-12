@@ -46,6 +46,8 @@ enum SparkGridCommandLine {
       return recalc(rest)
     case "check":
       return check(rest)
+    case "calccheck":
+      return calcCheck(rest)
     case "bench":
       return bench(rest)
     case "run":
@@ -131,6 +133,33 @@ enum SparkGridCommandLine {
       "recalc \(String(format: "%.3f", elapsed))s formulas \(results.count) errors \(errors)"
     )
     return 0
+  }
+
+  /// Saved results against the whole-workbook pass and the open pass, with mismatches by sheet.
+  private static func calcCheck(_ args: [String]) -> Int32 {
+    guard let path = args.first, !path.hasPrefix("-") else {
+      fputs("calccheck needs a file\n", stderr)
+      return 2
+    }
+    guard let workbook = loadWorkbook(at: path) else { return 1 }
+    let exempt = exemptions(for: URL(fileURLWithPath: path).lastPathComponent)
+    var failed = false
+    for result in AnswerComparison.compareCalculationPaths(in: workbook, exempt: exempt) {
+      print("\(result.name) checked \(result.checked) mismatches \(result.mismatches.count)")
+      var bySheet: [String: Int] = [:]
+      for mismatch in result.mismatches {
+        let sheet = mismatch.key.split(separator: "!").first.map(String.init) ?? "?"
+        bySheet[sheet, default: 0] += 1
+      }
+      for (sheet, count) in bySheet.sorted(by: { $0.value > $1.value }) {
+        print("  \(sheet): \(count)")
+      }
+      for mismatch in result.mismatches.prefix(12) {
+        print("  \(mismatch.key) expected \(mismatch.expected) got \(mismatch.actual)")
+      }
+      if !result.mismatches.isEmpty { failed = true }
+    }
+    return failed ? 1 : 0
   }
 
   private static func check(_ args: [String]) -> Int32 {

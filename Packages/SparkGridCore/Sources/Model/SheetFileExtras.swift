@@ -20,14 +20,29 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
   public var sheetPropertiesXML: String?
   /// `<sheetProtection>` as read, password hash included.
   public var protectionXML: String?
-  /// `printOptions`, `pageMargins`, `pageSetup`, `headerFooter`, `rowBreaks`, `colBreaks`, in file order.
+  /// `printOptions`, `pageMargins`, `pageSetup`, `headerFooter`, in file order. Page breaks are
+  /// kept in `rowBreaks` and `columnBreaks`.
   public var pageLayoutXML: String?
+  /// The range File ▸ Print prints from this sheet, saved as its `_xlnm.Print_Area` name.
+  public var printArea: CellRange?
+  /// Manual page breaks: each is the first row or column of a new page.
+  public var rowBreaks: Set<Int> = []
+  public var columnBreaks: Set<Int> = []
+  /// Other names a file scopes to this sheet with the `_xlnm.` prefix (print titles, a filter's
+  /// range), keyed by full name, with the formula text as written.
+  public var builtInNames: [String: String] = [:]
   public var dataValidations: [DataValidationRule] = []
   public var hyperlinks: [CellHyperlink] = []
   public var comments: [CellComment] = []
   public var tables: [SheetTable] = []
   public var foreignCharts: [ForeignChart] = []
   public var pivotTables: [PivotTablePart] = []
+  /// Pivot tables made in Spark Grid, drawn on this sheet.
+  public var sparkPivots: [SheetPivot] = []
+  /// Cells each array formula spills into, keyed by the formula's cell (its own cell included).
+  public var spills: [CellAddress: CellRange] = [:]
+  /// Array formulas whose results are blocked by cells that are not empty; they show #SPILL!.
+  public var blockedSpills: Set<CellAddress> = []
 
   public init() {}
 
@@ -36,7 +51,9 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
   public enum CodingKeys: String, CodingKey {
     case visibility, hiddenRows, hiddenColumns, rowOutlineLevels, columnOutlineLevels
     case collapsedRows, collapsedColumns, sheetPropertiesXML, protectionXML, pageLayoutXML
-    case dataValidations, hyperlinks, comments, tables, foreignCharts, pivotTables
+    case printArea, rowBreaks, columnBreaks, builtInNames
+    case dataValidations, hyperlinks, comments, tables, foreignCharts, pivotTables, sparkPivots
+    case spills, blockedSpills
   }
 
   public init(from decoder: Decoder) throws {
@@ -52,6 +69,17 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     sheetPropertiesXML = try c.decodeIfPresent(String.self, forKey: .sheetPropertiesXML)
     protectionXML = try c.decodeIfPresent(String.self, forKey: .protectionXML)
     pageLayoutXML = try c.decodeIfPresent(String.self, forKey: .pageLayoutXML)
+    printArea = try c.decodeIfPresent(CellRange.self, forKey: .printArea)
+    rowBreaks = try c.decodeIfPresent(Set<Int>.self, forKey: .rowBreaks) ?? []
+    columnBreaks = try c.decodeIfPresent(Set<Int>.self, forKey: .columnBreaks) ?? []
+    builtInNames = try c.decodeIfPresent([String: String].self, forKey: .builtInNames) ?? [:]
+    // Earlier builds kept page breaks inside the page layout text.
+    if let layout = pageLayoutXML, layout.contains("Breaks") {
+      let split = Self.splittingPageBreaks(from: layout)
+      pageLayoutXML = split.layout
+      rowBreaks.formUnion(split.rows)
+      columnBreaks.formUnion(split.columns)
+    }
     dataValidations =
       try c.decodeIfPresent([DataValidationRule].self, forKey: .dataValidations) ?? []
     hyperlinks = try c.decodeIfPresent([CellHyperlink].self, forKey: .hyperlinks) ?? []
@@ -59,6 +87,54 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     tables = try c.decodeIfPresent([SheetTable].self, forKey: .tables) ?? []
     foreignCharts = try c.decodeIfPresent([ForeignChart].self, forKey: .foreignCharts) ?? []
     pivotTables = try c.decodeIfPresent([PivotTablePart].self, forKey: .pivotTables) ?? []
+    sparkPivots = try c.decodeIfPresent([SheetPivot].self, forKey: .sparkPivots) ?? []
+    spills = try c.decodeIfPresent([CellAddress: CellRange].self, forKey: .spills) ?? [:]
+    blockedSpills =
+      try c.decodeIfPresent(Set<CellAddress>.self, forKey: .blockedSpills) ?? []
+  }
+}
+
+extension SheetFileExtras {
+  /// Takes `<rowBreaks>` and `<colBreaks>` out of page layout XML and returns their manual breaks.
+  /// A `<brk id="n">` starts a new page at zero-based row or column `n`.
+  public static func splittingPageBreaks(from xml: String) -> (
+    layout: String?, rows: Set<Int>, columns: Set<Int>
+  ) {
+    var layout = xml
+    var found: [String: Set<Int>] = ["rowBreaks": [], "colBreaks": []]
+    for element in ["rowBreaks", "colBreaks"] {
+      let pattern = "<\(element)\\b[^>]*/>|<\(element)\\b[^>]*>[\\s\\S]*?</\(element)>"
+      while let range = layout.range(of: pattern, options: .regularExpression) {
+        let block = String(layout[range])
+        var ids = Set<Int>()
+        var rest = block[...]
+        while let brk = rest.range(of: #"<brk\b[^>]*>"#, options: .regularExpression) {
+          let tag = String(rest[brk])
+          rest = rest[brk.upperBound...]
+          // Breaks a printer driver placed are written without man="1"; only manual ones stay.
+          guard tag.contains(#"man="1""#) || tag.contains(#"man="true""#),
+            let idRange = tag.range(of: #"\bid="(\d+)""#, options: .regularExpression)
+          else { continue }
+          let digits = tag[idRange].filter(\.isNumber)
+          if let id = Int(digits), id > 0 { ids.insert(id) }
+        }
+        found[element, default: []].formUnion(ids)
+        layout.removeSubrange(range)
+      }
+    }
+    return (layout.isEmpty ? nil : layout, found["rowBreaks"] ?? [], found["colBreaks"] ?? [])
+  }
+
+  /// `<rowBreaks>` and `<colBreaks>` for the manual breaks, in the order a worksheet lists them.
+  public var pageBreaksXML: String {
+    func block(_ name: String, _ ids: Set<Int>, max: Int) -> String {
+      guard !ids.isEmpty else { return "" }
+      let items = ids.sorted().map { #"<brk id="\#($0)" max="\#(max)" man="1"/>"# }.joined()
+      return
+        #"<\#(name) count="\#(ids.count)" manualBreakCount="\#(ids.count)">\#(items)</\#(name)>"#
+    }
+    return block("rowBreaks", rowBreaks, max: 16383)
+      + block("colBreaks", columnBreaks, max: 1_048_575)
   }
 }
 

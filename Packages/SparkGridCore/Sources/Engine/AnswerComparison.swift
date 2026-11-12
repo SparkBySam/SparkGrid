@@ -144,6 +144,39 @@ public enum AnswerComparison {
     return results
   }
 
+  /// Results from the dependency-ordered pass the app runs when a file opens without saved
+  /// results.
+  public static func openCalculationResults(in workbook: Workbook) -> [String: CellValue] {
+    let outcome = CrossSheetBackground.calculateFormulasWithoutCaches(in: workbook)
+    var bySheet: [String: [CellAddress: CellValue]] = [:]
+    for (name, values) in outcome.valuesBySheet { bySheet[name.lowercased()] = values }
+    var results: [String: CellValue] = [:]
+    for sheet in workbook.sheets {
+      let stored = bySheet[sheet.name.lowercased()] ?? [:]
+      for (address, cell) in sheet.cells where FormulaSyntax.isFormula(cell.raw) {
+        results[cellKey(sheet: sheet.name, address: address)] = stored[address] ?? .blank
+      }
+    }
+    return results
+  }
+
+  /// Saved results against the whole-workbook pass and the open pass only. Much faster than
+  /// `comparePaths` on a large workbook, which also walks every cell in display order.
+  public static func compareCalculationPaths(in workbook: Workbook, exempt: Set<String> = [])
+    -> [AnswerPathResult]
+  {
+    let expected = savedFormulaResults(in: workbook)
+    let cleared = clearingFormulaCaches(workbook)
+    return [
+      pathResult(
+        name: "full", expected: expected, actual: calculatedFormulaResults(in: cleared),
+        exempt: exempt),
+      pathResult(
+        name: "open", expected: expected, actual: openCalculationResults(in: cleared),
+        exempt: exempt),
+    ]
+  }
+
   public static func cellKey(sheet: String, address: CellAddress) -> String {
     "\(sheet)!\(address.a1)"
   }

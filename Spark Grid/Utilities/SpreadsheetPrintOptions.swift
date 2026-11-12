@@ -3,6 +3,7 @@ import Foundation
 import SparkGridCore
 
 enum SpreadsheetPrintScope: String, CaseIterable, Identifiable {
+  case printArea = "Print area"
   case selectedCells = "Selected cells"
   case populatedCells = "Current sheet"
   case wholeSheet = "Whole sheet"
@@ -113,7 +114,7 @@ struct SpreadsheetPrintOptions: Equatable {
     -> SpreadsheetPrintOptions
   {
     SpreadsheetPrintOptions(
-      scope: .populatedCells,
+      scope: viewModel.activeSheet.fileExtras.printArea == nil ? .populatedCells : .printArea,
       paper: .letter,
       isLandscape: false,
       scale: .fitToWidth,
@@ -130,8 +131,17 @@ struct SpreadsheetPrintOptions: Equatable {
   }
 
   func pages(for viewModel: SpreadsheetViewModel) -> [SpreadsheetPrintPage] {
-    let activeHidden = viewModel.hiddenRowsForPrint()
+    // Rows a filter hides and rows hidden or folded in a group stay off the page.
+    let activeHidden = viewModel.hiddenRowsForPrint().union(
+      viewModel.activeSheet.fileExtras.hiddenRows)
     switch scope {
+    case .printArea:
+      let sheet = viewModel.activeSheet
+      guard let area = sheet.fileExtras.printArea else { return [] }
+      return [
+        SpreadsheetPrintPage(
+          sheet: sheet, range: Self.trimmed(area, to: sheet), hiddenRows: activeHidden)
+      ]
     case .selectedCells:
       return [
         SpreadsheetPrintPage(
@@ -152,15 +162,28 @@ struct SpreadsheetPrintOptions: Equatable {
     case .workbook:
       return viewModel.workbook.sheets.compactMap { sheet in
         guard let bounds = sheet.populatedBounds else { return nil }
-        let hidden = sheet.id == viewModel.activeSheet.id ? activeHidden : []
+        let hidden =
+          sheet.id == viewModel.activeSheet.id ? activeHidden : sheet.fileExtras.hiddenRows
         return SpreadsheetPrintPage(
           sheet: sheet, range: bounds, title: sheet.name, hiddenRows: hidden)
       }
     }
   }
 
+  /// A print area of whole columns or rows ends at the sheet's last filled row or column.
+  static func trimmed(_ area: CellRange, to sheet: Sheet) -> CellRange {
+    let n = area.normalized
+    guard let bounds = sheet.populatedBounds?.normalized else { return area }
+    let maxRow = max(n.minRow, min(n.maxRow, max(bounds.maxRow, n.minRow)))
+    let maxCol = max(n.minCol, min(n.maxCol, max(bounds.maxCol, n.minCol)))
+    return CellRange(
+      start: CellAddress(row: n.minRow, col: n.minCol), end: CellAddress(row: maxRow, col: maxCol))
+  }
+
   func canUseScope(_ scope: SpreadsheetPrintScope, viewModel: SpreadsheetViewModel) -> Bool {
     switch scope {
+    case .printArea:
+      return viewModel.activeSheet.fileExtras.printArea != nil
     case .selectedCells, .populatedCells, .wholeSheet:
       return true
     case .workbook:

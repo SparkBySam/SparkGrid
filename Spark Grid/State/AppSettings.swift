@@ -34,6 +34,9 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
   case paste
   case copyFormulas
   case pasteFormulas
+  case pasteValues
+  case fillDown
+  case fillRight
   case convertToValues
   case undo
   case redo
@@ -56,8 +59,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
 
   var group: Group {
     switch self {
-    case .copy, .cut, .paste, .undo, .redo: return .edit
-    case .copyFormulas, .pasteFormulas, .convertToValues, .autoSum: return .formulas
+    case .copy, .cut, .paste, .undo, .redo, .fillDown, .fillRight: return .edit
+    case .copyFormulas, .pasteFormulas, .pasteValues, .convertToValues, .autoSum: return .formulas
     case .bold, .italic, .underline: return .format
     case .save: return .file
     }
@@ -67,6 +70,9 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
     switch self {
     case .copyFormulas: return "Copies the formulas, not their results"
     case .pasteFormulas: return "Pastes formulas and adjusts their references"
+    case .pasteValues: return "Pastes results only, without formulas or formats"
+    case .fillDown: return "Copies the top row down the selection"
+    case .fillRight: return "Copies the left column across the selection"
     case .convertToValues: return "Replaces the selected formulas with their results"
     case .autoSum: return "Adds the numbers above or to the left"
     default: return ""
@@ -80,6 +86,9 @@ enum HotkeyAction: String, CaseIterable, Identifiable, Codable {
     case .paste: return "Paste"
     case .copyFormulas: return "Copy Formulas"
     case .pasteFormulas: return "Paste Formulas"
+    case .pasteValues: return "Paste Values"
+    case .fillDown: return "Fill Down"
+    case .fillRight: return "Fill Right"
     case .convertToValues: return "Convert to Values"
     case .undo: return "Undo"
     case .redo: return "Redo"
@@ -292,6 +301,12 @@ final class AppSettings {
       key: "v",
       modifiers: NSEvent.ModifierFlags.command.union(.shift).rawValue
     ),
+    .pasteValues: StoredShortcut(
+      key: "v",
+      modifiers: NSEvent.ModifierFlags.command.union(.shift).union(.option).rawValue
+    ),
+    .fillDown: StoredShortcut(key: "d", modifiers: NSEvent.ModifierFlags.command.rawValue),
+    .fillRight: StoredShortcut(key: "r", modifiers: NSEvent.ModifierFlags.command.rawValue),
     .convertToValues: StoredShortcut(
       key: "e",
       modifiers: NSEvent.ModifierFlags.command.union(.shift).rawValue

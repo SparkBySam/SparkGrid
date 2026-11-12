@@ -38,6 +38,11 @@ public nonisolated struct FormulaEvaluator {
 
   public let lookup: ValueLookup
   public var namedRangeLookup: NamedRangeLookup = { _ in nil }
+  /// The Spark Grid pivot table drawn over a cell, by sheet name, for GETPIVOTDATA.
+  public var pivotLookup: (String, CellAddress) -> SheetPivot? = { _, _ in nil }
+  /// True when the array formula in this cell cannot spill because cells in the way are not
+  /// empty. It then shows #SPILL!.
+  public var spillBlocked: (String, CellAddress) -> Bool = { _, _ in false }
   /// Defaults to a modest grid so open ranges don't explode when extent isn't wired.
   public var sheetExtent: SheetExtentLookup = { _ in (maxRow: 999, maxCol: 25) }
   /// Cell being evaluated (`COLUMN()` / `ROW()` with no argument). Held in a class cell so batch strip eval can set origin without mutating the evaluator struct.
@@ -130,6 +135,9 @@ public nonisolated struct FormulaEvaluator {
       return applyUnary(op, to: values[0])
     }
     if values.isEmpty { return .blank }
+    if Self.spills(expr) {
+      return spillIsBlocked ? .error(.spill) : applyUnary(op, to: values[0])
+    }
     return .error(.arrayResult)
   }
 
@@ -139,6 +147,10 @@ public nonisolated struct FormulaEvaluator {
     let values = arrayBinary(op, lhsExpr, rhsExpr, cache: nil)
     if values.count == 1 { return values[0] }
     if values.isEmpty { return .blank }
+    // FILTER(...)*2 spills; the cell shows the first value.
+    if Self.spills(lhsExpr) || Self.spills(rhsExpr) {
+      return spillIsBlocked ? .error(.spill) : values[0]
+    }
     // Sheets/Excel: multi-value result in one cell is not silently collapsed.
     return .error(.arrayResult)
   }
@@ -199,7 +211,11 @@ public nonisolated struct FormulaEvaluator {
       return arrayEvaluate(inner, cache: cache).map { applyUnary(op, to: $0) }
     case .binary(let op, let lhs, let rhs):
       return arrayBinary(op, lhs, rhs, cache: cache)
-    case .call:
+    case .call(let name, _):
+      // SUM(FILTER(...)) adds every value the array function gives.
+      if Self.arrayFunctionNames.contains(Self.plainFunctionName(name)) {
+        return evaluateArray(expr).values
+      }
       return [evaluate(expr)]
     }
   }
@@ -278,15 +294,16 @@ public nonisolated struct FormulaEvaluator {
       default: return .error(.value)
       }
     }
-    let a = lhs.asString
-    let b = rhs.asString
+    // Text compares without regard to case, as other spreadsheet apps compare it:
+    // "east" = "East" is TRUE.
+    let order = lhs.asString.compare(rhs.asString, options: [.caseInsensitive])
     switch op {
-    case .eq: return .bool(a == b)
-    case .ne: return .bool(a != b)
-    case .lt: return .bool(a < b)
-    case .gt: return .bool(a > b)
-    case .le: return .bool(a <= b)
-    case .ge: return .bool(a >= b)
+    case .eq: return .bool(order == .orderedSame)
+    case .ne: return .bool(order != .orderedSame)
+    case .lt: return .bool(order == .orderedAscending)
+    case .gt: return .bool(order == .orderedDescending)
+    case .le: return .bool(order != .orderedDescending)
+    case .ge: return .bool(order != .orderedAscending)
     default: return .error(.value)
     }
   }
@@ -374,9 +391,9 @@ public nonisolated struct FormulaEvaluator {
 
   /// Excel writes newer functions as `_xlfn.XLOOKUP`. The prefix is not part of the name.
   private func canonicalFunctionName(_ name: String) -> String {
-    let prefix = "_XLFN."
-    guard name.count > prefix.count, name.uppercased().hasPrefix(prefix) else { return name }
-    return String(name.dropFirst(prefix.count)).uppercased()
+    guard name.hasPrefix("_") else { return name }
+    // `_xlfn.XLOOKUP`, and `_xlfn._xlws.FILTER` for FILTER and SORT.
+    return Self.plainFunctionName(name)
   }
 
   private func evalCallBody(_ name: String, _ args: [FormulaExpr]) -> CellValue {
@@ -561,13 +578,18 @@ public nonisolated struct FormulaEvaluator {
       return evalCHAR(args)
     case "REPT":
       return evalREPT(args)
-    case "SEQUENCE":
-      return evalSEQUENCE(args)
+    case "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE":
+      // The cell shows the first value; the rest spill into the cells below and beside it.
+      if spillIsBlocked { return .error(.spill) }
+      // A blank in an array result shows as 0, as other apps show it.
+      let first = evaluateArray(.call(name, args)).first
+      if case .blank = first { return .number(0) }
+      return first
     case "TRUE":
       guard args.isEmpty else { return .error(.value) }
       return .bool(true)
     default:
-      return evalBatch1(name, args) ?? .error(.name)
+      return evalBatch1(name, args) ?? evalBatch2(name, args) ?? .error(.name)
     }
   }
 
@@ -586,32 +608,6 @@ public nonisolated struct FormulaEvaluator {
     let (total, overflow) = piece.count.multipliedReportingOverflow(by: repeats)
     if overflow || total > InputBounds.maxRepeatCharacters { return .error(.value) }
     return .string(String(repeating: piece, count: repeats))
-  }
-
-  private func evalSEQUENCE(_ args: [FormulaExpr]) -> CellValue {
-    guard (1...4).contains(args.count) else { return .error(.value) }
-    let rowsValue = evaluate(args[0])
-    if case .error = rowsValue { return rowsValue }
-    guard let rowsNumber = rowsValue.asNumber else { return .error(.value) }
-    let colsValue = args.count > 1 ? evaluate(args[1]) : .number(1)
-    if case .error = colsValue { return colsValue }
-    let startValue = args.count > 2 ? evaluate(args[2]) : .number(1)
-    if case .error = startValue { return startValue }
-    let stepValue = args.count > 3 ? evaluate(args[3]) : .number(1)
-    if case .error = stepValue { return stepValue }
-    guard let colsNumber = colsValue.asNumber,
-      let start = startValue.asNumber,
-      let step = stepValue.asNumber
-    else { return .error(.value) }
-    let rows = Int(rowsNumber)
-    let cols = Int(colsNumber)
-    if rows < 1 || cols < 1 { return .error(.value) }
-    guard InputBounds.materializedCount(rows: rows, cols: cols) != nil else {
-      return .error(.value)
-    }
-    if rows != 1 || cols != 1 { return .error(.arrayResult) }
-    _ = step
-    return .number(start)
   }
 
   private func evalCOLUMN(_ args: [FormulaExpr]) -> CellValue {
@@ -696,6 +692,7 @@ public nonisolated struct FormulaEvaluator {
 
   private func evalINDEX(_ args: [FormulaExpr]) -> CellValue {
     guard args.count == 2 || args.count == 3 else { return .error(.value) }
+    if Self.spills(args[0]) { return indexIntoArray(args) }
     guard case .range(let start, let end) = resolveToRange(args[0]) else {
       return .error(.value)
     }
@@ -732,6 +729,29 @@ public nonisolated struct FormulaEvaluator {
       absCol: false
     )
     return lookup(ref)
+  }
+
+  /// INDEX(SORT(…), 1): one value from a result that would spill.
+  private func indexIntoArray(_ args: [FormulaExpr]) -> CellValue {
+    let array = evaluateArray(args[0])
+    if array.isSingle, case .error = array.first { return array.first }
+    var indexes: [Int] = []
+    for arg in args.dropFirst() {
+      let value = evaluate(arg)
+      if case .error = value { return value }
+      guard let number = value.asNumber else { return .error(.value) }
+      indexes.append(Int(number.rounded(.down)))
+    }
+    var row = indexes[0]
+    var col = indexes.count > 1 ? indexes[1] : 1
+    if indexes.count == 1, array.rows == 1, array.cols > 1 {
+      row = 1
+      col = indexes[0]
+    }
+    guard row >= 1, row <= array.rows, col >= 1, col <= array.cols else { return .error(.ref) }
+    let value = array.value(row: row - 1, col: col - 1)
+    if case .blank = value { return .number(0) }
+    return value
   }
 
   private func evalMATCH(_ args: [FormulaExpr]) -> CellValue {

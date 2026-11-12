@@ -133,7 +133,7 @@ public final class FormulaEngine {
         return cached
       }
     }
-    let value = literalOrEmpty(raw)
+    let value = raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
     valueCache[address] = value
     return value
   }
@@ -236,7 +236,7 @@ public final class FormulaEngine {
     let cell = sheet.cell(at: address)
     let raw = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard FormulaSyntax.isFormula(raw) else {
-      let value = literalOrEmpty(raw)
+      let value = raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
       valueCache[address] = value
       return value
     }
@@ -281,9 +281,18 @@ public final class FormulaEngine {
         })
     }
     evaluator.evaluationOrigin = address
+    // Unqualified ranges are cached by sheet. Without the name, SUM(C5:C64) on one sheet read
+    // another sheet's cached C5:C64.
+    evaluator.formulaSheetName = sheet.name
     evaluator.prepareForCellEvaluation(origin: address)
     evaluator.namedRangeLookup = { [weak self] name in
       self?.namedRangeExpr(named: name)
+    }
+    evaluator.pivotLookup = { [weak self] name, address in
+      self?.sparkPivot(on: name, containing: address, current: sheet)
+    }
+    evaluator.spillBlocked = { [weak self] name, address in
+      self?.spillBlocked(on: name, at: address, current: sheet) ?? false
     }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
@@ -502,6 +511,44 @@ public final class FormulaEngine {
   }
 
   /// Evaluates a conditional-formatting formula relative to `origin` as if entered at `address`.
+  /// The whole result of the array formula at `anchor` on `sheet`, for spilling. Nil when the
+  /// cell holds no formula that spills.
+  /// `activeSheet` is the sheet as it is now; the engine's copy of the workbook can lag an edit.
+  public func spillArray(at anchor: CellAddress, sheet: Sheet, activeSheet: Sheet)
+    -> ArrayResult?
+  {
+    let raw = sheet.cell(at: anchor).raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard FormulaSyntax.isFormula(raw), let expr = try? FormulaParser.parse(raw),
+      FormulaEvaluator.spills(expr)
+    else { return nil }
+    let sheetName = sheet.name
+    var evaluator = FormulaEvaluator { [weak self] ref in
+      guard let self else { return .blank }
+      var qualified = ref
+      if qualified.sheet == nil { qualified.sheet = sheetName }
+      return self.resolve(
+        qualified, activeSheet: activeSheet,
+        localEval: { addr in
+          _ = self.displayValue(at: addr, sheet: activeSheet)
+        })
+    }
+    evaluator.evaluationOrigin = anchor
+    evaluator.formulaSheetName = sheetName
+    evaluator.namedRangeLookup = { [weak self] name in
+      self?.namedRangeExpr(named: name)
+    }
+    evaluator.pivotLookup = { [weak self] name, address in
+      self?.sparkPivot(on: name, containing: address, current: sheet)
+    }
+    evaluator.sheetExtent = { [weak self] name in
+      guard let self else { return (999, 25) }
+      return self.extent(for: name ?? sheetName)
+    }
+    evaluator.aggregateRangeCache = aggregateRangeCache
+    evaluator.lookupTableCache = lookupTableCache
+    return evaluator.evaluateArray(expr)
+  }
+
   public func evaluateConditionalFormula(
     _ raw: String,
     at address: CellAddress,
@@ -527,8 +574,15 @@ public final class FormulaEngine {
         })
     }
     evaluator.evaluationOrigin = address
+    evaluator.formulaSheetName = sheet.name
     evaluator.namedRangeLookup = { [weak self] name in
       self?.namedRangeExpr(named: name)
+    }
+    evaluator.pivotLookup = { [weak self] name, address in
+      self?.sparkPivot(on: name, containing: address, current: sheet)
+    }
+    evaluator.spillBlocked = { [weak self] name, address in
+      self?.spillBlocked(on: name, at: address, current: sheet) ?? false
     }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
@@ -561,9 +615,36 @@ public final class FormulaEngine {
     paintsStoredResultsOnly = false
   }
 
-  /// Re-evaluates every formula on every sheet (does not block open; call explicitly after import).
+  /// Every formula in the workbook, precedents first across all sheets, as the open pass does.
+  /// Results are read with `formulaResults(on:)`.
   @discardableResult
   public func recalculateEntireWorkbook(_ workbook: Workbook, profile: Bool = true) -> TimeInterval
+  {
+    let start = CFAbsoluteTimeGetCurrent()
+    self.workbook = workbook
+    lastWorkbookRecalcProfile = profile ? FormulaRecalcProfile() : nil
+    recalculatedSheetValues.removeAll(keepingCapacity: true)
+    aggregateRangeCache.invalidateAll()
+    lookupTableCache.invalidateAll()
+    foreignCache.removeAll(keepingCapacity: true)
+    foreignVisiting.removeAll(keepingCapacity: true)
+    let outcome = CrossSheetBackground.calculateAllFormulas(in: workbook)
+    var byKey: [String: [CellAddress: CellValue]] = [:]
+    for (name, values) in outcome.valuesBySheet { byKey[sheetKey(name)] = values }
+    for sheet in workbook.sheets {
+      recalculatedSheetValues[sheetKey(sheet.name)] = byKey[sheetKey(sheet.name)] ?? [:]
+    }
+    revision &+= 1
+    return CFAbsoluteTimeGetCurrent() - start
+  }
+
+  /// The older pass: one sheet at a time in waves, with grouped range scans and row strips.
+  /// It records the fast-path counters in `lastWorkbookRecalcProfile` that the debug checks read.
+  /// Its answers can be wrong where sheets read each other's unqualified ranges; answers come
+  /// from `recalculateEntireWorkbook`.
+  @discardableResult
+  public func recalculateEntireWorkbookInSheetWaves(_ workbook: Workbook, profile: Bool = true)
+    -> TimeInterval
   {
     let start = CFAbsoluteTimeGetCurrent()
     self.workbook = workbook
@@ -708,6 +789,13 @@ public final class FormulaEngine {
     Set<CellAddress>]
   {
     guard !addresses.isEmpty else { return [:] }
+    // The engine's copy of the sheet takes the edit too. Range reads go through that copy;
+    // a range over cells just filled by a spilling formula read them as blank.
+    if let index = workbook.sheets.firstIndex(where: {
+      $0.name.caseInsensitiveCompare(sheet.name) == .orderedSame
+    }) {
+      workbook.sheets[index] = sheet
+    }
     // Other sheets may read these cells. Drop their saved results so the next
     // visit calculates again. The active sheet is updated below.
     valuesBySheet.removeAll(keepingCapacity: true)
@@ -1079,7 +1167,7 @@ public final class FormulaEngine {
         }
         formulaAST[address] = template.expr
         dependencies[address] = template.deps
-        dependencyRanges[address] = template.ranges
+        dependencyRanges[address] = template.ranges + pivotRangesRead(by: trimmed, sheet: sheet)
         for dep in template.deps {
           dependents[dep, default: []].insert(address)
         }
@@ -1090,7 +1178,8 @@ public final class FormulaEngine {
         valueCache[address] = .error(.error)
       }
     } else {
-      valueCache[address] = literalOrEmpty(trimmed)
+      valueCache[address] =
+        trimmed.isEmpty ? sheet.cell(at: address).literalValue : literalOrEmpty(trimmed)
     }
 
     if recalculate {
@@ -1110,13 +1199,51 @@ public final class FormulaEngine {
       }
       return .blank
     }
-    return literalOrEmpty(cell.raw)
+    return cell.literalValue
   }
 
   private func workbookLiteral(sheet: Sheet, address: CellAddress) -> CellValue? {
-    let raw = sheet.cell(at: address).raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let cell = sheet.cell(at: address)
+    let raw = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !FormulaSyntax.isFormula(raw) else { return nil }
-    return literalOrEmpty(raw)
+    return raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
+  }
+
+  /// The pivot table drawn over `address`. The sheet being calculated is read directly: the
+  /// engine's copy of the workbook can lag a change to a sheet's pivot settings.
+  private func sparkPivot(on name: String, containing address: CellAddress, current sheet: Sheet)
+    -> SheetPivot?
+  {
+    if name.caseInsensitiveCompare(sheet.name) == .orderedSame {
+      return sheet.fileExtras.sparkPivots.first { pivot in
+        pivot.anchor == address || pivot.drawnRange?.contains(address) == true
+      }
+    }
+    return workbook.sparkPivot(on: name, containing: address)
+  }
+
+  private func spillBlocked(on name: String, at address: CellAddress, current sheet: Sheet)
+    -> Bool
+  {
+    if name.caseInsensitiveCompare(sheet.name) == .orderedSame {
+      return sheet.fileExtras.blockedSpills.contains(address)
+    }
+    return workbook.sheets.first {
+      $0.name.caseInsensitiveCompare(name) == .orderedSame
+    }?.fileExtras.blockedSpills.contains(address) ?? false
+  }
+
+  /// GETPIVOTDATA reads a pivot table's drawn cells, not only the cell it names. A formula that
+  /// calls it watches every pivot on its sheet, with room to grow, so a redraw recalculates it.
+  private func pivotRangesRead(by formula: String, sheet: Sheet) -> [CellRange] {
+    guard formula.range(of: "GETPIVOTDATA", options: .caseInsensitive) != nil else { return [] }
+    return sheet.fileExtras.sparkPivots.map { pivot in
+      CellRange(
+        start: pivot.anchor,
+        end: CellAddress(
+          row: pivot.anchor.row + max(pivot.drawnRows, 1) + 500,
+          col: pivot.anchor.col + max(pivot.drawnColumns, 1) + 50))
+    }
   }
 
   private func workbookRangeValues(for key: AggregateRangeKey) -> [CellValue] {
@@ -1235,7 +1362,7 @@ public final class FormulaEngine {
           values.append(.blank)
           continue
         }
-        values.append(literalOrEmpty(cell.raw))
+        values.append(cell.literalValue)
       }
     }
     return values
@@ -1244,9 +1371,9 @@ public final class FormulaEngine {
   /// Non-formula cells are read from `sheet` and refreshed in the cache.
   /// Returns nil when the cell holds a formula and the caller should use the cache.
   private func literalOnSheet(at address: CellAddress, sheet: Sheet) -> CellValue? {
-    let raw = sheet.cell(at: address).raw
-    guard !FormulaSyntax.isFormula(raw) else { return nil }
-    let value = literalOrEmpty(raw)
+    let cell = sheet.cell(at: address)
+    guard !FormulaSyntax.isFormula(cell.raw) else { return nil }
+    let value = cell.literalValue
     valueCache[address] = value
     return value
   }
@@ -1762,7 +1889,7 @@ public final class FormulaEngine {
             ensureIngested(address: dep, raw: cell.raw, sheet: sheet)
             eval(dep)
           } else {
-            valueCache[dep] = literalOrEmpty(cell.raw)
+            valueCache[dep] = cell.literalValue
           }
         }
       }
@@ -1873,7 +2000,7 @@ public final class FormulaEngine {
         if valueCache[address] == nil || Self.isFormulaText(valueCache[address] ?? .blank) {
           let cell = sheet.cell(at: address)
           valueCache[address] =
-            FormulaSyntax.isFormula(cell.raw) ? CellValue.error(.error) : literalOrEmpty(cell.raw)
+            FormulaSyntax.isFormula(cell.raw) ? CellValue.error(.error) : cell.literalValue
         }
         return
       }
@@ -1894,8 +2021,15 @@ public final class FormulaEngine {
       guard let self else { return .blank }
       return self.resolve(ref, activeSheet: sheet, localEval: eval)
     }
+    evaluator.formulaSheetName = sheet.name
     evaluator.namedRangeLookup = { [weak self] name in
       self?.namedRangeExpr(named: name)
+    }
+    evaluator.pivotLookup = { [weak self] name, address in
+      self?.sparkPivot(on: name, containing: address, current: sheet)
+    }
+    evaluator.spillBlocked = { [weak self] name, address in
+      self?.spillBlocked(on: name, at: address, current: sheet) ?? false
     }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
@@ -1943,7 +2077,7 @@ public final class FormulaEngine {
       if let cached = valueCache[address] {
         return cached
       }
-      let value = literalOrEmpty(raw)
+      let value = raw.isEmpty ? activeSheet.cell(at: address).literalValue : literalOrEmpty(raw)
       valueCache[address] = value
       return value
     }
@@ -2049,7 +2183,7 @@ public final class FormulaEngine {
 
     let trimmed = sheet.cell(at: address).raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard FormulaSyntax.isFormula(trimmed) else {
-      let value = literalOrEmpty(trimmed)
+      let value = trimmed.isEmpty ? sheet.cell(at: address).literalValue : literalOrEmpty(trimmed)
       foreignCache[key] = value
       return value
     }
@@ -2072,11 +2206,11 @@ public final class FormulaEngine {
           if let cached = self.valueCache[addr], !Self.isFormulaText(cached) {
             return cached
           }
-          let raw = self.workbook.activeSheet.cell(at: addr).raw
-          if FormulaSyntax.isFormula(raw) {
+          let cell = self.workbook.activeSheet.cell(at: addr)
+          if FormulaSyntax.isFormula(cell.raw) {
             return self.calculateWithPrecedents(at: addr, sheet: self.workbook.activeSheet)
           }
-          return self.literalOrEmpty(raw)
+          return cell.literalValue
         }
         if targetSheet.caseInsensitiveCompare(sheet.name) == .orderedSame {
           return self.resolveForeign(sheetName: sheet.name, address: ref.address)
@@ -2087,6 +2221,12 @@ public final class FormulaEngine {
       evaluator.formulaSheetName = sheet.name
       evaluator.namedRangeLookup = { [weak self] name in
         self?.namedRangeExpr(named: name)
+      }
+      evaluator.pivotLookup = { [weak self] name, address in
+        self?.sparkPivot(on: name, containing: address, current: sheet)
+      }
+      evaluator.spillBlocked = { [weak self] name, address in
+        self?.spillBlocked(on: name, at: address, current: sheet) ?? false
       }
       evaluator.sheetExtent = { [weak self] sheetName in
         guard let self else { return (999, 25) }

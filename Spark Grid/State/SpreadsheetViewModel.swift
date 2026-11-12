@@ -20,7 +20,7 @@ enum GridContentInvalidation {
 @MainActor
 final class SpreadsheetViewModel {
   /// When true, `workbook` didSet skips a full formula rebuild (format-only / batched edits).
-  private var suspendFormulaRebuild = false
+  var suspendFormulaRebuild = false
   /// When true, workbook writes are not document edits (tab switch, load sync).
   private var suppressEditStamp = false
   /// Real workbook edits. Tab switches, selection, scrolling, and zoom leave this alone.
@@ -57,6 +57,8 @@ final class SpreadsheetViewModel {
         beginOpenCalculationIfNeeded()
       }
       onGridInvalidation?(.full)
+      // A file being opened places its spills once its calculation lands.
+      if !suppressEditStamp { syncSpills() }
     }
   }
   private var savedSelections: [UUID: SavedSelection] = [:]
@@ -65,6 +67,14 @@ final class SpreadsheetViewModel {
   /// All selected regions. The last entry is the active range (matches anchor/end).
   private(set) var selectionRanges: [CellRange] = [.singleOrigin]
   var isEditing = false
+  /// Formats picked up by Format Painter, waiting for the next selection. Nil when it is off.
+  var formatPainterBlock: [[CellFormat?]]?
+  /// Set when sheet protection refused a change; the window shows it, then clears it.
+  var protectionNotice: String?
+  /// True while spilled values are being written, so writing them does not start another pass.
+  @ObservationIgnored var isSyncingSpills = false
+  /// Why a pivot table from the file was left as it was, after Refresh PivotTable.
+  var pivotNotice: String?
   var editText = ""
   /// One-line argument signature shown under the formula bar after Insert Function.
   var formulaArgumentHint: String?
@@ -344,6 +354,7 @@ final class SpreadsheetViewModel {
           self.conditionalFormatCacheRevision = -1
           self.conditionalRangeNumbers.removeAll(keepingCapacity: true)
           self.onGridInvalidation?(.full)
+          self.syncSpills()
         }
       }
     }
@@ -529,6 +540,17 @@ final class SpreadsheetViewModel {
     let changes = formulaEngine.cellsDidChange(addresses, sheet: sheet)
     let changed = changes[sheet.name] ?? Set(addresses)
     publishChangedCells(changed, editedCount: addresses.count)
+    syncSpills()
+  }
+
+  /// Writes spilled values into the active sheet and recalculates what reads them.
+  func replaceActiveSheetForSpill(_ sheet: Sheet, changed: [CellAddress]) {
+    suspendFormulaRebuild = true
+    workbook.activeSheet = sheet
+    suspendFormulaRebuild = false
+    guard !changed.isEmpty else { return }
+    let changes = formulaEngine.cellsDidChange(changed, sheet: sheet)
+    publishChangedCells(changes[sheet.name] ?? Set(changed), editedCount: changed.count)
   }
 
   var selectedCell: Cell {
@@ -1001,8 +1023,22 @@ final class SpreadsheetViewModel {
     }
   }
 
+  /// Typing a character into the selected cell starts an edit holding it. False when the cell
+  /// is locked on a protected sheet; the window then says so and nothing is typed.
+  func beginTyping(_ text: String) -> Bool {
+    guard protectionAllows([CellRange(start: selectionAnchor, end: selectionAnchor)]) else {
+      return false
+    }
+    editText = text
+    isEditing = true
+    return true
+  }
+
   func beginEditing(preserveSelection: Bool = true) {
     if !preserveSelection { return }
+    guard protectionAllows([CellRange(start: selectionAnchor, end: selectionAnchor)]) else {
+      return
+    }
     formulaArgumentHint = nil
     editText = selectedCell.editableText
     isEditing = true
@@ -1019,6 +1055,11 @@ final class SpreadsheetViewModel {
     guard newValue != cell.raw, newValue != cell.editableText else {
       isEditing = false
       noteFormulaEditTextChanged()
+      return
+    }
+    // A locked cell on a protected sheet: the typed text goes and the cell keeps its value.
+    guard protectionAllows([CellRange(start: address, end: address)]) else {
+      cancelEdit()
       return
     }
     setCellValue(newValue, at: address)
@@ -1073,6 +1114,11 @@ final class SpreadsheetViewModel {
     _ arguments: [String: String],
     incremental: Bool
   ) -> Bool {
+    if let check = protectionCheck(for: id, arguments),
+      !protectionAllows(check.ranges, structural: check.structural, permission: check.permission)
+    {
+      return false
+    }
     var next = workbook
     let outcome = engineCommands.apply(
       id: id,
@@ -1265,10 +1311,8 @@ final class SpreadsheetViewModel {
     undoManager?.registerUndo(withTarget: self) { target in
       target.setColumnWidth(col, width: oldWidth, recordUndo: false)
       target.notifyGridRefresh()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.setColumnWidth(col, width: newWidth, recordUndo: false)
-        inner.notifyGridRefresh()
-      }
+      target.registerColumnWidthUndo(
+        col: col, oldWidth: newWidth, newWidth: oldWidth, actionName: actionName)
     }
     undoManager?.setActionName(actionName)
   }
@@ -1283,10 +1327,8 @@ final class SpreadsheetViewModel {
     undoManager?.registerUndo(withTarget: self) { target in
       target.setRowHeight(row, height: oldHeight, recordUndo: false)
       target.notifyGridRefresh()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.setRowHeight(row, height: newHeight, recordUndo: false)
-        inner.notifyGridRefresh()
-      }
+      target.registerRowHeightUndo(
+        row: row, oldHeight: newHeight, newHeight: oldHeight, actionName: actionName)
     }
     undoManager?.setActionName(actionName)
   }
@@ -1304,14 +1346,7 @@ final class SpreadsheetViewModel {
       workbook.activeSheet = sheet
       target.workbook = workbook
       target.notifyGridRefresh()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        var workbook = inner.workbook
-        var sheet = workbook.activeSheet
-        sheet.columnWidths = after
-        workbook.activeSheet = sheet
-        inner.workbook = workbook
-        inner.notifyGridRefresh()
-      }
+      target.registerColumnWidthsUndo(before: after, after: before, actionName: actionName)
     }
     undoManager?.setActionName(actionName)
   }
@@ -1329,14 +1364,7 @@ final class SpreadsheetViewModel {
       workbook.activeSheet = sheet
       target.workbook = workbook
       target.notifyGridRefresh()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        var workbook = inner.workbook
-        var sheet = workbook.activeSheet
-        sheet.rowHeights = after
-        workbook.activeSheet = sheet
-        inner.workbook = workbook
-        inner.notifyGridRefresh()
-      }
+      target.registerRowHeightsUndo(before: after, after: before, actionName: actionName)
     }
     undoManager?.setActionName(actionName)
   }
@@ -1400,6 +1428,8 @@ final class SpreadsheetViewModel {
     isEditing = false
     // Charts from the file are numbered per sheet.
     selectedImportedChartID = nil
+    // Data on other sheets may have changed what this sheet's array formulas spill.
+    syncSpills()
   }
 
   func deleteSheet(at index: Int) {
@@ -1479,13 +1509,22 @@ final class SpreadsheetViewModel {
     if hidden, workbook.sheets.filter({ !$0.isHidden }).count <= 1 { return }
     commitEditIfNeeded()
     setSheetVisibility(after, at: index)
+    registerSheetVisibilityUndo(
+      restoring: before, replacing: after, at: index,
+      action: hidden ? "Hide Sheet" : "Unhide Sheet")
+  }
+
+  /// Undo shows `restoring` again and registers the opposite step, so Undo and Redo alternate.
+  private func registerSheetVisibilityUndo(
+    restoring: SheetFileExtras.Visibility, replacing: SheetFileExtras.Visibility, at index: Int,
+    action: String
+  ) {
     undoManager?.registerUndo(withTarget: self) { target in
-      target.setSheetVisibility(before, at: index)
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.setSheetVisibility(after, at: index)
-      }
+      target.setSheetVisibility(restoring, at: index)
+      target.registerSheetVisibilityUndo(
+        restoring: replacing, replacing: restoring, at: index, action: action)
     }
-    undoManager?.setActionName(hidden ? "Hide Sheet" : "Unhide Sheet")
+    undoManager?.setActionName(action)
   }
 
   private func setSheetVisibility(_ visibility: SheetFileExtras.Visibility, at index: Int) {
@@ -1832,11 +1871,13 @@ final class SpreadsheetViewModel {
 
   /// Formats every cell in `ranges` in one pass over one copy of the sheet, with one undo step.
   /// Empty cells are visited too, so a fill reaches them.
-  private func applyFormat(
+  func applyFormat(
     toRanges ranges: [CellRange],
     actionName: String?,
     mutate: (CellAddress, inout CellFormat) -> Void
   ) {
+    // Formatting a protected sheet is refused, as other spreadsheet apps refuse it by default.
+    guard protectionAllows(ranges, structural: true, permission: .formatCells) else { return }
     var sheet = activeSheet
     var before: [CellAddress: CellFormat?] = [:]
     var after: [CellAddress: CellFormat?] = [:]
@@ -2183,7 +2224,11 @@ final class SpreadsheetViewModel {
 
   /// Fills from the source to `end`. Numbers, dates, numbered text and month or day names
   /// continue as a series unless `copyOnly` (Option held while dragging the fill handle).
-  func fillSelection(from source: CellRange? = nil, to end: CellAddress, copyOnly: Bool = false) {
+  /// `alternate` is an Option-drag of the fill handle: a lone number counts up, a series copies.
+  func fillSelection(
+    from source: CellRange? = nil, to end: CellAddress, copyOnly: Bool = false,
+    alternate: Bool = false
+  ) {
     commitEditIfNeeded()
     let sourceRange = (source ?? selectionRange).normalized
     let fillRange = CellRange(
@@ -2210,7 +2255,7 @@ final class SpreadsheetViewModel {
           "sheet": activeSheet.name,
           "source": sourceLabel,
           "end": clamp(end).a1,
-          "series": copyOnly ? "0" : "1",
+          "series": alternate ? "alternate" : (copyOnly ? "0" : "1"),
         ],
         incremental: true
       )
@@ -2291,17 +2336,18 @@ final class SpreadsheetViewModel {
   }
 
   func registerWorkbookStructureUndo(before: Workbook, action: String) {
-    let after = workbook
+    registerWorkbookSwap(restoring: before, replacing: workbook, action: action)
+  }
+
+  /// Registers a step that puts `restoring` back in place of `replacing`. Running it registers
+  /// the opposite step, so Undo and Redo can alternate any number of times.
+  private func registerWorkbookSwap(restoring: Workbook, replacing: Workbook, action: String) {
     undoManager?.registerUndo(withTarget: self) { target in
       // A remembered sort order no longer matches the rows once they change under it.
       target.filterSortMemory = nil
-      target.workbook = before
+      target.workbook = restoring
       target.clampSelectionToSheet()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.filterSortMemory = nil
-        inner.workbook = after
-        inner.clampSelectionToSheet()
-      }
+      target.registerWorkbookSwap(restoring: replacing, replacing: restoring, action: action)
     }
     undoManager?.setActionName(action)
   }
@@ -2330,15 +2376,8 @@ final class SpreadsheetViewModel {
       workbook.activeSheet = sheet
       target.workbook = workbook
       target.notifyGridRefresh()
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        var workbook = inner.workbook
-        var sheet = workbook.activeSheet
-        sheet.frozenRows = newRows
-        sheet.frozenColumns = newCols
-        workbook.activeSheet = sheet
-        inner.workbook = workbook
-        inner.notifyGridRefresh()
-      }
+      target.registerFreezeUndo(
+        oldRows: newRows, oldCols: newCols, newRows: oldRows, newCols: oldCols)
     }
     undoManager?.setActionName("Freeze Panes")
   }
@@ -2383,17 +2422,20 @@ final class SpreadsheetViewModel {
       NamedRange(name: trimmed, sheetName: activeSheet.name, range: selectionRange)
     )
     workbook = wb
-
-    undoManager?.registerUndo(withTarget: self) { target in
-      target.workbook = snapshot
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.workbook = wb
-      }
-    }
-    undoManager?.setActionName("Define Named Range")
+    registerPlainWorkbookUndo(before: snapshot, after: wb, action: "Define Named Range")
   }
 
-  private func literalString(from value: CellValue) -> String {
+  /// Undo puts `before` back and registers the opposite step, so Undo and Redo alternate.
+  /// Unlike a structure change, it leaves the selection and sort memory alone.
+  func registerPlainWorkbookUndo(before: Workbook, after: Workbook, action: String) {
+    undoManager?.registerUndo(withTarget: self) { target in
+      target.workbook = before
+      target.registerPlainWorkbookUndo(before: after, after: before, action: action)
+    }
+    undoManager?.setActionName(action)
+  }
+
+  func literalString(from value: CellValue) -> String {
     switch value {
     case .blank:
       return ""
@@ -2411,13 +2453,15 @@ final class SpreadsheetViewModel {
   private struct SelectionCopy {
     var text: String
     var conditionalFormats: SpreadsheetClipboard.ConditionalFormatClipboardPayload?
+    var cells: SpreadsheetClipboard.CellsPayload? = nil
   }
 
   /// Copies cell text plus conditional-format rules that cover the selection.
   @discardableResult
   func copySelectionToPasteboard() -> Bool {
     guard let copy = makeSelectionCopy() else { return false }
-    SpreadsheetClipboard.writeText(copy.text, conditionalFormats: copy.conditionalFormats)
+    SpreadsheetClipboard.writeText(
+      copy.text, conditionalFormats: copy.conditionalFormats, cells: copy.cells)
     return true
   }
 
@@ -2443,7 +2487,9 @@ final class SpreadsheetViewModel {
       let formats = region.bounds.flatMap {
         ConditionalFormatPaste.capture(from: activeSheet, bounds: $0)
       }
-      return SelectionCopy(text: region.text, conditionalFormats: formats)
+      return SelectionCopy(
+        text: region.text, conditionalFormats: formats,
+        cells: region.bounds.flatMap { cellsPayload(for: $0) })
     }
     let blocks = selectionRanges.map {
       SpreadsheetClipboard.copyText(
@@ -2470,7 +2516,8 @@ final class SpreadsheetViewModel {
     SpreadsheetClipboard.writeFormulaGrid(
       .init(originRow: range.minRow, originCol: range.minCol, grid: grid),
       tsv: tsv,
-      conditionalFormats: formats
+      conditionalFormats: formats,
+      cells: cellsPayload(for: bounds)
     )
   }
 
@@ -2502,7 +2549,8 @@ final class SpreadsheetViewModel {
     for range in selectionRanges {
       clearRange(range, actionName: "Cut")
     }
-    SpreadsheetClipboard.writeText(copy.text, conditionalFormats: copy.conditionalFormats)
+    SpreadsheetClipboard.writeText(
+      copy.text, conditionalFormats: copy.conditionalFormats, cells: copy.cells)
   }
 
   func pasteFromPasteboard() {
@@ -2513,12 +2561,18 @@ final class SpreadsheetViewModel {
     guard let text = NSPasteboard.general.string(forType: .string) else { return }
     let formats = SpreadsheetClipboard.readConditionalFormats()
     let grid = SpreadsheetClipboard.parseGrid(text)
+    // Cells copied in Spark Grid bring their formats too, in the same undo step.
+    let cells = SpreadsheetClipboard.readCells()
+    undoManager?.beginUndoGrouping()
     if grid.isEmpty {
       setCellValue(text, at: selectionAnchor)
       pasteCopiedConditionalFormats(formats, at: selectionAnchor)
     } else {
       pasteGrid(grid, at: selectionAnchor, adjustFormulas: false, conditionalFormats: formats)
     }
+    if let cells { pasteCellFormats(cells, at: selectionAnchor, actionName: nil) }
+    undoManager?.endUndoGrouping()
+    undoManager?.setActionName("Paste")
     syncEditTextFromSelection()
   }
 
@@ -2560,7 +2614,7 @@ final class SpreadsheetViewModel {
     syncEditTextFromSelection()
   }
 
-  private func pasteGrid(
+  func pasteGrid(
     _ grid: [[String]],
     at origin: CellAddress,
     adjustFormulas: Bool,
@@ -2618,6 +2672,7 @@ final class SpreadsheetViewModel {
 
   /// Clears the cells in `range` on rows the filter shows. Hidden rows keep their values, as in Excel.
   func clearRange(_ range: CellRange, actionName: String = "Clear") {
+    guard protectionAllows([range]) else { return }
     undoManager?.beginUndoGrouping()
     let addresses = activeSheet.cells.keys.filter {
       range.contains($0) && !isRowHiddenByFilter($0.row)
@@ -2633,12 +2688,11 @@ final class SpreadsheetViewModel {
 
   // MARK: - Undo
 
+  /// Undo puts `oldValue` back and registers the opposite step, so Undo and Redo alternate.
   private func registerUndo(address: CellAddress, oldValue: String, newValue: String) {
     undoManager?.registerUndo(withTarget: self) { target in
       target.setCellValue(oldValue, at: address, skipUndo: true)
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.setCellValue(newValue, at: address, skipUndo: true)
-      }
+      target.registerUndo(address: address, oldValue: newValue, newValue: oldValue)
     }
     undoManager?.setActionName("Edit Cell")
   }

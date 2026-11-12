@@ -403,7 +403,9 @@ public final class WorkbookSession {
     var sheet = workbook.sheets[index]
     var addresses: [CellAddress] = []
     // A fill down continues each source column as a series; a fill across, each source row.
-    // `series` "0" copies instead.
+    // `series` "0" copies instead. "alternate" is an Option-drag, as in Excel: a lone number
+    // counts up by one, and a source that would continue as a series is copied.
+    let alternate = arguments["series"] == "alternate"
     let continues = arguments["series"] != "0"
     let fillsDown = fillRows > srcRowCount && fillCols == srcColCount
     let fillsAcross = fillCols > srcColCount && fillRows == srcRowCount
@@ -421,7 +423,9 @@ public final class WorkbookSession {
           : (sourceRange.minCol...sourceRange.maxCol).map {
             sheet.cell(at: CellAddress(row: line, col: $0))
           }
-        if let series = FillSeries.plan(cells) {
+        if alternate {
+          if let series = FillSeries.countingFromOne(cells) { seriesByLine[line] = series }
+        } else if let series = FillSeries.plan(cells) {
           seriesByLine[line] = series
         }
       }
@@ -557,6 +561,15 @@ public final class WorkbookSession {
       named.sheetName = newName
       workbook.namedRanges[key] = named
     }
+    // Pivot tables read their source by sheet name.
+    for sheetIndex in workbook.sheets.indices {
+      for pivotIndex in workbook.sheets[sheetIndex].fileExtras.sparkPivots.indices
+      where workbook.sheets[sheetIndex].fileExtras.sparkPivots[pivotIndex].sourceSheet
+        .caseInsensitiveCompare(oldName) == .orderedSame
+      {
+        workbook.sheets[sheetIndex].fileExtras.sparkPivots[pivotIndex].sourceSheet = newName
+      }
+    }
     return Applied(
       ok: true,
       message: "",
@@ -664,7 +677,8 @@ public final class WorkbookSession {
       var cells: [Int: Cell] = [:]
       for col in n.minCol...n.maxCol {
         let address = CellAddress(row: row, col: col)
-        if let cell = source.cells[address] {
+        // A spilled value stays out of the move: its formula fills it in again after the sort.
+        if let cell = source.cells[address].flatMap(SpillLayout.withoutSpilledValue) {
           cells[col] = cell
         }
       }
@@ -722,6 +736,7 @@ public final class WorkbookSession {
     lastSortOrder = packs.map(\.rowIndex)
 
     var sheet = source
+    SpillLayout.clearSpills(in: &sheet)
     for row in firstDataRow...n.maxRow {
       for col in n.minCol...n.maxCol {
         sheet.cells.removeValue(forKey: CellAddress(row: row, col: col))

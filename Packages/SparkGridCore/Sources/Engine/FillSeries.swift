@@ -58,6 +58,16 @@ public enum FillSeries: Equatable, Sendable {
     return .numberedText(prefix: prefix, intercept: intercept, slope: slope, width: width)
   }
 
+  /// An Option-drag from one plain number counts up by one. Anything else is copied.
+  public static func countingFromOne(_ cells: [Cell]) -> FillSeries? {
+    guard cells.count == 1 else { return nil }
+    let raw = cells[0].raw.trimmingCharacters(in: .whitespaces)
+    guard !raw.hasPrefix("="), let number = Double(raw.replacingOccurrences(of: ",", with: "")),
+      number.isFinite
+    else { return nil }
+    return .linear(intercept: number, slope: 1)
+  }
+
   /// The raw text of the cell `k` places after the first source cell. Negative `k` fills
   /// up or left.
   public func value(at k: Int) -> String {

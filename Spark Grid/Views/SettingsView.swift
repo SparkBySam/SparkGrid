@@ -5,20 +5,78 @@ import SwiftUI
 struct SettingsView: View {
   @Bindable private var settings = AppSettings.shared
   @State private var showAbout = false
+  @State private var tab: SettingsTab = .general
+
+  /// The tabs are drawn here rather than by a system tab view: its toolbar marks the selected
+  /// tab in the macOS accent, so with Spark amber chosen it stayed blue.
+  enum SettingsTab: CaseIterable {
+    case general, shortcuts, about
+
+    var title: String {
+      switch self {
+      case .general: "General"
+      case .shortcuts: "Shortcuts"
+      case .about: "About"
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .general: "gearshape"
+      case .shortcuts: "keyboard"
+      case .about: "info.circle"
+      }
+    }
+  }
 
   var body: some View {
-    TabView {
-      GeneralSettingsTab(settings: settings)
-        .tabItem { Label("General", systemImage: "gearshape") }
-      ShortcutSettingsTab(settings: settings)
-        .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-      aboutTab
-        .tabItem { Label("About", systemImage: "info.circle") }
+    VStack(spacing: 0) {
+      tabBar
+      Rectangle().fill(SparkStyle.chromeDivider).frame(height: 1)
+      switch tab {
+      case .general: GeneralSettingsTab(settings: settings)
+      case .shortcuts: ShortcutSettingsTab(settings: settings)
+      case .about: aboutTab
+      }
     }
     .frame(width: 540)
     .background(SparkStyle.window)
+    .background(SettingsWindowTitle(title: tab.title))
     .preferredColorScheme(settings.appearanceMode.colorScheme)
     .aboutPanel(isPresented: $showAbout)
+  }
+
+  private var tabBar: some View {
+    let accent = SparkStyle.accent
+    return HStack(spacing: 4) {
+      ForEach(SettingsTab.allCases, id: \.self) { item in
+        let selected = item == tab
+        Button {
+          tab = item
+        } label: {
+          VStack(spacing: 3) {
+            Image(systemName: item.systemImage)
+              .font(.system(size: 19))
+              .frame(height: 22)
+            Text(item.title)
+              .font(.system(size: 11))
+          }
+          .foregroundStyle(selected ? accent : SparkStyle.secondaryLabel)
+          .frame(width: 72, height: 50)
+          .background(
+            RoundedRectangle(cornerRadius: 7)
+              .fill(selected ? SparkStyle.field : Color.clear)
+          )
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 8)
+    .background(SparkStyle.chrome)
   }
 
   private var aboutTab: some View {
@@ -78,24 +136,15 @@ private struct GeneralSettingsTab: View {
       SparkDialogSection(title: "Appearance")
       SparkDialogGroup {
         SparkDialogRow(label: "Color scheme") {
-          Picker("Color scheme", selection: $settings.appearanceMode) {
-            ForEach(AppearanceMode.allCases) { mode in
-              Text(mode.title).tag(mode)
-            }
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .fixedSize()
+          SparkSegmentedPicker(
+            selection: $settings.appearanceMode,
+            options: AppearanceMode.allCases.map { ($0, $0.title) }, equalWidths: true)
         }
         SparkDialogDivider()
         SparkDialogRow(label: "Accent color") {
-          Picker("Accent color", selection: $settings.useSystemAccent) {
-            Text("Spark amber").tag(false)
-            Text("macOS accent").tag(true)
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .fixedSize()
+          SparkSegmentedPicker(
+            selection: $settings.useSystemAccent,
+            options: [(false, "Spark amber"), (true, "macOS accent")])
         }
         SparkDialogDivider()
         SparkDialogRow(label: "Names under toolbar buttons") {
@@ -351,4 +400,15 @@ private struct ShortcutSettingsTab: View {
 
 #Preview {
   SettingsView()
+}
+
+/// The Settings window shows the open tab's name, as the system tab view did.
+private struct SettingsWindowTitle: NSViewRepresentable {
+  let title: String
+
+  func makeNSView(context: Context) -> NSView { NSView() }
+
+  func updateNSView(_ view: NSView, context: Context) {
+    DispatchQueue.main.async { view.window?.title = title }
+  }
 }

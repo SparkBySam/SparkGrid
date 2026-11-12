@@ -120,9 +120,29 @@ extension SpreadsheetViewModel {
 
   // MARK: - AutoSum
 
+  /// The toolbar's AutoSum menu: the function each choice writes.
+  enum AutoSumFunction: String, CaseIterable {
+    case sum = "SUM"
+    case average = "AVERAGE"
+    case count = "COUNT"
+    case max = "MAX"
+    case min = "MIN"
+
+    var title: String {
+      switch self {
+      case .sum: "Sum"
+      case .average: "Average"
+      case .count: "Count Numbers"
+      case .max: "Max"
+      case .min: "Min"
+      }
+    }
+  }
+
   /// Adds the numbers above, or else to the left of, the selected cell. With several cells
   /// selected, each column gets a total in the first empty cell below it. One undo step.
-  func autoSum() {
+  /// `function` picks SUM (AutoSum's shortcut) or AVERAGE, COUNT, MAX or MIN from the toolbar.
+  func autoSum(_ function: AutoSumFunction = .sum) {
     commitEditIfNeeded()
     let range = selectionRange.normalized
     undoManager?.beginUndoGrouping()
@@ -135,7 +155,7 @@ extension SpreadsheetViewModel {
       if let block = numberRun(from: target, rowStep: -1, colStep: 0)
         ?? numberRun(from: target, rowStep: 0, colStep: -1)
       {
-        setCellValue("=SUM(\(block.a1Label))", at: target)
+        setCellValue("=\(function.rawValue)(\(block.a1Label))", at: target)
       }
       return
     }
@@ -159,7 +179,7 @@ extension SpreadsheetViewModel {
       }
       guard below < activeSheet.effectiveRowCount else { continue }
       setCellValue(
-        "=SUM(\(CellRange(start: top, end: bottom).a1Label))",
+        "=\(function.rawValue)(\(CellRange(start: top, end: bottom).a1Label))",
         at: CellAddress(row: below, col: col))
     }
   }

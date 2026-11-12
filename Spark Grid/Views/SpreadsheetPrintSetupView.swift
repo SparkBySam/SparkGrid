@@ -4,19 +4,26 @@ import SwiftUI
 struct SpreadsheetPrintSetupView: View {
   @Bindable var viewModel: SpreadsheetViewModel
   @State private var options: SpreadsheetPrintOptions
+  /// Export as PDF opens this window with Save PDF as its main button.
+  let exportsPDF: Bool
   let onCancel: () -> Void
   let onPrint: (SpreadsheetPrintOptions) -> Void
+  let onSavePDF: (SpreadsheetPrintOptions) -> Void
 
   init(
     viewModel: SpreadsheetViewModel,
     options: SpreadsheetPrintOptions,
+    exportsPDF: Bool = false,
     onCancel: @escaping () -> Void,
-    onPrint: @escaping (SpreadsheetPrintOptions) -> Void
+    onPrint: @escaping (SpreadsheetPrintOptions) -> Void,
+    onSavePDF: @escaping (SpreadsheetPrintOptions) -> Void
   ) {
     self._viewModel = Bindable(wrappedValue: viewModel)
     _options = State(initialValue: options)
+    self.exportsPDF = exportsPDF
     self.onCancel = onCancel
     self.onPrint = onPrint
+    self.onSavePDF = onSavePDF
   }
 
   private var pages: [SpreadsheetPrintPage] {
@@ -48,7 +55,7 @@ struct SpreadsheetPrintSetupView: View {
   var body: some View {
     VStack(spacing: 0) {
       VStack(alignment: .leading, spacing: 2) {
-        Text("Print")
+        Text(exportsPDF ? "Export as PDF" : "Print")
           .font(.system(size: 15, weight: .semibold))
           .foregroundStyle(SparkStyle.label)
         Text("\(viewModel.activeSheet.name) · \(scopeLabel)")
@@ -80,8 +87,12 @@ struct SpreadsheetPrintSetupView: View {
         Spacer()
         Button("Cancel", action: onCancel)
           .keyboardShortcut(.cancelAction)
-        Button("Print…") {
-          onPrint(options)
+        Button(exportsPDF ? "Print…" : "Save as PDF…") {
+          if exportsPDF { onPrint(options) } else { onSavePDF(options) }
+        }
+        .disabled(pages.isEmpty)
+        Button(exportsPDF ? "Save PDF…" : "Print…") {
+          if exportsPDF { onSavePDF(options) } else { onPrint(options) }
         }
         .keyboardShortcut(.defaultAction)
         .buttonStyle(.borderedProminent)
@@ -123,6 +134,8 @@ struct SpreadsheetPrintSetupView: View {
 
   private var scopeLabel: String {
     switch options.scope {
+    case .printArea:
+      return "Printing the print area"
     case .selectedCells:
       return "Printing \(rangeSummary)"
     case .populatedCells:
@@ -188,13 +201,9 @@ struct SpreadsheetPrintSetupView: View {
       SparkDialogSection(title: "Page")
       SparkDialogGroup {
         SparkDialogRow(label: "Orientation") {
-          Picker("Orientation", selection: $options.isLandscape) {
-            Text("Portrait").tag(false)
-            Text("Landscape").tag(true)
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .fixedSize()
+          SparkSegmentedPicker(
+            selection: $options.isLandscape, options: [(false, "Portrait"), (true, "Landscape")],
+            equalWidths: true)
         }
         SparkDialogDivider()
         menuPicker("Paper", selection: $options.paper) {

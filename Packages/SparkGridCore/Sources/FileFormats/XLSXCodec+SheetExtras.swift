@@ -432,6 +432,24 @@ extension XLSXCodec {
     sheet.charts = charts.map { $0.positionedUnderData() }
   }
 
+  /// Pivot tables made in Spark Grid keep their settings beside the sheet, in a part other apps
+  /// do not read. The drawn cells are ordinary values, so other apps show the table as it was.
+  public static func importSparkPivots(into sheet: inout Sheet, archiveData: Data, sheetIndex: Int)
+  {
+    let path = "xl/sparkGrid/pivots\(sheetIndex + 1).json"
+    guard let data = zipEntryData(archiveData: archiveData, entryPath: path),
+      let pivots = try? JSONDecoder().decode([SheetPivot].self, from: data)
+    else { return }
+    sheet.fileExtras.sparkPivots = pivots
+  }
+
+  static func sparkPivotsJSON(_ pivots: [SheetPivot]) -> Data? {
+    guard !pivots.isEmpty else { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try? encoder.encode(pivots)
+  }
+
   public static func sheetViewsXML(frozenRows: Int, frozenColumns: Int) -> String {
     guard frozenRows > 0 || frozenColumns > 0 else { return "" }
     let topLeft = CellAddress(row: frozenRows, col: frozenColumns).a1

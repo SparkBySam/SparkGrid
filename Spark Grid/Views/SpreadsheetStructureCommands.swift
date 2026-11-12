@@ -8,7 +8,7 @@ struct SpreadsheetStructureCommands: Commands {
   @Bindable private var settings = AppSettings.shared
 
   private var viewModel: SpreadsheetViewModel? {
-    focusedViewModel ?? (NSApp.delegate as? SparkGridAppDelegate)?.resolvedSpreadsheetViewModel()
+    focusedViewModel ?? SparkGridAppDelegate.current?.resolvedSpreadsheetViewModel()
   }
 
   var body: some Commands {
@@ -56,6 +56,68 @@ struct SpreadsheetStructureCommands: Commands {
         .disabled(viewModel?.canUnhideInSelection.columns != true)
 
       Divider()
+
+      let outlineAxis = viewModel?.outlineAxisForSelection ?? .rows
+      let outline = viewModel?.hasOutline ?? (rows: false, columns: false)
+      Button {
+        viewModel?.groupSelection(outlineAxis)
+      } label: {
+        Text(outlineAxis == .rows ? "Group Rows" : "Group Columns")
+      }
+      .keyboardShortcut("k", modifiers: [.command, .shift])
+      .disabled(viewModel == nil)
+      Button {
+        viewModel?.ungroupSelection(outlineAxis)
+      } label: {
+        Text(outlineAxis == .rows ? "Ungroup Rows" : "Ungroup Columns")
+      }
+      .keyboardShortcut("j", modifiers: [.command, .shift])
+      .disabled(outlineAxis == .rows ? !outline.rows : !outline.columns)
+      Button("Collapse or Expand Group") {
+        viewModel?.toggleOutlineGroupAtSelection(outlineAxis)
+      }
+      .disabled(outlineAxis == .rows ? !outline.rows : !outline.columns)
+      Button("Collapse All Groups") {
+        viewModel?.showOutlineLevel(0, .rows)
+        viewModel?.showOutlineLevel(0, .columns)
+      }
+      .disabled(!outline.rows && !outline.columns)
+      Button("Expand All Groups") {
+        viewModel?.showOutlineLevel(nil, .rows)
+        viewModel?.showOutlineLevel(nil, .columns)
+      }
+      .disabled(!outline.rows && !outline.columns)
+      let rowDepth = viewModel?.outlineDepth(.rows) ?? 0
+      let columnDepth = viewModel?.outlineDepth(.columns) ?? 0
+      Menu("Show Row Levels") {
+        ForEach(Array(1...max(rowDepth + 1, 1)), id: \.self) { level in
+          Button("Level \(level)") { viewModel?.showOutlineLevelButton(level, .rows) }
+        }
+      }
+      .disabled(rowDepth == 0)
+      Menu("Show Column Levels") {
+        ForEach(Array(1...max(columnDepth + 1, 1)), id: \.self) { level in
+          Button("Level \(level)") { viewModel?.showOutlineLevelButton(level, .columns) }
+        }
+      }
+      .disabled(columnDepth == 0)
+
+      Divider()
+
+      Button("Insert Page Break") { viewModel?.insertPageBreak() }
+        .disabled(viewModel?.canInsertPageBreak != true)
+      Button("Remove Page Break") { viewModel?.removePageBreak() }
+        .disabled(viewModel?.canRemovePageBreak != true)
+      Button("Reset All Page Breaks") { viewModel?.resetAllPageBreaks() }
+        .disabled(viewModel?.hasPageBreaks != true)
+
+      Divider()
+
+      Button(viewModel?.isSheetProtected == true ? "Unprotect Sheet…" : "Protect Sheet…") {
+        guard let viewModel else { return }
+        SheetProtectionPresenter.toggle(from: viewModel)
+      }
+      .disabled(viewModel == nil)
 
       Button("Hide Sheet") {
         guard let viewModel else { return }
@@ -150,6 +212,17 @@ struct SpreadsheetStructureCommands: Commands {
       }
       .disabled(viewModel == nil)
 
+      Button(viewModel?.selectedHyperlink == nil ? "Link…" : "Edit Link…") {
+        guard let viewModel else { return }
+        LinkPresenter.present(from: viewModel)
+      }
+      .keyboardShortcut("k", modifiers: .command)
+      .disabled(viewModel == nil)
+
+      if viewModel?.selectedHyperlink != nil {
+        Button("Remove Link") { viewModel?.removeLink() }
+      }
+
       Divider()
 
       Menu("Chart") {
@@ -164,9 +237,20 @@ struct SpreadsheetStructureCommands: Commands {
 
     CommandGroup(replacing: .printItem) {
       Button("Print…") {
-        (NSApp.delegate as? SparkGridAppDelegate)?.printDocument(nil)
+        SparkGridAppDelegate.current?.printDocument(nil)
       }
       .keyboardShortcut("p", modifiers: .command)
+
+      Button("Export as PDF…") {
+        SparkGridAppDelegate.current?.exportPDF(nil)
+      }
+
+      Menu("Print Area") {
+        Button("Set Print Area") { viewModel?.setPrintArea() }
+          .disabled(viewModel == nil)
+        Button("Clear Print Area") { viewModel?.clearPrintArea() }
+          .disabled(viewModel?.printArea == nil)
+      }
     }
   }
 

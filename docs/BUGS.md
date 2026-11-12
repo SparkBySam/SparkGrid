@@ -8,9 +8,7 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 
 | # | Bug | Where | Notes |
 | --- | --- | --- | --- |
-| 7 | No toolbar control for tables | | Tables can be reached through the name box. There is no create or edit UI. |
-| | `FormulaEngine.recalculateEntireWorkbook` mixes up unqualified ranges across sheets | Benchmarks, BugBashRunner | Its range cache keys unqualified ranges with no sheet, so Daily Q1's `SUM(F5:F64)` got Monthly Summary's answer. Adding the sheet name exposed a bulk loader that reads uncalculated same-sheet formulas as 0. The app no longer uses it on open. Nov 3: with the sheet name set and same-sheet ranges kept off the bulk loader, 190 cells still differ: Reps and Monthly Summary read each other, and the sheet-by-sheet waves calculate Reps first. Needs the waves to follow cell dependencies. |
-| | Five BugBashRunner checks fail on `main` and on this branch alike | Debug runner (`SPARK_GRID_BUG_BASH=1`) | The sandbox blocks `Fixtures/shared_formula_many_cells.xlsx`; three pixel checks read back black because they snapshot the grid without a window; the spell check reads `=A1` before the open calculation lands. The checks need fixing, not the app. |
+| | A product like 186000 × 0.7 showed as 130199.99999999999 instead of 130200 | 1.4 (`claude/1.4`): numbers show at most 15 significant digits, as Excel does |
 
 ## Not Spark Grid bugs
 
@@ -29,6 +27,12 @@ Workbooks named here are fixtures in `Fixtures/`. Never name a customer file.
 
 | # | Bug | Fixed in |
 | --- | --- | --- |
+| | Seven BugBashRunner checks failed on every run, so a new failure was easy to miss | 1.4 (`claude/1.4`), Nov 11: all 96 pass. The shared-formula check builds its workbook instead of reading Fixtures (the sandbox blocks it); the three pixel checks capture the grid's own frame plus the chart and frozen-pane views (`layer.render` misses both off screen); the spell check waits for the open calculation; the unsaved-prompt check uses a spreadsheet window; the conditional bold check no longer expects the extension copy of each rule that Nov 4 removed |
+| | `FormulaEngine.recalculateEntireWorkbook` mixed up unqualified ranges across sheets: three evaluators were built without their sheet's name, so Daily Q1's `SUM(C5:C64)` read Monthly Summary's cached C5:C64; with the name set, the sheet-wave pass read row-strip formulas as blank (190 cells on the stress workbook) | 1.4 (`claude/1.4`): every evaluator knows its sheet, and the whole-workbook pass is the dependency-ordered pass the app runs on open (0 mismatches on the stress workbook's 114,609 formulas, faster). The wave pass stays as `recalculateEntireWorkbookInSheetWaves` for the fast-path counter checks |
+| | Cells typed in this session went blank when scrolling with the trackpad, and came back on a click (seen in 1.3 on a CSV while editing). The grid scrolls with pictures it draws while idle; an edit redrew the cell on screen but left those pictures as they were. | 1.4 (`claude/1.4`): the pictures covering an edited cell are dropped and drawn again; BugBash `edit then tile scroll shows edit` |
+| | Sort A to Z then Undo left #REF! in the Total row: the sort took the total row along, its SUM moved up off the sheet, and Undo put the rows back but not the formulas | 1.4 (`claude/1.4`): Undo puts back each formula as it was, and the toolbar sort leaves a total row under the table in place |
+| 7 | No toolbar control for tables | 1.3: Insert → Table, the Data menu (Create Table, Table Style, Remove Table) and the cell menu. No toolbar button: the toolbar is full at laptop widths (Sam, Nov 7) |
+| | Segmented controls (Settings, Find Duplicates, Sort, filters, dropdown lists, Print) and the Settings tabs stayed macOS blue with Spark amber chosen | 1.4 (`claude/1.4`) |
 | | Typing a value did not update a chart from the file that reads it, or recolor the rest of a color scale, data bar or icon set range, until the sheet was redrawn (switching sheets) | 1.3 (`claude/1.3`) |
 | | Opening a file into a running Spark Grid (Finder, `open`) quit the app: SwiftUI closed the only window to open the file in a new one. In 1.2 too | 1.3 (`claude/1.3`) |
 | | Excel's default text color (`theme="1"`) was read as white: numbers vanished on light fills in dark mode, and the color was saved back as white. Theme colors 0 to 3 were in the wrong order | 1.3 (`claude/1.3`) |

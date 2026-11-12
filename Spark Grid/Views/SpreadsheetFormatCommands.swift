@@ -26,6 +26,13 @@ struct SpreadsheetFormatCommands: Commands {
         .disabled(viewModel == nil)
       Button("Strikethrough") { viewModel?.toggleStrikethrough() }
         .disabled(viewModel == nil)
+      Toggle(
+        "Locked",
+        isOn: Binding(
+          get: { viewModel?.selectionLocked ?? true },
+          set: { viewModel?.setSelectionLocked($0) })
+      )
+      .disabled(viewModel == nil || viewModel?.isSheetProtected == true)
 
       Divider()
 
@@ -112,6 +119,9 @@ struct SpreadsheetFormatCommands: Commands {
       .disabled(viewModel == nil)
 
       Divider()
+
+      Button("Format Painter") { viewModel?.toggleFormatPainter() }
+        .disabled(viewModel == nil)
 
       Button("Conditional Formatting…") {
         guard let viewModel else { return }

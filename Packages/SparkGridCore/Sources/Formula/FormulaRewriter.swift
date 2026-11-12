@@ -22,6 +22,18 @@ public enum FormulaFunctions {
     "ISBLANK", "ISNUMBER", "ISTEXT", "ISERROR", "FALSE",
     "WEEKDAY", "HOUR", "MINUTE", "SECOND", "EDATE", "EOMONTH",
     "ROW", "ROWS", "COLUMNS",
+    // 1.4 batch 2
+    "PMT", "IPMT", "PPMT", "FV", "PV", "NPER", "RATE", "NPV", "IRR", "XNPV", "XIRR", "DAYS",
+    "DATEDIF", "NETWORKDAYS", "WORKDAY", "WEEKNUM", "ISOWEEKNUM", "STDEV", "STDEV.S", "STDEVP",
+    "STDEV.P", "VAR", "VAR.S", "VARP", "VAR.P", "PERCENTILE", "PERCENTILE.INC", "QUARTILE",
+    "QUARTILE.INC", "MODE", "MODE.SNGL", "CORREL", "SLOPE", "INTERCEPT", "FORECAST",
+    "FORECAST.LINEAR", "COUNTUNIQUE", "SUMSQ", "MROUND", "TRUNC", "EXP", "LN", "LOG", "LOG10",
+    "FACT", "GCD", "LCM", "EVEN", "ODD", "SWITCH", "XOR", "ISEVEN", "ISODD", "ISLOGICAL", "ISNA",
+    "ISERR", "NA", "CHOOSE", "HYPERLINK", "GETPIVOTDATA", "TEXTBEFORE", "TEXTAFTER", "CLEAN",
+    "CODE", "UNICODE",
+    "UNICHAR",
+    // 1.4 spilling results
+    "FILTER", "SORT", "SORTBY", "UNIQUE",
   ].sorted()
 
   public static func suggestions(matching prefix: String) -> [String] {
@@ -187,14 +199,8 @@ public nonisolated enum FormulaRewriter {
       ).map { .cellRef($0) } ?? .error(.ref)
     case .range(let start, let end):
       guard
-        let s = shiftRef(
+        let (s, e) = shiftRange(
           start,
-          formulaSheetName: formulaSheetName,
-          mutatedSheetName: mutatedSheetName,
-          axis: axis,
-          change: change
-        ),
-        let e = shiftRef(
           end,
           formulaSheetName: formulaSheetName,
           mutatedSheetName: mutatedSheetName,
@@ -246,6 +252,68 @@ public nonisolated enum FormulaRewriter {
         }
       )
     }
+  }
+
+  /// Shifts a range as a whole. Inserts move each end on its own. A delete becomes `#REF!` only
+  /// when every row (or column) of the range is deleted; otherwise the range shrinks by the
+  /// deleted rows inside it, even when a deleted row is its first or last one.
+  private static func shiftRange(
+    _ start: FormulaRef,
+    _ end: FormulaRef,
+    formulaSheetName: String,
+    mutatedSheetName: String,
+    axis: Axis,
+    change: StructureChange
+  ) -> (FormulaRef, FormulaRef)? {
+    guard case .delete(let index, let count) = change else {
+      guard
+        let s = shiftRef(
+          start, formulaSheetName: formulaSheetName, mutatedSheetName: mutatedSheetName,
+          axis: axis, change: change),
+        let e = shiftRef(
+          end, formulaSheetName: formulaSheetName, mutatedSheetName: mutatedSheetName,
+          axis: axis, change: change)
+      else { return nil }
+      return (s, e)
+    }
+    let target = start.sheet ?? end.sheet ?? formulaSheetName
+    guard target.caseInsensitiveCompare(mutatedSheetName) == .orderedSame, count > 0 else {
+      return (start, end)
+    }
+    let first = axis == .row ? start.row : start.col
+    let last = axis == .row ? end.row : end.col
+    let low = min(first, last)
+    let high = max(first, last)
+    // A whole-row or whole-column reference along this axis does not move.
+    guard low < FormulaRef.open else { return (start, end) }
+    let deleteEnd = index.addingReportingOverflow(count)
+    let afterDeleted = deleteEnd.overflow ? Int.max : deleteEnd.partialValue
+    let highIsOpen = high >= FormulaRef.open
+    if index <= low && afterDeleted > high && !highIsOpen { return nil }
+
+    func moved(_ position: Int, isLow: Bool) -> Int {
+      if position >= FormulaRef.open { return position }
+      if position < index { return position }
+      if position >= afterDeleted { return position - count }
+      // Inside the deleted rows: the low end lands on the first row after them, the high end
+      // on the last row before them.
+      return isLow ? index : index - 1
+    }
+    let newLow = moved(low, isLow: true)
+    let newHigh = moved(high, isLow: false)
+    var s = start
+    var e = end
+    let startIsLow = first <= last
+    let newFirst = startIsLow ? newLow : newHigh
+    let newLast = startIsLow ? newHigh : newLow
+    if axis == .row {
+      s.row = newFirst
+      e.row = newLast
+    } else {
+      s.col = newFirst
+      e.col = newLast
+    }
+    return (s, e)
   }
 
   private static func shiftRef(

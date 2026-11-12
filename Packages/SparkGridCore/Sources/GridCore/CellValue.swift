@@ -19,6 +19,10 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
   case na
   /// A number that cannot be computed, such as the square root of a negative.
   case num
+  /// A formula whose results would spill over cells that already hold something.
+  case spill
+  /// A calculation with no result, such as FILTER matching nothing.
+  case calc
   case error
 
   /// What appears in the cell (e.g. `#VALUE!`).
@@ -31,6 +35,8 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
     case .cycle: return "#CYCLE!"
     case .na: return "#N/A"
     case .num: return "#NUM!"
+    case .spill: return "#SPILL!"
+    case .calc: return "#CALC!"
     case .error: return "#ERROR!"
     }
   }
@@ -59,6 +65,11 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
     case .num:
       return
         "The number can’t be calculated, such as the square root of a negative number or a position past the end of a list."
+    case .spill:
+      return
+        "The results would spill into cells that aren’t empty. Clear the cells below or beside the formula."
+    case .calc:
+      return "There is nothing to show, such as a FILTER that matches no rows."
     case .error:
       return
         "Couldn’t parse or evaluate this formula. Check for typos, missing parentheses, or unsupported syntax."
@@ -74,6 +85,8 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
     case "#CYCLE!": self = .cycle
     case "#N/A": self = .na
     case "#NUM!": self = .num
+    case "#SPILL!": self = .spill
+    case "#CALC!": self = .calc
     case "#ERROR!": self = .error
     default: return nil
     }
@@ -102,6 +115,13 @@ public nonisolated enum CellValue: Equatable, Sendable {
     case .number(let n):
       if n.rounded() == n, abs(n) < 1e15 {
         return String(Int(n))
+      }
+      // Excel shows and converts numbers with at most 15 significant digits, so
+      // 186000 * 0.7 is 130200, not 130199.99999999999, and 0.1 + 0.2 is 0.3.
+      let fifteen = String(format: "%.15g", n)
+      if !fifteen.contains("e"), let rounded = Double(fifteen) {
+        if rounded.rounded() == rounded, abs(rounded) < 1e15 { return String(Int(rounded)) }
+        return fifteen
       }
       var text = String(n)
       if text.hasSuffix(".0") {

@@ -60,6 +60,10 @@ extension SpreadsheetViewModel {
   }
 
   func hideSelected(_ axis: HideAxis) {
+    guard
+      protectionAllows(
+        [], structural: true, permission: axis == .rows ? .formatRows : .formatColumns)
+    else { return }
     commitEditIfNeeded()
     let indexes = selectedIndexes(axis)
     guard !indexes.isEmpty else { return }
@@ -76,6 +80,10 @@ extension SpreadsheetViewModel {
 
   /// Shows hidden rows or columns inside the selection and right next to it.
   func unhideSelected(_ axis: HideAxis) {
+    guard
+      protectionAllows(
+        [], structural: true, permission: axis == .rows ? .formatRows : .formatColumns)
+    else { return }
     commitEditIfNeeded()
     guard let (low, high) = selectedBounds(axis) else { return }
     updateHidden(axis, actionName: axis == .rows ? "Unhide Rows" : "Unhide Columns") { hidden in

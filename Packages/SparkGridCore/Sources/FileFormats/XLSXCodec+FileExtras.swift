@@ -33,7 +33,10 @@ extension XLSXCodec {
       // A page setup points at a printer settings part the app does not keep.
       layout += name == "pageSetup" ? removingAttribute("r:id", from: xml) : xml
     }
-    extras.pageLayoutXML = layout.isEmpty ? nil : layout
+    let split = SheetFileExtras.splittingPageBreaks(from: layout)
+    extras.pageLayoutXML = split.layout
+    extras.rowBreaks = split.rows
+    extras.columnBreaks = split.columns
 
     if let xml = kept["dataValidations"]?.first {
       extras.dataValidations = dataValidationRules(in: xml)
@@ -820,6 +823,7 @@ extension XLSXCodec {
         "xl/pivotCache/pivotCacheRecords",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"
       ),
+      ("xl/metadata.xml", sheetMetadataContentType),
     ]
     var overrides = ""
     for path in files.keys.sorted() where path.hasSuffix(".xml") && !path.contains("/_rels/") {

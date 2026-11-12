@@ -83,39 +83,18 @@ extension SpreadsheetViewModel {
     if let comment = comment(at: address) {
       parts.append(comment.author.isEmpty ? comment.text : "\(comment.author): \(comment.text)")
     }
-    if let link = hyperlink(at: address) {
+    if let link = followableLink(at: address) {
+      var line = "Command-click to open."
       if let tip = link.tooltip, !tip.isEmpty {
-        parts.append(tip)
+        line = tip + "\n" + line
       } else if let target = link.target {
-        parts.append(target)
+        line = (target.hasPrefix("mailto:") ? String(target.dropFirst(7)) : target) + "\n" + line
       } else if let location = link.location {
-        parts.append("Go to \(location)")
+        line = "Go to \(location)\n" + line
       }
+      parts.append(line)
     }
     return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
-  }
-
-  /// Opens a web or mail link in the browser or mail app, or selects the place a workbook link
-  /// names. Other kinds of target, such as files, are not opened.
-  func openHyperlink(_ link: CellHyperlink) {
-    if let target = link.target, let url = URL(string: target),
-      let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme)
-    {
-      NSWorkspace.shared.open(url)
-      return
-    }
-    guard let location = link.location else { return }
-    let ref = A1Reference.parseFormulaRef(location.replacingOccurrences(of: "$", with: ""))
-    if let sheetName = ref?.sheet,
-      let index = workbook.sheets.firstIndex(where: {
-        $0.name.caseInsensitiveCompare(sheetName) == .orderedSame
-      }), !workbook.sheets[index].isHidden
-    {
-      selectSheet(at: index)
-    }
-    if let ref {
-      select(CellAddress(row: ref.row, col: ref.col))
-    }
   }
 }
 

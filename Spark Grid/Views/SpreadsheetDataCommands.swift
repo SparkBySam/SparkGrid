@@ -54,6 +54,31 @@ struct SpreadsheetDataCommands: Commands {
 
       Divider()
 
+      Button("Text to Columns…") {
+        guard let viewModel else { return }
+        TextToColumnsPresenter.present(from: viewModel)
+      }
+      .disabled(viewModel == nil)
+
+      Divider()
+
+      Button("PivotTable…") {
+        guard let viewModel else { return }
+        PivotPresenter.create(from: viewModel)
+      }
+      .disabled(viewModel?.newPivotSourceRange == nil)
+      Button("Edit PivotTable…") {
+        guard let viewModel else { return }
+        PivotPresenter.editSelected(from: viewModel)
+      }
+      .disabled(viewModel?.hasPivots != true)
+      Button("Refresh PivotTable") { viewModel?.refreshPivots() }
+        .disabled(viewModel?.hasPivots != true)
+      Button("PivotChart") { viewModel?.beginPivotChart() }
+        .disabled(viewModel?.canMakePivotChart != true)
+
+      Divider()
+
       Button("Find Duplicates…") { viewModel?.isDuplicatesSheetPresented = true }
         .disabled(viewModel == nil)
       Button("Highlight Duplicates") { viewModel?.highlightRepeats(unique: false) }

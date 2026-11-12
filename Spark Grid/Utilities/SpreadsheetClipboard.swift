@@ -10,6 +10,26 @@ enum SpreadsheetClipboard {
   static let conditionalFormatType = NSPasteboard.PasteboardType(
     "app.sparkgrid.conditional-formats")
 
+  /// Every copied cell's formula, result and format, for Paste Special and for a paste that keeps
+  /// formats. Only Spark Grid reads it; other apps get the text.
+  static let cellsType = NSPasteboard.PasteboardType("app.sparkgrid.cells")
+
+  struct CellCopy: Codable, Equatable {
+    var raw: String
+    /// The result as typed text: what Paste Values writes.
+    var value: String
+    var format: CellFormat?
+  }
+
+  /// `rows[r][c]` is the cell at `origin + (r, c)`; rows a filter hid are left out.
+  struct CellsPayload: Codable, Equatable {
+    var originRow: Int
+    var originCol: Int
+    var rows: [[CellCopy]]
+    /// Each copied row's row number, so formulas adjust from where they came from.
+    var sourceRows: [Int]
+  }
+
   struct FormulaGridPayload: Codable, Equatable {
     var originRow: Int
     var originCol: Int
@@ -174,18 +194,21 @@ enum SpreadsheetClipboard {
 
   static func writeText(
     _ text: String,
-    conditionalFormats: ConditionalFormatClipboardPayload? = nil
+    conditionalFormats: ConditionalFormatClipboardPayload? = nil,
+    cells: CellsPayload? = nil
   ) {
     let board = NSPasteboard.general
     board.clearContents()
     board.setString(text, forType: .string)
     writeConditionalFormats(conditionalFormats, to: board)
+    writeCells(cells, to: board)
   }
 
   static func writeFormulaGrid(
     _ payload: FormulaGridPayload,
     tsv: String,
-    conditionalFormats: ConditionalFormatClipboardPayload? = nil
+    conditionalFormats: ConditionalFormatClipboardPayload? = nil,
+    cells: CellsPayload? = nil
   ) {
     let board = NSPasteboard.general
     board.clearContents()
@@ -194,6 +217,20 @@ enum SpreadsheetClipboard {
       board.setData(data, forType: formulaGridType)
     }
     writeConditionalFormats(conditionalFormats, to: board)
+    writeCells(cells, to: board)
+  }
+
+  /// The copied cells, when the clipboard's text is still the text Spark Grid wrote with them.
+  static func readCells() -> CellsPayload? {
+    let board = NSPasteboard.general
+    guard let data = board.data(forType: cellsType) else { return nil }
+    return try? JSONDecoder().decode(CellsPayload.self, from: data)
+  }
+
+  private static func writeCells(_ payload: CellsPayload?, to board: NSPasteboard) {
+    guard let payload, !payload.rows.isEmpty, let data = try? JSONEncoder().encode(payload)
+    else { return }
+    board.setData(data, forType: cellsType)
   }
 
   static func readFormulaGrid() -> FormulaGridPayload? {

@@ -54,6 +54,37 @@ struct SpreadsheetCommands: Commands {
         )
         .disabled(viewModel == nil)
 
+      Menu("Paste Special") {
+        Button("Paste Values") { viewModel?.pasteValues() }
+          .keyboardShortcut(
+            settings.keyEquivalent(for: .pasteValues),
+            modifiers: settings.eventModifiers(for: .pasteValues)
+          )
+        Button("Paste Formats") { viewModel?.pasteFormats() }
+        Button("Paste Transposed") { viewModel?.pasteTransposed() }
+      }
+      .disabled(viewModel == nil)
+
+      Button("Fill Down") { viewModel?.fillDown() }
+        .keyboardShortcut(
+          settings.keyEquivalent(for: .fillDown),
+          modifiers: settings.eventModifiers(for: .fillDown)
+        )
+        .disabled(viewModel == nil)
+      Button("Fill Right") { viewModel?.fillRight() }
+        .keyboardShortcut(
+          settings.keyEquivalent(for: .fillRight),
+          modifiers: settings.eventModifiers(for: .fillRight)
+        )
+        .disabled(viewModel == nil)
+
+      Menu("Clear") {
+        Button("Clear All") { viewModel?.clearAll() }
+        Button("Clear Contents") { viewModel?.clearContents() }
+        Button("Clear Formats") { viewModel?.clearFormats() }
+      }
+      .disabled(viewModel == nil)
+
       Button("Convert to Values") { viewModel?.convertSelectionToValues() }
         .keyboardShortcut(
           settings.keyEquivalent(for: .convertToValues),
