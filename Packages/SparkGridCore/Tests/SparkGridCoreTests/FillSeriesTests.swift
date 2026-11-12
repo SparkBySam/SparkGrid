@@ -64,6 +64,30 @@ final class FillSeriesTests: XCTestCase {
       to: &copied)
     XCTAssertEqual(copied.sheets[0].cell(at: CellAddress(row: 3, col: 0)).raw, "2")
   }
+
+  /// Option-drag, as in Excel: one number counts up; two numbers that would count are copied.
+  func testOptionDragCountsFromOneNumberAndCopiesASeries() {
+    var workbook = Workbook(sheets: [Sheet(name: "Data")])
+    workbook.sheets[0].setCell(Cell(raw: "1"), at: CellAddress(row: 0, col: 0))
+    workbook.sheets[0].setCell(Cell(raw: "5"), at: CellAddress(row: 0, col: 1))
+    workbook.sheets[0].setCell(Cell(raw: "6"), at: CellAddress(row: 1, col: 1))
+    let commands = WorkbookSession()
+    var one = workbook
+    _ = commands.apply(
+      id: "edit.fill",
+      arguments: ["sheet": "Data", "source": "A1", "end": "A4", "series": "alternate"], to: &one)
+    XCTAssertEqual(
+      (0...3).map { one.sheets[0].cell(at: CellAddress(row: $0, col: 0)).raw },
+      ["1", "2", "3", "4"])
+    var pair = workbook
+    _ = commands.apply(
+      id: "edit.fill",
+      arguments: ["sheet": "Data", "source": "B1:B2", "end": "B4", "series": "alternate"],
+      to: &pair)
+    XCTAssertEqual(
+      (0...3).map { pair.sheets[0].cell(at: CellAddress(row: $0, col: 1)).raw },
+      ["5", "6", "5", "6"])
+  }
 }
 
 /// Sorting by more than one column breaks ties with the next level.

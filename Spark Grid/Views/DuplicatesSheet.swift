@@ -52,12 +52,10 @@ struct DuplicatesSheet: View {
         }
         SparkDialogDivider()
         SparkDialogRow(label: "Find") {
-          Picker("", selection: $unique) {
-            Text("Repeated rows").tag(false)
-            Text("Rows that appear once").tag(true)
-          }
-          .labelsHidden()
-          .pickerStyle(.segmented)
+          SparkSegmentedPicker(
+            selection: $unique,
+            options: [(false, "Repeated rows"), (true, "Rows that appear once")]
+          )
           .frame(width: 280)
         }
       }

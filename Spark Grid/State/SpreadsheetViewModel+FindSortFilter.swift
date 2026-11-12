@@ -269,10 +269,11 @@ extension SpreadsheetViewModel {
     column: Int,
     direction: SortDirection,
     hasHeader: Bool,
-    then: [(column: Int, direction: SortDirection)] = []
+    then: [(column: Int, direction: SortDirection)] = [],
+    range given: CellRange? = nil
   ) {
     commitEditIfNeeded()
-    let range = effectiveSortRange()
+    let range = given ?? effectiveSortRange()
     let n = range.normalized
     guard n.maxRow >= n.minRow, n.maxCol >= n.minCol else { return }
     guard column >= n.minCol, column <= n.maxCol else { return }
@@ -285,6 +286,8 @@ extension SpreadsheetViewModel {
       start: CellAddress(row: n.minRow, col: n.minCol),
       end: CellAddress(row: n.maxRow, col: n.maxCol)
     ).a1Label
+    let formulasBefore = sortFormulaSnapshot(
+      sheetName: activeSheet.name, range: n, firstDataRow: firstDataRow)
     guard
       applyCommand(
         "data.sort",
@@ -302,8 +305,72 @@ extension SpreadsheetViewModel {
     else { return }
     registerSortUndo(
       sheetName: activeSheet.name, rangeLabel: rangeLabel, column: column, hasHeader: hasHeader,
-      firstDataRow: firstDataRow, appliedOrder: lastSortOrder, action: "Sort Range")
+      firstDataRow: firstDataRow, appliedOrder: lastSortOrder, formulasBefore: formulasBefore,
+      action: "Sort Range")
     notifyGridRefresh()
+  }
+
+  /// Toolbar Sort A to Z and Z to A: the selection, or the filled block around the cell, by the
+  /// active cell's column. A first row with no numbers is kept on top as a header.
+  func quickSort(ascending: Bool) {
+    commitEditIfNeeded()
+    var range = selectionRange
+    if selectionRange.isSingleCell, let region = contiguousRegion(around: selectionAnchor) {
+      range = region
+      // A total row under the table stays put. Sorted in with the rows, its SUM moves with it
+      // and points at the wrong rows, or off the top of the sheet.
+      if rangeEndsWithTotalRow(region) {
+        let r = region.normalized
+        range = CellRange(
+          start: CellAddress(row: r.minRow, col: r.minCol),
+          end: CellAddress(row: r.maxRow - 1, col: r.maxCol))
+      }
+    }
+    let n = range.normalized
+    guard n.maxRow > n.minRow else { return }
+    sortRange(
+      column: min(max(selectionAnchor.col, n.minCol), n.maxCol),
+      direction: ascending ? .ascending : .descending,
+      hasHeader: rangeLooksLikeItHasHeader(range),
+      range: range)
+  }
+
+  /// True when the range's last row sums up the rows above it: one of its formulas uses a
+  /// range of two or more of those rows, and the row above has no such formula in that column.
+  func rangeEndsWithTotalRow(_ range: CellRange) -> Bool {
+    let n = range.normalized
+    guard n.maxRow - n.minRow >= 2 else { return false }
+    let sheet = activeSheet
+    func spansRowsAbove(_ raw: String) -> Bool {
+      guard FormulaSyntax.isFormula(raw) else { return false }
+      for match in raw.matches(of: Self.rowSpanReference) {
+        guard let a = Int(match.1), let b = Int(match.2) else { continue }
+        let top = min(a, b) - 1
+        let bottom = max(a, b) - 1
+        if bottom > top, top >= n.minRow, bottom < n.maxRow { return true }
+      }
+      return false
+    }
+    for col in n.minCol...n.maxCol {
+      let last = sheet.cell(at: CellAddress(row: n.maxRow, col: col)).raw
+      let above = sheet.cell(at: CellAddress(row: n.maxRow - 1, col: col)).raw
+      if spansRowsAbove(last), !spansRowsAbove(above) { return true }
+    }
+    return false
+  }
+
+  /// A1:B9-style references; captures the two row numbers.
+  nonisolated(unsafe) private static let rowSpanReference =
+    /\$?[A-Za-z]{1,3}\$?(\d+):\$?[A-Za-z]{1,3}\$?(\d+)/
+
+  /// A first row with no numbers in it reads as a header.
+  func rangeLooksLikeItHasHeader(_ range: CellRange) -> Bool {
+    let n = range.normalized
+    guard n.maxRow > n.minRow else { return false }
+    for col in n.minCol...n.maxCol {
+      if case .number = displayValue(at: CellAddress(row: n.minRow, col: col)) { return false }
+    }
+    return true
   }
 
   func effectiveSortRange() -> CellRange {
@@ -604,6 +671,8 @@ extension SpreadsheetViewModel {
     let firstDataRow = n.minRow + 1
     guard firstDataRow < n.maxRow else { return }
     let memory = currentFilterSortMemory()
+    let formulasBefore = sortFormulaSnapshot(
+      sheetName: activeSheet.name, range: n, firstDataRow: firstDataRow)
     var arguments = [
       "sheet": activeSheet.name,
       "range": range.a1Label,
@@ -624,7 +693,8 @@ extension SpreadsheetViewModel {
       filterSortMemory = nil
       registerSortUndo(
         sheetName: activeSheet.name, rangeLabel: range.a1Label, column: column, hasHeader: true,
-        firstDataRow: firstDataRow, appliedOrder: lastSortOrder, action: "Unsort")
+        firstDataRow: firstDataRow, appliedOrder: lastSortOrder, formulasBefore: formulasBefore,
+        action: "Unsort")
     } else {
       guard applyCommand("data.sort", arguments, incremental: false) else { return }
       let moved = lastSortOrder
@@ -633,7 +703,8 @@ extension SpreadsheetViewModel {
         memory.map { earlier in moved.map { earlier.originRows[$0 - firstDataRow] } } ?? moved
       registerSortUndo(
         sheetName: activeSheet.name, rangeLabel: range.a1Label, column: column, hasHeader: true,
-        firstDataRow: firstDataRow, appliedOrder: moved, action: "Sort")
+        firstDataRow: firstDataRow, appliedOrder: moved, formulasBefore: formulasBefore,
+        action: "Sort")
       filterSortMemory = FilterSortMemory(
         sheetID: activeSheet.id, range: range, column: column, ascending: ascending,
         originRows: originRows)
@@ -669,6 +740,8 @@ extension SpreadsheetViewModel {
     let kept = (firstDataRow...n.maxRow).filter { !repeatSet.contains($0) }
 
     let rangeLabel = range.a1Label
+    let formulasBefore = sortFormulaSnapshot(
+      sheetName: activeSheet.name, range: n, firstDataRow: firstDataRow)
     undoManager?.beginUndoGrouping()
     // The repeats move below the rows that stay, then those bottom rows are cleared.
     guard
@@ -687,7 +760,7 @@ extension SpreadsheetViewModel {
     registerSortUndo(
       sheetName: activeSheet.name, rangeLabel: rangeLabel, column: n.minCol,
       hasHeader: hasHeader, firstDataRow: firstDataRow, appliedOrder: lastSortOrder,
-      action: "Remove Duplicates")
+      formulasBefore: formulasBefore, action: "Remove Duplicates")
     clearRange(
       CellRange(
         start: CellAddress(row: n.maxRow - repeats.count + 1, col: n.minCol),
@@ -702,9 +775,13 @@ extension SpreadsheetViewModel {
   /// Undo for a sort keeps the row order, not copies of the workbook. On a 15,000-row sheet each
   /// copy is hundreds of megabytes, and the undo history kept one pair for every sort.
   /// `appliedOrder[i]` is the row whose data the sort moved into `firstDataRow + i`.
+  ///
+  /// A sort rewrites each moved formula as if it were copied, and a reference pushed off the top
+  /// of the sheet becomes #REF!, which putting the rows back cannot undo. So the undo also puts
+  /// back the formulas the rows had before (`formulasBefore`, by address).
   private func registerSortUndo(
     sheetName: String, rangeLabel: String, column: Int, hasHeader: Bool, firstDataRow: Int,
-    appliedOrder: [Int], action: String
+    appliedOrder: [Int], formulasBefore: [CellAddress: String], action: String
   ) {
     guard !appliedOrder.isEmpty else { return }
     var restoring = Array(repeating: 0, count: appliedOrder.count)
@@ -714,6 +791,12 @@ extension SpreadsheetViewModel {
     undoManager?.registerUndo(withTarget: self) { target in
       // Puts each row back, then offers the same sort again as the redo.
       target.filterSortMemory = nil
+      let formulasNow =
+        A1Reference.parseRange(rangeLabel).map {
+          target.sortFormulaSnapshot(
+            sheetName: sheetName, range: CellRange(start: $0.0, end: $0.1).normalized,
+            firstDataRow: firstDataRow)
+        } ?? [:]
       guard
         target.applyCommand(
           "data.sort",
@@ -724,12 +807,58 @@ extension SpreadsheetViewModel {
           ],
           incremental: false)
       else { return }
+      target.restoreSortedFormulas(formulasBefore, sheetName: sheetName)
       target.registerSortUndo(
         sheetName: sheetName, rangeLabel: rangeLabel, column: column, hasHeader: hasHeader,
-        firstDataRow: firstDataRow, appliedOrder: restoring, action: action)
+        firstDataRow: firstDataRow, appliedOrder: restoring, formulasBefore: formulasNow,
+        action: action)
       target.notifyGridRefresh()
     }
     undoManager?.setActionName(action)
+  }
+
+  /// The formulas in a sort's data rows, by address.
+  private func sortFormulaSnapshot(
+    sheetName: String, range n: (minRow: Int, maxRow: Int, minCol: Int, maxCol: Int),
+    firstDataRow: Int
+  )
+    -> [CellAddress: String]
+  {
+    guard firstDataRow <= n.maxRow,
+      let sheet = workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheetName) == .orderedSame
+      })
+    else { return [:] }
+    var formulas: [CellAddress: String] = [:]
+    for row in firstDataRow...n.maxRow {
+      for col in n.minCol...n.maxCol {
+        let address = CellAddress(row: row, col: col)
+        if let raw = sheet.cells[address]?.raw, FormulaSyntax.isFormula(raw) {
+          formulas[address] = raw
+        }
+      }
+    }
+    return formulas
+  }
+
+  /// Writes saved formulas back after rows return to their places.
+  private func restoreSortedFormulas(_ formulas: [CellAddress: String], sheetName: String) {
+    guard !formulas.isEmpty,
+      let index = workbook.sheets.firstIndex(where: {
+        $0.name.caseInsensitiveCompare(sheetName) == .orderedSame
+      })
+    else { return }
+    var sheet = workbook.sheets[index]
+    var changed = false
+    for (address, raw) in formulas {
+      guard var cell = sheet.cells[address], cell.raw != raw else { continue }
+      cell.raw = raw
+      sheet.cells[address] = cell
+      changed = true
+    }
+    guard changed else { return }
+    sheet.rebuildFormulaIngestIndex()
+    workbook.sheets[index] = sheet
   }
 
   /// The remembered sort, only while it still fits the active sheet's filter.

@@ -243,7 +243,9 @@ public nonisolated struct FormulaLexer {
       }
       return .boolean(upper == "TRUE")
     }
-    if A1Reference.isValidAddressToken(text) {
+    // A name that reads as a cell but is followed by "(" is a function, as in LOG10(100).
+    if A1Reference.isValidAddressToken(text), text.contains("$") || !nextNonWhitespaceIsOpenParen()
+    {
       return .cellRef(text)
     }
     return .identifier(upper)

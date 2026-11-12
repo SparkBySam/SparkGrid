@@ -153,6 +153,9 @@ struct SpreadsheetWindowView: View {
             SpreadsheetGridView(viewModel: viewModel)
               .frame(width: gridWidth)
               .frame(maxHeight: .infinity)
+              .overlay(alignment: .bottom) {
+                ProtectionNoticeBanner(viewModel: viewModel)
+              }
             if hasCharts {
               Rectangle()
                 .fill(SpreadsheetChrome.chromeDividerColor)
@@ -194,6 +197,16 @@ struct SpreadsheetWindowView: View {
       }
     ) {
       InsertChartSheet(viewModel: viewModel)
+    }
+    .alert(
+      "PivotTable",
+      isPresented: Binding(
+        get: { viewModel.pivotNotice != nil },
+        set: { if !$0 { viewModel.pivotNotice = nil } })
+    ) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text(viewModel.pivotNotice ?? "")
     }
     .sheet(isPresented: $viewModel.isDuplicatesSheetPresented) {
       DuplicatesSheet(viewModel: viewModel)
@@ -274,4 +287,42 @@ struct SpreadsheetWindowView: View {
 
 #Preview {
   SpreadsheetWindowView(store: SpreadsheetDocumentStore())
+}
+
+/// Says why protection refused a change, over the bottom of the grid, and goes away by itself.
+/// It takes no focus, so typing and the sheet you are on stay as they were.
+private struct ProtectionNoticeBanner: View {
+  var viewModel: SpreadsheetViewModel
+
+  var body: some View {
+    if let notice = viewModel.protectionNotice {
+      HStack(spacing: 8) {
+        Image(systemName: "lock.fill")
+          .foregroundStyle(.secondary)
+        Text(notice)
+          .font(.callout)
+          .fixedSize(horizontal: false, vertical: true)
+        Button {
+          viewModel.protectionNotice = nil
+        } label: {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.borderless)
+        .help("Close")
+      }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 9)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+      .shadow(radius: 6, y: 2)
+      .padding(16)
+      .transition(.move(edge: .bottom).combined(with: .opacity))
+      .accessibilityElement(children: .combine)
+      .accessibilityAddTraits(.isStaticText)
+      .task(id: notice) {
+        try? await Task.sleep(for: .seconds(4))
+        if viewModel.protectionNotice == notice { viewModel.protectionNotice = nil }
+      }
+    }
+  }
 }

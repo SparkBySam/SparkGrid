@@ -45,10 +45,12 @@ public nonisolated enum StreamingWorksheet {
     data: Data,
     sharedTexts: [String?],
     formats: [CellFormat?]
-  ) -> (conditionalFormatting: String, kept: [String: [String]]) {
+  ) -> (
+    conditionalFormatting: String, kept: [String: [String]], arrays: [CellAddress: CellRange]
+  ) {
     data.withUnsafeBytes { rawBuffer in
       let raw = rawBuffer.bindMemory(to: UInt8.self)
-      guard let base = raw.baseAddress, raw.count > 0 else { return ("", [:]) }
+      guard let base = raw.baseAddress, raw.count > 0 else { return ("", [:], [:]) }
       var scanner = Scanner(
         bytes: base,
         count: raw.count,
@@ -60,7 +62,7 @@ public nonisolated enum StreamingWorksheet {
       for (name, xml) in scanner.keptElements {
         kept[name.description, default: []].append(xml)
       }
-      return (conditionalFormatting, kept)
+      return (conditionalFormatting, kept, scanner.arrayRefs)
     }
   }
 
@@ -97,6 +99,8 @@ public nonisolated enum StreamingWorksheet {
     var styleKeepsFormat: [Bool] = []
     /// Worksheet elements the app keeps for the next save, by local name, as written.
     var keptElements: [(name: StaticString, xml: String)] = []
+    /// Array formulas and the cells their results fill, as `<f t="array" ref="…">` gives them.
+    var arrayRefs: [CellAddress: CellRange] = [:]
 
     /// Names of unprefixed worksheet elements kept for the next save.
     func keptElementName(_ tag: Tag) -> StaticString? {
@@ -293,6 +297,7 @@ public nonisolated enum StreamingWorksheet {
           formulaBody: "",
           formulaType: nil,
           formulaSI: nil,
+          formulaRef: nil,
           valueText: nil,
           valueWasPlain: true,
           inlineText: nil,
@@ -312,6 +317,7 @@ public nonisolated enum StreamingWorksheet {
       var formulaBody = ""
       var formulaType: String?
       var formulaSI: Int?
+      var formulaRef: String?
       var valueText: String?
       var valueWasPlain = true
 
@@ -321,6 +327,7 @@ public nonisolated enum StreamingWorksheet {
         sawFormula = true
         formulaType = attribute(formula, "t")
         formulaSI = attributeRange(formula, "si").flatMap { parseInt($0.0, $0.1) }
+        if formulaType == "array" { formulaRef = attribute(formula, "ref") }
         if formula.isSelfClose {
           cursor = formula.end
         } else {
@@ -380,6 +387,7 @@ public nonisolated enum StreamingWorksheet {
         formulaBody: formulaBody,
         formulaType: formulaType,
         formulaSI: formulaSI,
+        formulaRef: formulaRef,
         valueText: valueText,
         valueWasPlain: valueWasPlain,
         inlineText: nil,
@@ -391,12 +399,13 @@ public nonisolated enum StreamingWorksheet {
       return true
     }
 
-    func storeFastCell(
+    mutating func storeFastCell(
       open: Tag,
       sawFormula: Bool,
       formulaBody: String,
       formulaType: String?,
       formulaSI: Int?,
+      formulaRef: String?,
       valueText: String?,
       valueWasPlain: Bool,
       inlineText: String?,
@@ -434,6 +443,11 @@ public nonisolated enum StreamingWorksheet {
       cell.format = format
       if let formulaRaw {
         cell.raw = formulaRaw
+        if let formulaRef, let range = XLSXCodec.parseCellRange(formulaRef),
+          range.start != range.end
+        {
+          arrayRefs[address] = range
+        }
         if let cache = formulaCache(
           cellType: cellType,
           valueText: valueText,
@@ -480,6 +494,7 @@ public nonisolated enum StreamingWorksheet {
       var formulaBody = ""
       var formulaType: String?
       var formulaSI: Int?
+      var formulaRef: String?
       var valueText: String?
       var valueWasPlain = true
       var inlineText: String?
@@ -502,6 +517,7 @@ public nonisolated enum StreamingWorksheet {
             sawFormula = true
             formulaType = attribute(inner, "t")
             formulaSI = attributeRange(inner, "si").flatMap { parseInt($0.0, $0.1) }
+            if formulaType == "array" { formulaRef = attribute(inner, "ref") }
             if inner.isSelfClose {
               formulaBody = ""
               index = inner.end
@@ -564,6 +580,11 @@ public nonisolated enum StreamingWorksheet {
       cell.format = format
       if let formulaRaw {
         cell.raw = formulaRaw
+        if let formulaRef, let range = XLSXCodec.parseCellRange(formulaRef),
+          range.start != range.end
+        {
+          arrayRefs[address] = range
+        }
         if let cache = formulaCache(
           cellType: cellType,
           valueText: valueText,
@@ -1284,9 +1305,31 @@ public nonisolated enum StreamingWorksheet {
 
 /// Uncompressed zip entries opened once for a streaming import.
 public nonisolated final class ZipPackage: @unchecked Sendable {
-  private static let lock = NSLock()
-  nonisolated(unsafe) private static var current: ZipPackage?
+  /// Which archive a package was unpacked from: where its bytes are and how many there are.
+  /// A package keeps its archive, so no other archive can hold those bytes while it is in use.
+  private struct ArchiveKey: Hashable {
+    var address: UInt
+    var count: Int
 
+    init?(_ data: Data) {
+      // A very short Data keeps its bytes inside itself, at no fixed address. No archive with
+      // a part in it is this short.
+      guard data.count >= 64,
+        let address = data.withUnsafeBytes({ $0.baseAddress })
+      else { return nil }
+      self.address = UInt(bitPattern: address)
+      self.count = data.count
+    }
+  }
+
+  private static let lock = NSLock()
+  /// Packages in use, by archive. Two files can be loading at once, on any threads, so a read
+  /// names its archive and gets that archive's parts or nothing.
+  nonisolated(unsafe) private static var inUse: [ArchiveKey: (package: ZipPackage, uses: Int)] =
+    [:]
+
+  private let archiveData: Data
+  private let key: ArchiveKey?
   private let files: [String: Data]
 
   public init(archiveData: Data) throws {
@@ -1306,6 +1349,8 @@ public nonisolated final class ZipPackage: @unchecked Sendable {
         files[entry.path] = extracted
       }
     }
+    self.archiveData = archiveData
+    self.key = ArchiveKey(archiveData)
     self.files = files
   }
 
@@ -1317,25 +1362,33 @@ public nonisolated final class ZipPackage: @unchecked Sendable {
     return nil
   }
 
+  /// Serves reads of this package's archive from memory while `body` runs, on every thread.
+  /// Reads of any other archive are untouched.
   public static func use<T>(_ package: ZipPackage, _ body: () throws -> T) rethrows -> T {
+    guard let key = package.key else { return try body() }
     lock.lock()
-    let previous = current
-    current = package
+    // A second package unpacked from the same archive holds the same parts; the first serves.
+    inUse[key, default: (package, 0)].uses += 1
     lock.unlock()
     defer {
       lock.lock()
-      current = previous
+      if let entry = inUse[key] {
+        inUse[key] = entry.uses > 1 ? (entry.package, entry.uses - 1) : nil
+      }
       lock.unlock()
     }
     return try body()
   }
 
-  /// `(active, data)`. `active` is false when no streaming import is on the stack.
-  public static func cachedEntry(at entryPath: String) -> (Bool, Data?) {
+  /// `(active, data)` for a part of `archiveData`. `active` is false when no import of that
+  /// archive is running; the caller then opens the archive itself.
+  public static func cachedEntry(in archiveData: Data, at entryPath: String) -> (Bool, Data?) {
+    guard let key = ArchiveKey(archiveData) else { return (false, nil) }
     lock.lock()
-    defer { lock.unlock() }
-    guard let current else { return (false, nil) }
-    return (true, current.data(for: entryPath))
+    let package = inUse[key]?.package
+    lock.unlock()
+    guard let package else { return (false, nil) }
+    return (true, package.data(for: entryPath))
   }
 }
 

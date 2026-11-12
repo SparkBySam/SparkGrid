@@ -374,6 +374,13 @@ private nonisolated final class EvaluationContext {
     evaluator.namedRangeLookup = { [self] name in
       self.namedRangeExpr(named: name)
     }
+    evaluator.pivotLookup = { [self] sheet, address in
+      self.workbook.sparkPivot(on: sheet, containing: address)
+    }
+    evaluator.spillBlocked = { [self] sheet, address in
+      self.workbook.sheets.first { $0.name.caseInsensitiveCompare(sheet) == .orderedSame }?
+        .fileExtras.blockedSpills.contains(address) ?? false
+    }
     evaluator.sheetExtent = { [self] sheetName in
       self.extent(for: sheetName)
     }
@@ -405,7 +412,7 @@ private nonisolated final class EvaluationContext {
       }
       return evaluateFormula(at: FormulaCoord(sheetID: sheetID, row: row, col: col))
     }
-    return CellValue.fromLiteralRaw(cell.raw)
+    return cell.literalValue
   }
 
   func extent(for sheetName: String?) -> (maxRow: Int, maxCol: Int) {

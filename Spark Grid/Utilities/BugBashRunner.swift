@@ -1,6 +1,7 @@
 import AppKit
 import CoreXLSX
 import Foundation
+import PDFKit
 import SparkGridCore
 import SwiftUI
 
@@ -62,6 +63,23 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { largeEmptyFormatApply() })
       results.append(cfParseNumber())
       results.append(MainActor.assumeIsolated { sortRemapsMerge() })
+      results.append(MainActor.assumeIsolated { sortUndoKeepsFormulas() })
+      results.append(MainActor.assumeIsolated { textToColumnsSplitsAndUndoes() })
+      results.append(MainActor.assumeIsolated { rowGroupsFoldAndSave() })
+      results.append(MainActor.assumeIsolated { sheetProtectionGuardsLockedCells() })
+      results.append(MainActor.assumeIsolated { printAreaAndPageBreaks() })
+      results.append(MainActor.assumeIsolated { pdfExportKeepsPages() })
+      results.append(MainActor.assumeIsolated { scrollWhileEditingKeepsColumnText() })
+      results.append(MainActor.assumeIsolated { editThenTileScrollShowsEdit() })
+      results.append(MainActor.assumeIsolated { linksInsertFollowRemove() })
+      results.append(MainActor.assumeIsolated { pivotCreateDrawRefreshUndo() })
+      results.append(MainActor.assumeIsolated { pivotGroupsDatesByMonth() })
+      results.append(MainActor.assumeIsolated { filePivotRefreshes() })
+      results.append(MainActor.assumeIsolated { arrayFormulasSpill() })
+      results.append(MainActor.assumeIsolated { insertRowUndoRedoAlternates() })
+      results.append(MainActor.assumeIsolated { undoRedoAlternatesForEveryStep() })
+      results.append(MainActor.assumeIsolated { spillsSurviveMovingCells() })
+      results.append(MainActor.assumeIsolated { mergeLeavesNoSavedResult() })
       results.append(MainActor.assumeIsolated { filterPopoverModel() })
       results.append(MainActor.assumeIsolated { commandArrowJumps() })
       results.append(MainActor.assumeIsolated { sheetTabMove() })
@@ -164,13 +182,29 @@ typealias Cell = SparkGridCore.Cell
     private static func sharedFormulaExpansionManyCells() -> Result {
       let name = "shared formula expansion many cells"
       do {
-        let url = try sandboxReadableWorkbookURL(
-          cacheFileName: "shared_formula_many_cells.xlsx",
-          fixturesFileName: "shared_formula_many_cells.xlsx",
-          bundleResourceName: "shared_formula_many_cells"
-        )
+        // Built here: the sandbox cannot read Fixtures/shared_formula_many_cells.xlsx. Same
+        // shape: 3,500 value cells in one row, then a shared formula and its follower.
+        var cells = ""
+        for n in 1...3500 { cells += #"<c r="Z\#(n)"><v>\#(n)</v></c>"# }
+        cells += #"<c r="AA1"><f t="shared" ref="AA1:AA2" si="5">Z1+1</f></c>"#
+        cells += #"<c r="AA2"><f t="shared" si="5"/></c>"#
+        let sheetXML = """
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">\
+          <sheetData><row r="1">\(cells)</row></sheetData></worksheet>
+          """
+        var base = Sheet(name: "Sheet1")
+        base.setCell(Cell(raw: "1"), at: .origin)
+        let exported = try XLSXCodec.exportWorkbook(Workbook(sheets: [base]))
+        guard
+          let data = XLSXCodec.replacingZipEntry(
+            archiveData: exported, entryPath: "xl/worksheets/sheet1.xml",
+            with: Data(sheetXML.utf8))
+        else {
+          return Result(name: name, passed: false, detail: "could not build the workbook")
+        }
         let start = CFAbsoluteTimeGetCurrent()
-        let workbook = try XLSXCodec.importWorkbook(from: url)
+        let workbook = try XLSXCodec.importWorkbook(from: data)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         guard elapsed < 15 else {
           return Result(
@@ -1282,6 +1316,1227 @@ typealias Cell = SparkGridCore.Cell
         )
       }
       return Result(name: "sort remap merge/CF/chart", passed: true, detail: "rows remapped")
+    }
+
+    /// A sort that pushes a SUM off the top of the sheet, then Undo: the formulas come back
+    /// as they were. Quick sort leaves the total row under the table.
+    @MainActor
+    private static func sortUndoKeepsFormulas() -> Result {
+      let name = "sort undo keeps formulas"
+      var sheet = Sheet(name: "Pipeline")
+      sheet.setCell(Cell(raw: "Account"), at: CellAddress(row: 0, col: 0))
+      sheet.setCell(Cell(raw: "Close"), at: CellAddress(row: 0, col: 1))
+      let closes = ["0.9", "0.8", "0.7", "0.6", "0.5", "0.4", "0.3", "0.2"]
+      for (i, close) in closes.enumerated() {
+        sheet.setCell(Cell(raw: "Deal \(i)"), at: CellAddress(row: i + 1, col: 0))
+        sheet.setCell(Cell(raw: close), at: CellAddress(row: i + 1, col: 1))
+      }
+      let total = CellAddress(row: 9, col: 1)
+      sheet.setCell(Cell(raw: "Total"), at: CellAddress(row: 9, col: 0))
+      sheet.setCell(Cell(raw: "=SUM(B2:B9)"), at: total)
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+
+      // Quick sort from a cell in the table leaves the total row where it is.
+      vm.select(CellAddress(row: 3, col: 1))
+      undo.beginUndoGrouping()
+      vm.quickSort(ascending: true)
+      undo.endUndoGrouping()
+      guard vm.activeSheet.cell(at: total).raw == "=SUM(B2:B9)",
+        vm.activeSheet.cell(at: CellAddress(row: 1, col: 1)).raw == "0.2"
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "quick sort moved the total: \(vm.activeSheet.cell(at: total).raw)")
+      }
+      undo.undo()
+
+      // Sorting the whole block moves the total to the top, off the sheet; Undo restores it.
+      undo.beginUndoGrouping()
+      vm.sortRange(
+        column: 1, direction: .ascending, hasHeader: true,
+        range: CellRange(start: .origin, end: total))
+      undo.endUndoGrouping()
+      undo.undo()
+      let back = vm.activeSheet.cell(at: total).raw
+      guard back == "=SUM(B2:B9)",
+        vm.activeSheet.cell(at: CellAddress(row: 1, col: 1)).raw == "0.9"
+      else {
+        return Result(name: name, passed: false, detail: "after undo the total reads \(back)")
+      }
+      undo.redo()
+      undo.undo()
+      guard vm.activeSheet.cell(at: total).raw == "=SUM(B2:B9)" else {
+        return Result(name: name, passed: false, detail: "redo then undo lost the total")
+      }
+      return Result(name: name, passed: true, detail: "total row kept and restored")
+    }
+
+    /// Text to Columns splits "Last, First, Age" into three columns, keeps a formula row, and
+    /// one Undo puts the column and the cells beside it back.
+    @MainActor
+    private static func textToColumnsSplitsAndUndoes() -> Result {
+      let name = "text to columns"
+      var sheet = Sheet(name: "Names")
+      sheet.setCell(Cell(raw: "Lovelace,Ada,36"), at: CellAddress(row: 0, col: 0))
+      sheet.setCell(Cell(raw: "\"Hopper, Jr\",Grace,85"), at: CellAddress(row: 1, col: 0))
+      sheet.setCell(Cell(raw: "=1+1"), at: CellAddress(row: 2, col: 0))
+      sheet.setCell(Cell(raw: "keep"), at: CellAddress(row: 2, col: 1))
+      sheet.setCell(Cell(raw: "old"), at: CellAddress(row: 0, col: 2))
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      vm.select(.origin)
+      guard let source = vm.textToColumnsSource(), source.normalized.maxRow == 2 else {
+        return Result(name: name, passed: false, detail: "source range not found")
+      }
+      undo.beginUndoGrouping()
+      vm.applyTextToColumns(source, options: .init(delimiters: [","]))
+      undo.endUndoGrouping()
+      func raw(_ r: Int, _ c: Int) -> String {
+        vm.activeSheet.cell(at: CellAddress(row: r, col: c)).raw
+      }
+      let got = [raw(0, 0), raw(0, 1), raw(0, 2), raw(1, 0), raw(1, 2), raw(2, 0), raw(2, 1)]
+      guard got == ["Lovelace", "Ada", "36", "Hopper, Jr", "85", "=1+1", "keep"] else {
+        return Result(name: name, passed: false, detail: "split \(got)")
+      }
+      undo.undo()
+      guard raw(0, 0) == "Lovelace,Ada,36", raw(0, 1).isEmpty, raw(0, 2) == "old",
+        raw(2, 1) == "keep"
+      else {
+        return Result(name: name, passed: false, detail: "undo left \(raw(0, 0)) \(raw(0, 2))")
+      }
+      // Fixed width: lined-up text splits at the suggested breaks.
+      var fixed = Sheet(name: "Fixed")
+      let lines = ["Alex   Smith   42", "Bo     Jones   7"]
+      for (row, line) in lines.enumerated() {
+        fixed.setCell(Cell(raw: line), at: CellAddress(row: row, col: 0))
+      }
+      let fixedModel = SpreadsheetViewModel(workbook: Workbook(sheets: [fixed]))
+      fixedModel.undoManager = UndoManager()
+      let breaks = TextSplitter.suggestedBreaks(lines)
+      fixedModel.applyTextToColumns(
+        CellRange(start: .origin, end: CellAddress(row: 1, col: 0)),
+        options: .fixedWidth(breaks))
+      let pieces = (0..<3).map {
+        fixedModel.activeSheet.cell(at: CellAddress(row: 1, col: $0)).raw
+      }
+      guard breaks == [7, 15], pieces == ["Bo", "Jones", "7"] else {
+        return Result(name: name, passed: false, detail: "fixed width \(breaks) \(pieces)")
+      }
+      return Result(
+        name: name, passed: true, detail: "split, formula row kept, undone, fixed width")
+    }
+
+    /// Rows 2-5 grouped with 3-4 inside: fold the inner group, fold and unfold the outer one,
+    /// and the inner stays folded. The levels survive a save. Ungroup shows the rows again.
+    @MainActor
+    private static func rowGroupsFoldAndSave() -> Result {
+      let name = "row groups fold and save"
+      var sheet = Sheet(name: "Outline")
+      for row in 0..<8 { sheet.setCell(Cell(raw: "\(row + 1)"), at: CellAddress(row: row, col: 0)) }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      vm.selectRange(from: CellAddress(row: 1, col: 0), to: CellAddress(row: 4, col: 0))
+      step { vm.groupSelection(.rows) }
+      vm.selectRange(from: CellAddress(row: 2, col: 0), to: CellAddress(row: 3, col: 0))
+      step { vm.groupSelection(.rows) }
+      let groups = vm.outlineGroups(.rows)
+      guard
+        groups == [
+          .init(start: 1, end: 4, level: 1), .init(start: 2, end: 3, level: 2),
+        ]
+      else { return Result(name: name, passed: false, detail: "groups \(groups)") }
+      step { vm.toggleOutlineGroup(groups[1], .rows) }
+      step { vm.toggleOutlineGroup(groups[0], .rows) }
+      guard vm.activeSheet.fileExtras.hiddenRows == [1, 2, 3, 4] else {
+        return Result(
+          name: name, passed: false,
+          detail: "outer fold hid \(vm.activeSheet.fileExtras.hiddenRows.sorted())")
+      }
+      step { vm.toggleOutlineGroup(groups[0], .rows) }
+      guard vm.activeSheet.fileExtras.hiddenRows == [2, 3] else {
+        return Result(
+          name: name, passed: false,
+          detail: "unfold left \(vm.activeSheet.fileExtras.hiddenRows.sorted()) hidden")
+      }
+      do {
+        let data = try XLSXCodec.exportWorkbook(vm.workbook)
+        let back = try XLSXCodec.importWorkbook(from: data).activeSheet.fileExtras
+        guard back.rowOutlineLevels == [1: 1, 2: 2, 3: 2, 4: 1], back.hiddenRows == [2, 3] else {
+          return Result(name: name, passed: false, detail: "saved levels \(back.rowOutlineLevels)")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      vm.selectRange(from: CellAddress(row: 1, col: 0), to: CellAddress(row: 4, col: 0))
+      step { vm.ungroupSelection(.rows) }
+      step { vm.ungroupSelection(.rows) }
+      guard vm.activeSheet.fileExtras.rowOutlineLevels.isEmpty,
+        vm.activeSheet.fileExtras.hiddenRows.isEmpty
+      else {
+        return Result(name: name, passed: false, detail: "ungroup left levels or hidden rows")
+      }
+      undo.undo()
+      guard vm.activeSheet.fileExtras.rowOutlineLevels == [2: 1, 3: 1] else {
+        return Result(
+          name: name, passed: false,
+          detail: "undo ungroup gave \(vm.activeSheet.fileExtras.rowOutlineLevels)")
+      }
+      // Level buttons: 1 folds every group, the last shows everything.
+      step { vm.showOutlineLevelButton(1, .rows) }
+      let foldedAtOne = vm.activeSheet.fileExtras.hiddenRows
+      step { vm.showOutlineLevelButton(2, .rows) }
+      guard vm.outlineDepth(.rows) == 1, foldedAtOne == [2, 3],
+        vm.activeSheet.fileExtras.hiddenRows.isEmpty
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "level 1 hid \(foldedAtOne), level 2 left \(vm.activeSheet.fileExtras.hiddenRows)"
+        )
+      }
+      return Result(
+        name: name, passed: true, detail: "nested fold kept, saved, ungrouped, levels shown")
+    }
+
+    /// B1 unlocked, sheet protected with a password: A1 and formatting are refused, B1 takes
+    /// typing, the wrong password fails, and protection plus the unlocked cell survive a save.
+    @MainActor
+    private static func sheetProtectionGuardsLockedCells() -> Result {
+      let name = "sheet protection"
+      var sheet = Sheet(name: "Inputs")
+      sheet.setCell(Cell(raw: "fixed"), at: CellAddress(row: 0, col: 0))
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      vm.undoManager = UndoManager()
+      let a1 = CellAddress(row: 0, col: 0)
+      let b1 = CellAddress(row: 0, col: 1)
+      vm.select(b1)
+      vm.setSelectionLocked(false)
+      vm.protectSheet(password: "secret")
+      guard vm.isSheetProtected, vm.sheetProtectionHasPassword else {
+        return Result(name: name, passed: false, detail: "protection not on")
+      }
+      vm.setCellValue("changed", at: a1)
+      guard vm.activeSheet.cell(at: a1).raw == "fixed", vm.protectionNotice != nil else {
+        return Result(name: name, passed: false, detail: "locked A1 changed")
+      }
+      vm.protectionNotice = nil
+      vm.setCellValue("typed", at: b1)
+      guard vm.activeSheet.cell(at: b1).raw == "typed", vm.protectionNotice == nil else {
+        return Result(name: name, passed: false, detail: "unlocked B1 refused")
+      }
+      // Typing on a locked cell starts no edit; a refused commit drops the text, same sheet.
+      vm.protectionNotice = nil
+      vm.select(a1)
+      let sheetBefore = vm.workbook.activeSheetIndex
+      guard !vm.beginTyping("x"), !vm.isEditing, vm.protectionNotice != nil else {
+        return Result(name: name, passed: false, detail: "typing on locked A1 began an edit")
+      }
+      vm.protectionNotice = nil
+      vm.editText = "x"
+      vm.isEditing = true
+      vm.commitEdit()
+      guard !vm.isEditing, vm.editText == "fixed", vm.activeSheet.cell(at: a1).raw == "fixed",
+        vm.workbook.activeSheetIndex == sheetBefore, vm.protectionNotice != nil
+      else {
+        return Result(name: name, passed: false, detail: "refused commit kept text \(vm.editText)")
+      }
+      vm.protectionNotice = nil
+      vm.select(b1)
+      guard vm.beginTyping("y"), vm.isEditing else {
+        return Result(name: name, passed: false, detail: "typing on unlocked B1 refused")
+      }
+      vm.cancelEdit()
+      vm.select(a1)
+      vm.toggleBold()
+      vm.insertRowsAbove()
+      guard vm.activeSheet.cell(at: a1).format?.bold != true,
+        vm.activeSheet.cell(at: a1).raw == "fixed"
+      else {
+        return Result(name: name, passed: false, detail: "format or insert went through")
+      }
+      do {
+        let back = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(vm.workbook))
+          .activeSheet
+        guard SheetProtection.isOn(back.fileExtras.protectionXML),
+          SheetProtection.verify("secret", against: back.fileExtras.protectionXML),
+          back.cell(at: b1).format?.locked == false, back.cell(at: a1).format?.locked != false
+        else {
+          return Result(name: name, passed: false, detail: "protection lost in save")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      guard !vm.unprotectSheet(password: "nope"), vm.unprotectSheet(password: "secret"),
+        !vm.isSheetProtected
+      else {
+        return Result(name: name, passed: false, detail: "password check wrong")
+      }
+      vm.setCellValue("changed", at: a1)
+      guard vm.activeSheet.cell(at: a1).raw == "changed" else {
+        return Result(name: name, passed: false, detail: "A1 still refused after unprotect")
+      }
+      // Allowed actions go through on a protected sheet; the rest stay refused.
+      vm.protectSheet(password: nil, allowing: [.formatCells, .insertRows])
+      vm.select(a1)
+      vm.toggleBold()
+      let rowsBefore = vm.activeSheet.cell(at: a1).raw
+      vm.insertRowsAbove()
+      let moved = vm.activeSheet.cell(at: CellAddress(row: 1, col: 0)).raw == rowsBefore
+      vm.protectionNotice = nil
+      vm.select(CellAddress(row: 1, col: 0))
+      vm.hideSelected(.rows)
+      guard vm.activeSheet.cell(at: CellAddress(row: 1, col: 0)).format?.bold == true, moved,
+        vm.activeSheet.fileExtras.hiddenRows.isEmpty, vm.protectionNotice != nil
+      else {
+        return Result(
+          name: name, passed: false,
+          detail:
+            "allowed: bold \(vm.activeSheet.cell(at: CellAddress(row: 1, col: 0)).format?.bold == true) insert \(moved); hide refused \(vm.protectionNotice != nil)"
+        )
+      }
+      return Result(
+        name: name, passed: true, detail: "locked refused, unlocked typed, saved, allow flags kept")
+    }
+
+    /// Typing in a cell, then scrolling before pressing Return, left other cells in that
+    /// column blank until the edit ended (reported on 1.3, Nov 10).
+    @MainActor
+    private static func scrollWhileEditingKeepsColumnText() -> Result {
+      let name = "scroll while editing keeps column text"
+      var sheet = Sheet(name: "Activity")
+      for row in 0..<120 {
+        sheet.setCell(Cell(raw: "Name \(row + 1)"), at: CellAddress(row: row, col: 0))
+        if row % 3 != 1 {
+          sheet.setCell(Cell(raw: "note \(row + 1)"), at: CellAddress(row: row, col: 3))
+        }
+      }
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.viewModel = viewModel
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+      viewModel.selection = CellAddress(row: 10, col: 3)
+      viewModel.beginEditing()
+      grid.showEditor(selectAll: true)
+      viewModel.editText = "old lead"
+      grid.display()
+      var missing: [String] = []
+      for tick in 1...6 {
+        grid.testingPaintedTexts = []
+        grid.testingApplyScroll(dx: 0, dy: 23)
+        grid.display()
+        let painted = grid.testingPaintedTexts ?? []
+        grid.testingPaintedTexts = nil
+        // Every note on screen apart from the cell being edited must be painted.
+        let top = grid.rowAtContent(y: grid.bounds.minY + 60)
+        let bottom = grid.rowAtContent(y: grid.bounds.maxY - 30)
+        for row in top...bottom where row % 3 != 1 && row != 10 {
+          let note = "note \(row + 1)"
+          if !painted.contains(note) { missing.append("tick \(tick) \(note)") }
+        }
+        if !missing.isEmpty { break }
+      }
+      grid.hideEditor(commit: false)
+      guard missing.isEmpty else {
+        return Result(name: name, passed: false, detail: "blank: \(missing.prefix(6))")
+      }
+      return Result(name: name, passed: true, detail: "column text painted on every scroll tick")
+    }
+
+    /// The grid draws pictures of the cells while idle and scrolls with them. A cell typed after
+    /// that showed its old (blank) value on the next trackpad scroll, until a click (1.3, Nov 10).
+    @MainActor
+    private static func editThenTileScrollShowsEdit() -> Result {
+      let name = "edit then tile scroll shows edit"
+      var sheet = Sheet(name: "Activity")
+      for row in 0..<200 {
+        sheet.setCell(Cell(raw: "Name \(row + 1)"), at: CellAddress(row: row, col: 0))
+      }
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.viewModel = viewModel
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      // The idle warm-up fills the picture cache in the background.
+      let deadline = Date().addingTimeInterval(10)
+      while !grid.testingViewportTileCacheReady(), Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      }
+      guard grid.testingViewportTileCacheReady() else {
+        return Result(name: name, passed: false, detail: "tiles never warmed")
+      }
+      guard !grid.testingScrollTilesPresented else {
+        return Result(name: name, passed: false, detail: "tiles already showing")
+      }
+      // Fill several cells in column D, as when notes are typed down a column.
+      for row in 2..<12 {
+        viewModel.setCellValue("typed \(row + 1)", at: CellAddress(row: row, col: 3))
+      }
+      grid.display()
+      // Pictures redrawn after the edit arrive in the background; the scroll waits for them so
+      // it uses them rather than the live cells.
+      let redrawn = Date().addingTimeInterval(10)
+      while !grid.testingViewportTileCacheReady(), Date() < redrawn {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      }
+      let readyAfterEdit = grid.testingViewportTileCacheReady()
+      grid.testingApplyScroll(dx: 0, dy: 2)
+      grid.testingFinishScrollTileFills()
+      let deadline2 = Date().addingTimeInterval(5)
+      while Date() < deadline2 {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        if grid.testingTilePixelMismatches() == 0 { break }
+      }
+      let mismatches = grid.testingTilePixelMismatches()
+      guard grid.testingScrollTilesPresented else {
+        return Result(
+          name: name, passed: false,
+          detail: "scroll did not use the tiles; cache ready after edit \(readyAfterEdit)")
+      }
+      guard mismatches == 0 else {
+        return Result(
+          name: name, passed: false,
+          detail: "scroll pictures differ from the cells by \(mismatches) samples")
+      }
+      return Result(name: name, passed: true, detail: "typed cells show in the scroll pictures")
+    }
+
+    /// FILTER, SORT and UNIQUE fill the cells below them; typing in the way shows #SPILL!.
+    @MainActor
+    private static func arrayFormulasSpill() -> Result {
+      let name = "array formulas spill"
+      var sheet = Sheet(name: "Deals")
+      let rows: [[String]] = [
+        ["Rep", "Amount"], ["Ann", "100"], ["Bo", "5"], ["Cy", "40"], ["Di", "70"], ["Ann", "20"],
+      ]
+      for (r, row) in rows.enumerated() {
+        for (c, value) in row.enumerated() {
+          sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: c))
+        }
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      func text(_ a1: String) -> String {
+        guard let (address, _) = A1Reference.parseRange(a1 + ":" + a1) else { return "?" }
+        return vm.displayString(at: address)
+      }
+      let d1 = CellAddress(row: 0, col: 3)
+      step { vm.setCellValue("=FILTER(A2:A6,B2:B6>10)", at: d1) }
+      step { vm.setCellValue("=SORT(UNIQUE(A2:A6))", at: CellAddress(row: 0, col: 4)) }
+      step { vm.setCellValue("=COUNTA(D1:D10)", at: CellAddress(row: 0, col: 5)) }
+      let filtered = ["D1", "D2", "D3", "D4", "D5"].map(text)
+      guard filtered == ["Ann", "Cy", "Di", "Ann", ""], text("F1") == "4",
+        ["E1", "E2", "E3", "E4", "E5"].map(text) == ["Ann", "Bo", "Cy", "Di", ""]
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "D \(filtered) E \(["E1", "E2", "E3", "E4"].map(text)) F1 \(text("F1"))")
+      }
+      // The data changes: Bo passes the filter, so it grows by one.
+      step { vm.setCellValue("50", at: CellAddress(row: 2, col: 1)) }
+      guard text("D2") == "Bo", text("D5") == "Ann", text("F1") == "5" else {
+        return Result(
+          name: name, passed: false, detail: "after edit D2 \(text("D2")) F1 \(text("F1"))")
+      }
+      // Typing in the way blocks it; clearing that cell lets it spill again.
+      step { vm.setCellValue("x", at: CellAddress(row: 2, col: 3)) }
+      guard text("D1") == "#SPILL!", text("D2").isEmpty, text("D3") == "x" else {
+        return Result(
+          name: name, passed: false, detail: "blocked D1 \(text("D1")) D2 \(text("D2"))")
+      }
+      undo.undo()
+      guard text("D1") == "Ann", text("D3") == "Cy" else {
+        return Result(name: name, passed: false, detail: "undo D1 \(text("D1")) D3 \(text("D3"))")
+      }
+      return Result(name: name, passed: true, detail: "spilled, grew, counted, blocked, undone")
+    }
+
+    /// Insert a row, then Undo and Redo in turn. Each Redo must leave an Undo behind, so the
+    /// next Undo takes the row out again instead of skipping to an older step.
+    @MainActor
+    private static func insertRowUndoRedoAlternates() -> Result {
+      let name = "insert row undo redo alternates"
+      var sheet = Sheet(name: "Rows")
+      for (r, value) in ["a", "b", "c"].enumerated() {
+        sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: 0))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      func column() -> [String] {
+        (0..<4).map { vm.displayString(at: CellAddress(row: $0, col: 0)) }
+      }
+      // An older step that the Undo after a Redo must not reach.
+      step { vm.setCellValue("x", at: CellAddress(row: 0, col: 1)) }
+      let before = ["a", "b", "c", ""]
+      let inserted = ["a", "", "b", "c"]
+      vm.select(CellAddress(row: 1, col: 0))
+      step { vm.insertRowsAbove(count: 1) }
+      guard column() == inserted else {
+        return Result(name: name, passed: false, detail: "insert \(column())")
+      }
+      let script: [(String, () -> Void, [String])] = [
+        ("undo 1", { undo.undo() }, before),
+        ("redo 1", { undo.redo() }, inserted),
+        ("undo 2", { undo.undo() }, before),
+        ("redo 2", { undo.redo() }, inserted),
+        ("undo 3", { undo.undo() }, before),
+      ]
+      for (label, action, expected) in script {
+        action()
+        let olderEdit = vm.displayString(at: CellAddress(row: 0, col: 1))
+        guard column() == expected, olderEdit == "x" else {
+          return Result(
+            name: name, passed: false, detail: "\(label): A \(column()) B1 \(olderEdit)")
+        }
+      }
+      guard undo.canRedo else {
+        return Result(name: name, passed: false, detail: "nothing left to redo")
+      }
+      return Result(name: name, passed: true, detail: "insert, then undo and redo three times")
+    }
+
+    /// Cell edits, sizes, freeze panes, hidden sheets and names: after each, Undo and Redo in
+    /// turn. Every Redo must leave an Undo behind, and no Undo may reach the older edit.
+    @MainActor
+    private static func undoRedoAlternatesForEveryStep() -> Result {
+      let name = "undo redo alternates for every step"
+      typealias Case = (
+        label: String, prepare: (SpreadsheetViewModel) -> Void,
+        act: (SpreadsheetViewModel) -> Void, probe: (SpreadsheetViewModel) -> String
+      )
+      func widths(_ vm: SpreadsheetViewModel) -> String {
+        vm.activeSheet.columnWidths.sorted { $0.key < $1.key }
+          .map { "\($0.key):\(Int($0.value))" }.joined(separator: ",")
+      }
+      let cases: [Case] = [
+        (
+          "edit cell", { _ in }, { $0.setCellValue("new", at: CellAddress(row: 1, col: 0)) },
+          { $0.activeSheet.cell(at: CellAddress(row: 1, col: 0)).raw }
+        ),
+        (
+          "resize column", { _ in }, { $0.setColumnWidth(2, width: 200) },
+          { "\(Int($0.columnWidth(for: 2)))" }
+        ),
+        (
+          "resize row", { _ in }, { $0.setRowHeight(3, height: 60) },
+          { "\(Int($0.rowHeight(for: 3)))" }
+        ),
+        ("auto fit columns", { _ in }, { $0.autoFitAllColumns() }, widths),
+        (
+          "freeze panes", { $0.select(CellAddress(row: 2, col: 1)) },
+          { _ = $0.freezePanesAtSelection() },
+          { "\($0.activeSheet.frozenRows),\($0.activeSheet.frozenColumns)" }
+        ),
+        (
+          "hide sheet", { _ in }, { $0.setSheetHidden(true, at: 1) },
+          { $0.workbook.sheets.map { $0.isHidden ? "hidden" : "shown" }.joined(separator: ",") }
+        ),
+        (
+          "define named range", { $0.select(CellAddress(row: 0, col: 0)) },
+          { $0.defineNamedRange(name: "Start") },
+          { $0.workbook.namedRanges.keys.sorted().joined(separator: ",") }
+        ),
+        (
+          "add defined name", { _ in },
+          { _ = $0.upsertDefinedName(originalName: nil, name: "Rate", refersTo: "=Data!$A$1") },
+          { $0.workbook.namedRanges.keys.sorted().joined(separator: ",") }
+        ),
+      ]
+      var passed: [String] = []
+      for item in cases {
+        var data = Sheet(name: "Data")
+        for (r, value) in ["a", "b", "a much longer piece of text than the column is wide"]
+          .enumerated()
+        {
+          data.setCell(Cell(raw: value), at: CellAddress(row: r, col: 0))
+        }
+        let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [data, Sheet(name: "Other")]))
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        vm.undoManager = undo
+        func step(_ body: () -> Void) {
+          undo.beginUndoGrouping()
+          body()
+          undo.endUndoGrouping()
+        }
+        let older = CellAddress(row: 0, col: 1)
+        step { vm.setCellValue("x", at: older) }
+        item.prepare(vm)
+        let before = item.probe(vm)
+        step { item.act(vm) }
+        let after = item.probe(vm)
+        guard before != after else {
+          return Result(name: name, passed: false, detail: "\(item.label): no change (\(before))")
+        }
+        let script: [(String, Bool, String)] = [
+          ("undo 1", true, before), ("redo 1", false, after), ("undo 2", true, before),
+          ("redo 2", false, after), ("undo 3", true, before),
+        ]
+        for (label, isUndo, expected) in script {
+          if isUndo { undo.undo() } else { undo.redo() }
+          let now = item.probe(vm)
+          let olderNow = vm.workbook.sheets.first?.cell(at: older).raw ?? "?"
+          guard now == expected, olderNow == "x" else {
+            return Result(
+              name: name, passed: false,
+              detail: "\(item.label) \(label): \(now), expected \(expected); B1 \(olderNow)")
+          }
+        }
+        passed.append(item.label)
+      }
+      return Result(name: name, passed: true, detail: passed.joined(separator: ", "))
+    }
+
+    /// Inserting or deleting rows and columns, and sorting, move cells. Spilled results must
+    /// follow their formula: none may stay behind as a value no formula owns.
+    @MainActor
+    private static func spillsSurviveMovingCells() -> Result {
+      let name = "spills survive moving cells"
+      var sheet = Sheet(name: "Deals")
+      let rows: [[String]] = [
+        ["Rep", "Amount"], ["Cy", "40"], ["Ann", "100"], ["Bo", "5"], ["Di", "70"], ["Ann", "20"],
+      ]
+      for (r, row) in rows.enumerated() {
+        for (c, value) in row.enumerated() {
+          sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: c))
+        }
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      func text(_ labels: [String]) -> [String] {
+        labels.map { vm.displayString(at: address($0)) }
+      }
+      /// Spilled values that no formula's results cover. There must never be any.
+      func stranded() -> [String] {
+        let sheet = vm.activeSheet
+        var covered = Set<CellAddress>()
+        for (anchor, range) in sheet.fileExtras.spills {
+          for cell in range.allAddresses() where cell != anchor { covered.insert(cell) }
+        }
+        return sheet.cells.filter { $0.value.isSpilled && !covered.contains($0.key) }
+          .map { "\($0.key.a1)=\($0.value.importedFormulaResult ?? "")" }.sorted()
+      }
+      func fail(_ what: String, _ labels: [String]) -> Result {
+        Result(
+          name: name, passed: false,
+          detail:
+            "\(what): \(text(labels)) stray \(stranded()) G1 \(vm.activeSheet.cell(at: address("G1")).raw)=\(text(["G1"])) G2 \(vm.activeSheet.cell(at: address("G2")).raw)=\(text(["G2"]))"
+        )
+      }
+      let column = ["D1", "D2", "D3", "D4", "D5", "D6"]
+      step { vm.setCellValue("=FILTER(A2:A6,B2:B6>10)", at: address("D1")) }
+      step { vm.setCellValue("=COUNTA(D1:D20)", at: address("G2")) }
+      let start = ["Cy", "Ann", "Di", "Ann", "", ""]
+      guard text(column) == start, text(["G2"]) == ["4"], stranded().isEmpty else {
+        return fail("start", column)
+      }
+
+      // A row inserted through the results. They stay four cells long under the formula.
+      vm.select(address("A3"))
+      step { vm.insertRowsAbove(count: 1) }
+      guard text(column) == start, text(["G2"]) == ["4"], stranded().isEmpty,
+        vm.activeSheet.cell(at: address("D1")).raw == "=FILTER(A2:A7,B2:B7>10)",
+        vm.activeSheet.fileExtras.spills[address("D1")]?.a1Label == "D1:D4"
+      else { return fail("insert row", column) }
+      undo.undo()
+      guard text(column) == start, text(["G2"]) == ["4"], stranded().isEmpty else {
+        return fail("undo insert row", column)
+      }
+
+      // The formula's own row deleted. Nothing of its results is left.
+      vm.select(address("A1"))
+      step { vm.deleteSelectedRows() }
+      guard text(column) == ["", "", "", "", "", ""], stranded().isEmpty,
+        !vm.activeSheet.cells.contains(where: { $0.value.isSpilled })
+      else { return fail("delete formula row", column) }
+      undo.undo()
+      guard text(column) == start, text(["G2"]) == ["4"], stranded().isEmpty else {
+        return fail("undo delete row", column)
+      }
+
+      // A sort over rows the results lie in. They are the formula's again afterwards, in the
+      // order of the sorted data.
+      step {
+        vm.sortRange(
+          column: 0, direction: .ascending, hasHeader: true,
+          range: CellRange(start: address("A1"), end: address("D6")))
+      }
+      let sorted = ["Ann", "Ann", "Cy", "Di", "", ""]
+      guard text(["A2", "A3", "A4", "A5", "A6"]) == ["Ann", "Ann", "Bo", "Cy", "Di"],
+        text(column) == sorted, text(["G2"]) == ["4"], stranded().isEmpty
+      else { return fail("sort", column) }
+      undo.undo()
+      guard text(["A2", "A3", "A4"]) == ["Cy", "Ann", "Bo"], text(column) == start,
+        stranded().isEmpty
+      else { return fail("undo sort", column) }
+
+      // A column inserted left of the formula. It and its results move over together.
+      vm.select(address("D1"))
+      step { vm.insertColumnsLeft(count: 1) }
+      let moved = ["E1", "E2", "E3", "E4", "E5", "E6"]
+      guard text(moved) == start, text(column) == ["", "", "", "", "", ""], stranded().isEmpty,
+        text(["H2"]) == ["4"]
+      else { return fail("insert column", moved) }
+      undo.undo()
+      guard text(column) == start, stranded().isEmpty else {
+        return fail("undo insert column", column)
+      }
+
+      // The column of the results deleted.
+      vm.selectColumns(from: 3, to: 3)
+      step { vm.deleteSelectedColumns() }
+      guard !vm.activeSheet.cells.contains(where: { $0.value.isSpilled }), stranded().isEmpty
+      else { return fail("delete column", column) }
+      undo.undo()
+      guard text(column) == start, text(["G2"]) == ["4"], stranded().isEmpty else {
+        return fail("undo delete column", column)
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "rows, columns and a sort moved cells; results followed their formula each time")
+    }
+
+    /// Merging clears the cells under the merge. A formula there with a result saved in the
+    /// file must not leave that result behind as a value.
+    @MainActor
+    private static func mergeLeavesNoSavedResult() -> Result {
+      let name = "merge leaves no saved result"
+      var sheet = Sheet(name: "S")
+      let a1 = CellAddress(row: 0, col: 0)
+      let b1 = CellAddress(row: 0, col: 1)
+      let d1 = CellAddress(row: 0, col: 3)
+      sheet.setCell(Cell(raw: "1"), at: a1)
+      // As a file opens it: the formula with the result the file saved.
+      sheet.setCell(
+        Cell(raw: "=A1*2", importedFormulaResult: "2", importedFormulaValueType: .number), at: b1)
+      sheet.setCell(
+        Cell(raw: "=B1+10", importedFormulaResult: "12", importedFormulaValueType: .number),
+        at: d1)
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      vm.undoManager = UndoManager()
+      guard vm.displayString(at: b1) == "2", vm.displayString(at: d1) == "12" else {
+        return Result(
+          name: name, passed: false,
+          detail: "start B1 \(vm.displayString(at: b1)) D1 \(vm.displayString(at: d1))")
+      }
+      vm.selectRange(from: a1, to: b1)
+      guard vm.mergeSelection(axis: .all, confirmDiscard: false) == .merged(count: 1) else {
+        return Result(name: name, passed: false, detail: "did not merge")
+      }
+      let covered = vm.activeSheet.cell(at: b1)
+      guard !covered.hasContent, !covered.isSpilled, covered.importedFormulaResult == nil else {
+        return Result(
+          name: name, passed: false,
+          detail: "B1 kept \(covered.importedFormulaResult ?? "nil") under the merge")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "B1 empty under the merge; D1 shows \(vm.displayString(at: d1))")
+    }
+
+    /// A pivot table another app saved: Refresh draws it from the data in Spark Grid, keeps the
+    /// file's table and asks it to rebuild when the file opens there.
+    @MainActor
+    private static func filePivotRefreshes() -> Result {
+      let name = "file pivot refresh"
+      var data = Sheet(name: "Sales Data")
+      let rows: [[String]] = [
+        ["Region", "Rep", "Product", "Amount"], ["West", "Ann", "Bike", "100"],
+        ["East", "Bo", "Helmet", "40"], ["West", "Ann", "Helmet", "30"],
+        ["East", "Cy", "Bike", "120"], ["North", "Ed", "Bike", "5"],
+      ]
+      for (r, row) in rows.enumerated() {
+        for (c, value) in row.enumerated() {
+          data.setCell(Cell(raw: value), at: CellAddress(row: r, col: c))
+        }
+      }
+      // What the other app drew, in its own layout, before the data changed.
+      var pivotSheet = Sheet(name: "Pivot")
+      let drawn: [[String]] = [
+        ["Sum of Amount", "Column Labels"], ["Row Labels", "Bike", "Helmet", "Grand Total"],
+        ["East", "120", "40", "160"], ["West", "100", "30", "130"],
+        ["Grand Total", "220", "70", "290"],
+      ]
+      for (r, row) in drawn.enumerated() {
+        for (c, value) in row.enumerated() {
+          pivotSheet.setCell(Cell(raw: value), at: CellAddress(row: 2 + r, col: c))
+        }
+      }
+      let pivotXML = #"""
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="PivotTable1" cacheId="3" dataCaption="Values"><location ref="A3:D7" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/><pivotFields count="4"><pivotField axis="axisRow" showAll="0"><items count="4"><item x="1"/><item x="2" h="1"/><item x="0"/><item t="default"/></items></pivotField><pivotField showAll="0"/><pivotField axis="axisCol" showAll="0"><items count="3"><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1" showAll="0"/></pivotFields><rowFields count="1"><field x="0"/></rowFields><colFields count="1"><field x="2"/></colFields><dataFields count="1"><dataField name="Sum of Amount" fld="3" baseField="0" baseItem="0"/></dataFields></pivotTableDefinition>
+        """#
+      let cacheXML = #"""
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" recordCount="5"><cacheSource type="worksheet"><worksheetSource ref="A1:D6" sheet="Sales Data"/></cacheSource><cacheFields count="4"><cacheField name="Region" numFmtId="0"><sharedItems count="3"><s v="West"/><s v="East"/><s v="North"/></sharedItems></cacheField><cacheField name="Rep" numFmtId="0"><sharedItems/></cacheField><cacheField name="Product" numFmtId="0"><sharedItems count="2"><s v="Bike"/><s v="Helmet"/></sharedItems></cacheField><cacheField name="Amount" numFmtId="0"><sharedItems containsNumber="1"/></cacheField></cacheFields></pivotCacheDefinition>
+        """#
+      pivotSheet.fileExtras.pivotTables = [PivotTablePart(xml: Data(pivotXML.utf8), cacheID: 3)]
+      var original = Workbook(sheets: [data, pivotSheet])
+      original.pivotCaches = [
+        PivotCachePart(cacheID: 3, definitionXML: Data(cacheXML.utf8), recordsXML: nil)
+      ]
+      do {
+        // Through a save and reopen, as a real file arrives.
+        let opened = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(original))
+        let vm = SpreadsheetViewModel(workbook: opened)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        vm.undoManager = undo
+        // The data changed since the file was saved.
+        vm.selectSheet(at: 0)
+        undo.beginUndoGrouping()
+        vm.setCellValue("150", at: CellAddress(row: 1, col: 3))
+        undo.endUndoGrouping()
+        vm.selectSheet(at: 1)
+        guard vm.hasPivots else {
+          return Result(name: name, passed: false, detail: "file pivot not seen")
+        }
+        undo.beginUndoGrouping()
+        vm.refreshPivots()
+        undo.endUndoGrouping()
+        func text(_ row: Int, _ col: Int) -> String {
+          vm.displayString(at: CellAddress(row: 2 + row, col: col))
+        }
+        // North stays hidden, as the file's table hid it. West is now 150 + 30.
+        let table = (0...3).map { r in (0...3).map { text(r, $0) } }
+        guard
+          table == [
+            ["Region", "Bike", "Helmet", "Grand Total"], ["East", "120", "40", "160"],
+            ["West", "150", "30", "180"], ["Grand Total", "270", "70", "340"],
+          ], text(4, 0).isEmpty, vm.pivotNotice == nil
+        else {
+          return Result(
+            name: name, passed: false, detail: "drawn \(table) notice \(vm.pivotNotice ?? "")")
+        }
+        let part = String(decoding: vm.activeSheet.fileExtras.pivotTables[0].xml, as: UTF8.self)
+        let cache = String(decoding: vm.workbook.pivotCaches[0].definitionXML, as: UTF8.self)
+        guard part.contains(#"ref="A3:D7""#), cache.contains(#"refreshOnLoad="1""#),
+          vm.activeSheet.fileExtras.sparkPivots.first?.linkedFilePivot == "PivotTable1"
+        else {
+          return Result(name: name, passed: false, detail: "file pivot not kept in step")
+        }
+        // Saved and reopened, the link holds and the file still has its pivot table.
+        let again = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(vm.workbook))
+        guard again.sheets[1].fileExtras.pivotTables.count == 1,
+          again.sheets[1].fileExtras.sparkPivots.count == 1
+        else {
+          return Result(name: name, passed: false, detail: "lost in save")
+        }
+        undo.undo()
+        guard text(0, 0) == "Sum of Amount", vm.activeSheet.fileExtras.sparkPivots.isEmpty,
+          !String(decoding: vm.workbook.pivotCaches[0].definitionXML, as: UTF8.self).contains(
+            "refreshOnLoad")
+        else {
+          return Result(name: name, passed: false, detail: "undo left \(text(0, 0))")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      return Result(
+        name: name, passed: true, detail: "redrawn, hidden item kept, file pivot kept, undone")
+    }
+
+    @MainActor
+    private static func pivotGroupsDatesByMonth() -> Result {
+      let name = "pivot date grouping"
+      var data = Sheet(name: "Orders")
+      data.setCell(Cell(raw: "Date"), at: .origin)
+      data.setCell(Cell(raw: "Qty"), at: CellAddress(row: 0, col: 1))
+      let serials = [46023, 46030, 46113, 45658]
+      var dateFormat = CellFormat()
+      dateFormat.numberFormat = .date
+      for (i, serial) in serials.enumerated() {
+        var cell = Cell(raw: String(serial))
+        cell.format = dateFormat
+        data.setCell(cell, at: CellAddress(row: i + 1, col: 0))
+        data.setCell(Cell(raw: String(i + 1)), at: CellAddress(row: i + 1, col: 1))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [data]))
+      vm.undoManager = UndoManager()
+      vm.select(.origin)
+      guard let pivot = vm.createPivot() else {
+        return Result(name: name, passed: false, detail: "pivot not made")
+      }
+      guard vm.pivotFieldIsDate(pivot, field: 0), !vm.pivotFieldIsDate(pivot, field: 1) else {
+        return Result(name: name, passed: false, detail: "date column not recognised")
+      }
+      vm.applyPivot(
+        pivot.id,
+        definition: PivotDefinition(
+          rows: [0], values: [.init(field: 1, aggregate: .sum)], dateGroups: [0: .month]))
+      let labels = (1...4).map { vm.displayString(at: CellAddress(row: 2 + $0, col: 0)) }
+      let jan = vm.displayString(at: CellAddress(row: 4, col: 1))
+      guard labels == ["Jan 2025", "Jan 2026", "Apr 2026", "Grand Total"], jan == "3",
+        vm.pivotItems(pivot, field: 0, group: .quarter) == ["Q1 2025", "Q1 2026", "Q2 2026"]
+      else {
+        return Result(name: name, passed: false, detail: "rows \(labels) Jan 2026 \(jan)")
+      }
+      return Result(name: name, passed: true, detail: "months grouped and in date order")
+    }
+
+    @MainActor
+    private static func pivotCreateDrawRefreshUndo() -> Result {
+      let name = "pivot table"
+      var data = Sheet(name: "Sales")
+      let rows: [[String]] = [
+        ["Region", "Rep", "Amount"], ["West", "Ann", "100"], ["East", "Bo", "40"],
+        ["West", "Cy", "30"], ["East", "Di", "120"],
+      ]
+      for (r, row) in rows.enumerated() {
+        for (c, value) in row.enumerated() {
+          data.setCell(Cell(raw: value), at: CellAddress(row: r, col: c))
+        }
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [data]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      vm.select(CellAddress(row: 1, col: 1))
+      var made: SheetPivot?
+      step { made = vm.createPivot() }
+      guard let pivot = made, vm.activeSheet.name == "Pivot 1", vm.workbook.sheets.count == 2,
+        pivot.sourceRange.normalized.maxRow == 4, pivot.sourceRange.normalized.maxCol == 2
+      else {
+        return Result(name: name, passed: false, detail: "pivot sheet not made")
+      }
+      func text(_ row: Int, _ col: Int) -> String {
+        vm.displayString(at: CellAddress(row: 2 + row, col: col))
+      }
+      var definition = PivotDefinition(rows: [0], values: [.init(field: 2, aggregate: .sum)])
+      step { vm.applyPivot(pivot.id, definition: definition) }
+      guard text(0, 0) == "Region", text(0, 1) == "Sum of Amount", text(1, 0) == "East",
+        text(1, 1) == "160", text(3, 0) == "Grand Total", text(3, 1) == "290",
+        vm.activeSheet.cell(at: CellAddress(row: 2, col: 0)).format?.bold == true,
+        vm.activeSheet.cell(at: .origin).raw.isEmpty
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "drawn \(text(0, 0)) \(text(1, 0)) \(text(1, 1)) \(text(3, 1))")
+      }
+      // A pivot chart covers the header and item rows, not the grand total.
+      guard vm.canMakePivotChart,
+        let chartRange = SpreadsheetViewModel.pivotChartRange(
+          anchor: pivot.anchor, rows: 4, columns: 2, definition: definition),
+        chartRange.normalized.maxRow == 4, chartRange.normalized.maxCol == 1
+      else {
+        return Result(name: name, passed: false, detail: "pivot chart range wrong")
+      }
+      step {
+        vm.insertChart(
+          SheetChart(
+            title: "Pivot", dataRange: chartRange, categoryColumn: 0, valueColumn: 1,
+            anchorRow: 10, anchorCol: 0))
+      }
+      // GETPIVOTDATA reads the table and follows it through a refresh.
+      let lookupCell = CellAddress(row: 0, col: 6)
+      step {
+        vm.setCellValue(#"=GETPIVOTDATA("Sum of Amount",A3,"Region","West")"#, at: lookupCell)
+      }
+      guard vm.displayString(at: lookupCell) == "130" else {
+        return Result(
+          name: name, passed: false, detail: "GETPIVOTDATA \(vm.displayString(at: lookupCell))")
+      }
+      // A change in the source shows after Refresh.
+      vm.selectSheet(at: 0)
+      step { vm.setCellValue("200", at: CellAddress(row: 1, col: 2)) }
+      vm.selectSheet(at: 1)
+      step { vm.refreshPivots() }
+      guard text(2, 1) == "230", text(3, 1) == "390" else {
+        return Result(name: name, passed: false, detail: "refresh West \(text(2, 1))")
+      }
+      guard vm.displayString(at: lookupCell) == "230" else {
+        return Result(
+          name: name, passed: false,
+          detail: "GETPIVOTDATA after refresh \(vm.displayString(at: lookupCell))")
+      }
+      // A third region makes the table one row taller; the chart follows.
+      vm.selectSheet(at: 0)
+      step { vm.setCellValue("North", at: CellAddress(row: 4, col: 0)) }
+      vm.selectSheet(at: 1)
+      step { vm.refreshPivots() }
+      guard vm.activeSheet.charts.first?.dataRange.normalized.maxRow == 5 else {
+        return Result(
+          name: name, passed: false,
+          detail:
+            "chart did not follow: \(String(describing: vm.activeSheet.charts.first?.dataRange))")
+      }
+      undo.undo()
+      undo.undo()
+      vm.selectSheet(at: 1)
+      // A smaller table clears what the larger one drew.
+      definition = PivotDefinition(values: [.init(field: 2, aggregate: .count)])
+      step { vm.applyPivot(pivot.id, definition: definition) }
+      guard text(0, 0) == "Count of Amount", text(1, 0) == "4", text(2, 0).isEmpty,
+        text(3, 0).isEmpty, text(1, 1).isEmpty
+      else {
+        return Result(name: name, passed: false, detail: "old cells left: \(text(2, 0))")
+      }
+      undo.undo()
+      guard text(3, 0) == "Grand Total" else {
+        return Result(name: name, passed: false, detail: "undo did not restore the table")
+      }
+      while vm.workbook.sheets.count > 1, undo.canUndo { undo.undo() }
+      guard vm.workbook.sheets.count == 1, vm.activeSheet.name == "Sales" else {
+        return Result(
+          name: name, passed: false, detail: "undo left \(vm.workbook.sheets.map(\.name))")
+      }
+      return Result(name: name, passed: true, detail: "made, drawn, refreshed, shrunk, undone")
+    }
+
+    @MainActor
+    private static func linksInsertFollowRemove() -> Result {
+      let name = "links"
+      var data = Sheet(name: "Data")
+      data.setCell(Cell(raw: "Total"), at: CellAddress(row: 0, col: 0))
+      data.setCell(
+        Cell(raw: "=HYPERLINK(\"https://example.com/\"&B2,\"Docs\")"),
+        at: CellAddress(row: 3, col: 0))
+      data.setCell(Cell(raw: "help"), at: CellAddress(row: 1, col: 1))
+      data.setCell(
+        Cell(raw: "=HYPERLINK(\"#'Q1 Sales'!C3\",\"Jump\")"), at: CellAddress(row: 4, col: 0))
+      let sales = Sheet(name: "Q1 Sales")
+      var workbook = Workbook(sheets: [data, sales])
+      workbook.namedRanges["TOTALS"] = NamedRange(
+        name: "Totals", sheetName: "Q1 Sales",
+        range: CellRange(start: CellAddress(row: 9, col: 1), end: CellAddress(row: 9, col: 3)))
+      let vm = SpreadsheetViewModel(workbook: workbook)
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      let b1 = CellAddress(row: 0, col: 1)
+      vm.select(b1)
+      step { vm.setLink(text: "", destination: .web("pat@example.com")) }
+      guard let mail = vm.hyperlink(at: b1), mail.target == "mailto:pat@example.com",
+        vm.activeSheet.cell(at: b1).raw == "pat@example.com",
+        vm.activeSheet.cell(at: b1).format?.underline == true
+      else {
+        return Result(name: name, passed: false, detail: "mail link not made")
+      }
+      vm.select(.origin)
+      step { vm.setLink(text: "", destination: .place("Totals")) }
+      guard vm.activeSheet.cell(at: .origin).raw == "Total",
+        let place = vm.followableLink(at: .origin)
+      else {
+        return Result(name: name, passed: false, detail: "place link not made")
+      }
+      vm.openHyperlink(place)
+      guard vm.activeSheet.name == "Q1 Sales", vm.selectionRange.normalized.minRow == 9,
+        vm.selectionRange.normalized.maxCol == 3
+      else {
+        return Result(name: name, passed: false, detail: "did not go to Totals")
+      }
+      vm.selectSheet(at: 0)
+      guard
+        vm.followableLink(at: CellAddress(row: 3, col: 0))?.target
+          == "https://example.com/help"
+      else {
+        return Result(
+          name: name, passed: false,
+          detail:
+            "HYPERLINK target \(String(describing: vm.hyperlinkFormulaTarget(at: CellAddress(row: 3, col: 0))))"
+        )
+      }
+      if let jump = vm.followableLink(at: CellAddress(row: 4, col: 0)) {
+        vm.openHyperlink(jump)
+      }
+      guard vm.activeSheet.name == "Q1 Sales", vm.selectionAnchor == CellAddress(row: 2, col: 2)
+      else {
+        return Result(name: name, passed: false, detail: "HYPERLINK # place not followed")
+      }
+      vm.selectSheet(at: 0)
+      do {
+        let back = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(vm.workbook))
+        let links = back.sheets[0].fileExtras.hyperlinks
+        guard links.contains(where: { $0.target == "mailto:pat@example.com" }),
+          links.contains(where: { $0.location == "Totals" })
+        else {
+          return Result(name: name, passed: false, detail: "links lost in save")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      vm.select(b1)
+      step { vm.removeLink() }
+      guard vm.hyperlink(at: b1) == nil, vm.activeSheet.cell(at: b1).format?.underline != true,
+        vm.activeSheet.cell(at: b1).raw == "pat@example.com"
+      else {
+        return Result(name: name, passed: false, detail: "remove left the link or its style")
+      }
+      undo.undo()
+      guard vm.hyperlink(at: b1) != nil else {
+        return Result(name: name, passed: false, detail: "undo did not bring the link back")
+      }
+      return Result(name: name, passed: true, detail: "mail, name, HYPERLINK, save, remove, undo")
+    }
+
+    @MainActor
+    private static func pdfExportKeepsPages() -> Result {
+      let name = "pdf export"
+      var report = Sheet(name: "Report")
+      for row in 0..<30 {
+        report.setCell(Cell(raw: "Item \(row + 1)"), at: CellAddress(row: row, col: 0))
+      }
+      report.fileExtras.rowBreaks = [10]
+      var notes = Sheet(name: "Notes")
+      notes.setCell(Cell(raw: "Second sheet"), at: CellAddress(row: 0, col: 0))
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [report, notes]))
+      var options = SpreadsheetPrintOptions.default(for: vm)
+      options.scope = .workbook
+      do {
+        let result = try SpreadsheetPDFExporter.pdfData(
+          pages: options.pages(for: vm), options: options, workbook: vm.workbook)
+        if ProcessInfo.processInfo.environment["SPARK_GRID_PDF_DUMP"] != nil {
+          try? result.data.write(
+            to: FileManager.default.temporaryDirectory.appendingPathComponent("bugbash-export.pdf"))
+        }
+        guard let pdf = PDFDocument(data: result.data), pdf.pageCount == 3, result.pageCount == 3
+        else {
+          return Result(name: name, passed: false, detail: "expected 3 pages")
+        }
+        let first = pdf.page(at: 0)?.string ?? ""
+        let second = pdf.page(at: 1)?.string ?? ""
+        let third = pdf.page(at: 2)?.string ?? ""
+        guard first.contains("Item 10"), !first.contains("Item 11"), second.contains("Item 11"),
+          third.contains("Second sheet")
+        else {
+          let sample = [first, second, third].map {
+            $0.replacingOccurrences(of: "\n", with: " ").prefix(80)
+          }
+          return Result(name: name, passed: false, detail: "page text: \(sample)")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      return Result(name: name, passed: true, detail: "break and sheets became 3 text pages")
+    }
+
+    @MainActor
+    private static func printAreaAndPageBreaks() -> Result {
+      let name = "print area and page breaks"
+      var sheet = Sheet(name: "Report")
+      for row in 0..<60 {
+        sheet.setCell(Cell(raw: "Row \(row + 1)"), at: CellAddress(row: row, col: 0))
+        sheet.setCell(Cell(raw: "\(row)"), at: CellAddress(row: row, col: 1))
+      }
+      sheet.frozenRows = 1
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      vm.selectRange(from: CellAddress(row: 0, col: 0), to: CellAddress(row: 39, col: 1))
+      step { vm.setPrintArea() }
+      vm.select(CellAddress(row: 20, col: 0))
+      step { vm.insertPageBreak() }
+      guard vm.printArea?.normalized.maxRow == 39, vm.activeSheet.fileExtras.rowBreaks == [20],
+        vm.activeSheet.fileExtras.columnBreaks.isEmpty
+      else {
+        return Result(name: name, passed: false, detail: "area or break not set")
+      }
+      var options = SpreadsheetPrintOptions.default(for: vm)
+      options.scale = .normal
+      guard options.scope == .printArea, let page = options.pages(for: vm).first,
+        page.range.normalized.maxRow == 39
+      else {
+        return Result(name: name, passed: false, detail: "print scope is not the print area")
+      }
+      let grid = SpreadsheetPrintNSView(sheet: page.sheet, range: page.range)
+      let layout = SpreadsheetPrintLayout(gridView: grid, sheet: page.sheet, options: options)
+      let rows = layout.pages.map(\.rows)
+      // Rows 1-20 fit one page; the break starts row 21's page; the frozen row repeats there.
+      guard rows == [0...19, 20...39], layout.pages[1].yBands.count == 3 else {
+        return Result(name: name, passed: false, detail: "pages \(rows)")
+      }
+      do {
+        let back = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(vm.workbook))
+          .activeSheet
+        guard back.fileExtras.printArea?.normalized.maxRow == 39,
+          back.fileExtras.rowBreaks == [20]
+        else {
+          return Result(name: name, passed: false, detail: "lost in save")
+        }
+      } catch {
+        return Result(name: name, passed: false, detail: error.localizedDescription)
+      }
+      undo.undo()
+      guard vm.activeSheet.fileExtras.rowBreaks.isEmpty, vm.printArea != nil else {
+        return Result(name: name, passed: false, detail: "undo did not take the break back")
+      }
+      step { vm.clearPrintArea() }
+      guard vm.activeSheet.fileExtras.rowBreaks.isEmpty, vm.printArea == nil else {
+        return Result(name: name, passed: false, detail: "undo or clear failed")
+      }
+      return Result(name: name, passed: true, detail: "area printed, break paged, saved, undone")
     }
 
     @MainActor
@@ -3018,7 +4273,9 @@ typealias Cell = SparkGridCore.Cell
       RunLoop.current.run(until: Date().addingTimeInterval(0.15))
       grid.layoutSubtreeIfNeeded()
       // A focus update during the run above can redraw a slice of a frozen pane.
-      // Capture a full draw so that slice is not the bitmap we score.
+      // Capture a full draw so that slice is not the bitmap we score. Idle scroll pictures are
+      // dropped first: while they show, the grid's own layer has only the headers.
+      grid.testingPaintCellsLive()
       grid.needsDisplay = true
       grid.display()
 
@@ -3049,9 +4306,36 @@ typealias Cell = SparkGridCore.Cell
       let cg = gfx.cgContext
       cg.translateBy(x: 0, y: CGFloat(pixelsHigh))
       cg.scaleBy(x: scale, y: -scale)
+      // The grid paints into its own frame and copies it to the screen; render(in:) does not
+      // see that copy off screen and clears what is under the grid. Render the layers, then
+      // put the grid's frame where its own layer drew nothing.
       grid.layer?.render(in: cg)
+      if let frame = grid.testingFrameImage() {
+        cg.setBlendMode(.destinationOver)
+        cg.draw(frame, in: CGRect(origin: .zero, size: grid.bounds.size))
+        cg.setBlendMode(.normal)
+        // Charts (z 5) and the frozen-pane overlay (z 6) are views of their own that
+        // render(in:) misses; draw them above the frame in layer order. Other views, such as
+        // the selection, already came through render(in:).
+        let views = grid.subviews
+          .filter { [5, 6].contains($0.layer?.zPosition ?? -1) }
+          .filter { !$0.isHidden && $0.frame.width > 1 && $0.frame.height > 1 }
+          .sorted { ($0.layer?.zPosition ?? 0) < ($1.layer?.zPosition ?? 0) }
+        for view in views {
+          guard let drawn = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            continue
+          }
+          view.cacheDisplay(in: view.bounds, to: drawn)
+          guard let image = drawn.cgImage else { continue }
+          cg.saveGState()
+          cg.translateBy(x: view.frame.minX, y: view.frame.maxY)
+          cg.scaleBy(x: 1, y: -1)
+          cg.draw(image, in: CGRect(origin: .zero, size: view.frame.size))
+          cg.restoreGState()
+        }
+      }
       NSGraphicsContext.restoreGraphicsState()
-
+      let image = rep
       let chartLayer = grid.subviews.first { ($0.layer?.zPosition ?? -1) == 5 }
       let pane = grid.subviews.first { ($0.layer?.zPosition ?? -1) == 6 }
       let chartAbove =
@@ -3059,7 +4343,7 @@ typealias Cell = SparkGridCore.Cell
         || (chartLayer?.layer?.zPosition ?? 0) > (pane?.layer?.zPosition ?? 0)
       window.orderOut(nil)
       window.close()
-      return GridSnapshot(image: rep, pointScale: scale, chartAboveFrozenPane: chartAbove)
+      return GridSnapshot(image: image, pointScale: scale, chartAboveFrozenPane: chartAbove)
     }
 
     @MainActor
@@ -3765,7 +5049,8 @@ typealias Cell = SparkGridCore.Cell
         )
       }
       let titles = groups.map(\.kind.title)
-      if titles != ["Math", "Statistical", "Logical", "Text", "Lookup", "Date & Time"] {
+      if titles != ["Math", "Statistical", "Logical", "Text", "Lookup", "Date & Time", "Financial"]
+      {
         return Result(name: name, passed: false, detail: "groups \(titles.joined(separator: ", "))")
       }
 
@@ -3807,7 +5092,7 @@ typealias Cell = SparkGridCore.Cell
 
       let sumNames = Set(
         FormulaFunctionCatalog.groups(matching: "sum").flatMap { $0.entries.map(\.name) })
-      if sumNames != ["SUM", "SUMIF", "SUMIFS", "SUMPRODUCT"] {
+      if sumNames != ["SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "SUMSQ"] {
         return Result(name: name, passed: false, detail: "sum search \(sumNames.sorted())")
       }
       let lookup = Set(
@@ -3966,7 +5251,7 @@ typealias Cell = SparkGridCore.Cell
       let gateEngine = FormulaEngine()
       gateEngine.rebuild(
         workbook: Workbook(sheets: [january, ytd], activeSheetIndex: 1), recalculate: false)
-      _ = gateEngine.recalculateEntireWorkbook(
+      _ = gateEngine.recalculateEntireWorkbookInSheetWaves(
         Workbook(sheets: [january, ytd], activeSheetIndex: 1),
         profile: true
       )
@@ -3993,7 +5278,7 @@ typealias Cell = SparkGridCore.Cell
       let ifWorkbook = Workbook(sheets: [config, jan], activeSheetIndex: 1)
       let ifEngine = FormulaEngine()
       ifEngine.rebuild(workbook: ifWorkbook, recalculate: false)
-      _ = ifEngine.recalculateEntireWorkbook(ifWorkbook, profile: true)
+      _ = ifEngine.recalculateEntireWorkbookInSheetWaves(ifWorkbook, profile: true)
       let blankDisplay = ifEngine.displayString(
         at: CellAddress(row: 109, col: 5),
         sheet: jan,
@@ -4033,7 +5318,7 @@ typealias Cell = SparkGridCore.Cell
       let idxWorkbook = Workbook(sheets: [idxSheet])
       let idxEngine = FormulaEngine()
       idxEngine.rebuild(workbook: idxWorkbook, recalculate: false)
-      _ = idxEngine.recalculateEntireWorkbook(idxWorkbook, profile: true)
+      _ = idxEngine.recalculateEntireWorkbookInSheetWaves(idxWorkbook, profile: true)
       guard let idxProfile = idxEngine.lastWorkbookRecalcProfile else {
         return Result(name: name, passed: false, detail: "COUNTIFS index profile missing")
       }
@@ -4090,7 +5375,7 @@ typealias Cell = SparkGridCore.Cell
       let workbook = Workbook(sheets: [january, ytd], activeSheetIndex: 1)
       let engine = FormulaEngine()
       engine.rebuild(workbook: workbook, recalculate: false)
-      _ = engine.recalculateEntireWorkbook(workbook, profile: true)
+      _ = engine.recalculateEntireWorkbookInSheetWaves(workbook, profile: true)
       guard let profile = engine.lastWorkbookRecalcProfile else {
         return Result(name: name, passed: false, detail: "missing recalc profile")
       }
@@ -5775,8 +7060,10 @@ typealias Cell = SparkGridCore.Cell
         let styles = XLSXCodec.zipEntryString(archiveData: data, entryPath: "xl/styles.xml") ?? ""
         let worksheet =
           XLSXCodec.zipEntryString(archiveData: data, entryPath: "xl/worksheets/sheet1.xml") ?? ""
-        if !styles.contains(#"<b val="0"/>"#) || !worksheet.contains(#"<x14:b val="0"/>"#) {
-          return fail("explicit bold off was not written as val=0")
+        // Rules are saved once, in the sheet (Nov 4): no extension copy for Excel to ignore and
+        // Google Sheets to trip on. Bold off lives in the rule's style as val="0".
+        if !styles.contains(#"<b val="0"/>"#) || worksheet.contains("x14:cfRule") {
+          return fail("explicit bold off was not written as val=0, or a rule was saved twice")
         }
         if !styles.contains("<b/>") && !styles.contains("<b val=\"1\"/>") {
           return fail("checked bold was not written")
@@ -5830,7 +7117,8 @@ typealias Cell = SparkGridCore.Cell
         if writesBoldTag(styles) || writesBoldTag(worksheet) {
           return fail("unspecified bold was written into the dxf")
         }
-        if !styles.contains("<bgColor") || !worksheet.contains("<x14:bgColor") {
+        // The fill is in the rule's style; the rule is not copied into an extension (Nov 4).
+        if !styles.contains("<bgColor") || worksheet.contains("x14:cfRule") {
           return fail("fill was removed from the dxf")
         }
         let imported = try XLSXCodec.importWorkbook(from: data)
@@ -6161,7 +7449,9 @@ typealias Cell = SparkGridCore.Cell
       do {
         let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [saved]))
         let styles = XLSXCodec.zipEntryString(archiveData: data, entryPath: "xl/styles.xml") ?? ""
-        if !styles.contains("wrapText=\"1\"") || !styles.contains("sparkTextDisplay=\"clip\"") {
+        if !styles.contains("wrapText=\"1\"") || !styles.contains("sg:textDisplay=\"clip\"")
+          || !styles.contains("mc:Ignorable=\"sg\"")
+        {
           return Result(name: name, passed: false, detail: "styles missing wrap or clip marker")
         }
         let imported = try XLSXCodec.importWorkbook(from: data)
@@ -6372,13 +7662,15 @@ typealias Cell = SparkGridCore.Cell
       let delegate = SparkGridAppDelegate()
       delegate.documentStore = cancelled
       let reply = delegate.applicationShouldTerminate(NSApp)
-      let windowClosed = delegate.windowShouldClose(
-        NSWindow(
-          contentRect: .zero,
-          styleMask: [.titled],
-          backing: .buffered,
-          defer: true
-        ))
+      // Only the spreadsheet window asks to save; Settings and other windows just close.
+      let documentWindow = NSWindow(
+        contentRect: .zero,
+        styleMask: [.titled],
+        backing: .buffered,
+        defer: true
+      )
+      documentWindow.identifier = NSUserInterfaceItemIdentifier("main-check")
+      let windowClosed = delegate.windowShouldClose(documentWindow)
       if reply != .terminateCancel || windowClosed || cancelled.unsavedPromptCount != 1 {
         return Result(
           name: name,
@@ -6753,7 +8045,13 @@ typealias Cell = SparkGridCore.Cell
       sheet.setCell(Cell(raw: "recieve"), at: .origin)
       sheet.setCell(Cell(raw: "=A1"), at: CellAddress(row: 0, col: 1))
       let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
-      let displayed = viewModel.displayString(at: CellAddress(row: 0, col: 1))
+      // A formula with no saved result shows once the background calculation lands.
+      var displayed = viewModel.displayString(at: CellAddress(row: 0, col: 1))
+      let deadline = Date().addingTimeInterval(10)
+      while displayed != "recieve", Date() < deadline {
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        displayed = viewModel.displayString(at: CellAddress(row: 0, col: 1))
+      }
       guard displayed == "recieve" else { return "formula result \(displayed)" }
       viewModel.selection = CellAddress(row: 0, col: 1)
       viewModel.beginEditing()
@@ -7561,7 +8859,34 @@ typealias Cell = SparkGridCore.Cell
       let cg = gfx.cgContext
       cg.translateBy(x: 0, y: CGFloat(pixelsHigh))
       cg.scaleBy(x: scale, y: -scale)
+      // The grid paints into its own frame and copies it to the screen; render(in:) does not
+      // see that copy off screen and clears what is under the grid. Render the layers, then
+      // put the grid's frame where its own layer drew nothing.
       grid.layer?.render(in: cg)
+      if let frame = grid.testingFrameImage() {
+        cg.setBlendMode(.destinationOver)
+        cg.draw(frame, in: CGRect(origin: .zero, size: grid.bounds.size))
+        cg.setBlendMode(.normal)
+        // Charts (z 5) and the frozen-pane overlay (z 6) are views of their own that
+        // render(in:) misses; draw them above the frame in layer order. Other views, such as
+        // the selection, already came through render(in:).
+        let views = grid.subviews
+          .filter { [5, 6].contains($0.layer?.zPosition ?? -1) }
+          .filter { !$0.isHidden && $0.frame.width > 1 && $0.frame.height > 1 }
+          .sorted { ($0.layer?.zPosition ?? 0) < ($1.layer?.zPosition ?? 0) }
+        for view in views {
+          guard let drawn = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            continue
+          }
+          view.cacheDisplay(in: view.bounds, to: drawn)
+          guard let image = drawn.cgImage else { continue }
+          cg.saveGState()
+          cg.translateBy(x: view.frame.minX, y: view.frame.maxY)
+          cg.scaleBy(x: 1, y: -1)
+          cg.draw(image, in: CGRect(origin: .zero, size: view.frame.size))
+          cg.restoreGState()
+        }
+      }
       NSGraphicsContext.restoreGraphicsState()
       return GridSnapshot(image: rep, pointScale: scale, chartAboveFrozenPane: false)
     }

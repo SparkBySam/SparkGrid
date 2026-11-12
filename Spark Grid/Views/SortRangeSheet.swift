@@ -94,14 +94,10 @@ struct SortRangeSheet: View {
       .labelsHidden()
       .frame(minWidth: 120)
 
-      Picker("Order", selection: orderBinding(index)) {
-        let labels = orderLabels(for: level.column)
-        Text(labels.up).tag(true)
-        Text(labels.down).tag(false)
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .fixedSize()
+      let labels = orderLabels(for: level.column)
+      SparkSegmentedPicker(
+        selection: orderBinding(index), options: [(true, labels.up), (false, labels.down)],
+        equalWidths: true)
 
       if index > 0 {
         Button {
@@ -170,15 +166,8 @@ struct SortRangeSheet: View {
     return ("A to Z", "Z to A")
   }
 
-  /// A first row with no numbers in it reads as a header.
   private static func looksLikeHeader(viewModel: SpreadsheetViewModel, range: CellRange) -> Bool {
-    let n = range.normalized
-    for col in n.minCol...n.maxCol {
-      if case .number = viewModel.displayValue(at: CellAddress(row: n.minRow, col: col)) {
-        return false
-      }
-    }
-    return true
+    viewModel.rangeLooksLikeItHasHeader(range)
   }
 
   // MARK: - Actions

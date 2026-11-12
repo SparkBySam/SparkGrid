@@ -22,20 +22,41 @@ struct FormattingToolbar: View {
   @State private var colorSyncGeneration = 0
 
   private var showLabels: Bool { settings.showToolbarLabels }
+
+  enum ToolbarFold: Int, Comparable {
+    case none, insert, dataAndInsert, layoutDataAndInsert
+    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+  }
   private var toolbarHeight: CGFloat { SpreadsheetChrome.toolbarHeight(showLabels: showLabels) }
   private var dividerHeight: CGFloat { showLabels ? 36 : 30 }
   private var iconAreaHeight: CGFloat { 24 }
 
   var body: some View {
     HStack(spacing: 0) {
-      ScrollView(.horizontal, showsIndicators: false) {
-        toolbarContent
-          .fixedSize(horizontal: true, vertical: false)
+      // One row at any width: captions go first, then the Insert group and then the Data group
+      // fold into a » menu at the end. Nothing scrolls out of sight.
+      ViewThatFits(in: .horizontal) {
+        if showLabels {
+          toolbarContent(labels: true, fold: .none)
+        }
+        toolbarContent(labels: false, fold: .none)
+        toolbarContent(labels: false, fold: .insert)
+        toolbarContent(labels: false, fold: .dataAndInsert)
+        // Narrower still: the formatting scrolls, and the » menu stays in reach at the end.
+        HStack(spacing: 0) {
+          ScrollView(.horizontal, showsIndicators: false) {
+            toolbarContent(labels: false, fold: .layoutDataAndInsert, overflow: false)
+          }
+          toolbarDivider
+          overflowMenu(fold: .layoutDataAndInsert)
+            .environment(\.toolbarCaptions, false)
+            .padding(.horizontal, 6)
+        }
       }
-      .frame(maxWidth: .infinity)
+      .frame(maxWidth: .infinity, alignment: .leading)
 
       AutosaveStatusView(store: store)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 6)
     }
     .frame(maxWidth: .infinity)
     .frame(height: toolbarHeight)
@@ -51,8 +72,10 @@ struct FormattingToolbar: View {
     }
   }
 
-  private var toolbarContent: some View {
-    HStack(spacing: 8) {
+  private func toolbarContent(labels: Bool, fold: ToolbarFold, overflow: Bool = true)
+    -> some View
+  {
+    ToolbarRow(labels: labels) {
       historyGroup
       toolbarDivider
       numberGroup
@@ -62,16 +85,24 @@ struct FormattingToolbar: View {
       styleGroup
       toolbarDivider
       colorGroup
-      toolbarDivider
-      mergeGroup
-      toolbarDivider
-      alignGroup
-      toolbarDivider
-      dataGroup
+      if fold < .layoutDataAndInsert {
+        toolbarDivider
+        layoutGroup
+      }
+      if fold < .dataAndInsert {
+        toolbarDivider
+        dataGroup
+      }
+      if fold == .none {
+        toolbarDivider
+        insertGroup
+      }
+      if fold != .none, overflow {
+        toolbarDivider
+        overflowMenu(fold: fold)
+      }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 4)
-    .foregroundStyle(SparkStyle.label)
+    .fixedSize(horizontal: true, vertical: false)
   }
 
   private var toolbarBackground: Color {
@@ -81,7 +112,7 @@ struct FormattingToolbar: View {
   // MARK: - Groups
 
   private var historyGroup: some View {
-    HStack(spacing: 4) {
+    HStack(spacing: 2) {
       ToolbarIconButton(
         systemName: "arrow.uturn.backward", title: "Undo", showLabel: showLabels, active: false
       ) {
@@ -95,11 +126,19 @@ struct FormattingToolbar: View {
         viewModel.redo()
       }
       .disabled(!(undoManager?.canRedo ?? false))
+
+      ToolbarIconButton(
+        systemName: "paintbrush.pointed", title: "Painter", showLabel: showLabels,
+        active: viewModel.formatPainterBlock != nil
+      ) {
+        viewModel.toggleFormatPainter()
+      }
+      .help("Format Painter: copy these cells' formats to the next cells you select")
     }
   }
 
   private var numberGroup: some View {
-    HStack(spacing: 4) {
+    HStack(spacing: 2) {
       ToolbarIconButton(
         systemName: "dollarsign",
         title: "Currency",
@@ -118,13 +157,10 @@ struct FormattingToolbar: View {
         viewModel.setNumberFormat(.percent)
       }
 
-      ToolbarDecimalButton(decrease: true, title: "Decimals", showLabel: showLabels) {
-        viewModel.decreaseDecimalPlaces()
-      }
-
-      ToolbarDecimalButton(decrease: false, title: "Decimals", showLabel: showLabels) {
-        viewModel.increaseDecimalPlaces()
-      }
+      ToolbarDecimalPair(
+        showLabel: showLabels,
+        decrease: { viewModel.decreaseDecimalPlaces() },
+        increase: { viewModel.increaseDecimalPlaces() })
 
       ToolbarMenuButton(title: "Format", showLabel: showLabels, width: showLabels ? 44 : 32) {
         Button("General") { viewModel.setNumberFormat(.general) }
@@ -147,28 +183,31 @@ struct FormattingToolbar: View {
         }
       }
       .labelsHidden()
-      .frame(width: 130)
+      .frame(width: 124)
 
-      HStack(spacing: 4) {
-        ToolbarIconButton(
-          systemName: "minus", title: "Smaller", showLabel: showLabels, active: false
-        ) {
-          viewModel.adjustFontSize(by: -1)
-          syncFontSizeFromSelection()
-        }
+      // Smaller and Larger are the size field's arrows.
+      HStack(spacing: 2) {
         FontSizeTextField(text: $fontSizeText, onSubmit: applyFontSizeFromField)
           .frame(width: 32)
-        ToolbarIconButton(systemName: "plus", title: "Larger", showLabel: showLabels, active: false)
-        {
-          viewModel.adjustFontSize(by: 1)
-          syncFontSizeFromSelection()
-        }
+        Stepper(
+          "Font size",
+          onIncrement: {
+            viewModel.adjustFontSize(by: 1)
+            syncFontSizeFromSelection()
+          },
+          onDecrement: {
+            viewModel.adjustFontSize(by: -1)
+            syncFontSizeFromSelection()
+          }
+        )
+        .labelsHidden()
+        .help("Smaller or larger")
       }
     }
   }
 
   private var styleGroup: some View {
-    HStack(spacing: 4) {
+    HStack(spacing: 2) {
       ToolbarIconButton(
         systemName: "bold", title: "Bold", showLabel: showLabels,
         active: viewModel.selectedFormat.bold
@@ -184,17 +223,33 @@ struct FormattingToolbar: View {
       }
 
       ToolbarIconButton(
-        systemName: "strikethrough", title: "Strike", showLabel: showLabels,
-        active: viewModel.selectedFormat.strikethrough
-      ) {
-        viewModel.toggleStrikethrough()
-      }
-
-      ToolbarIconButton(
         systemName: "underline", title: "Underline", showLabel: showLabels,
         active: viewModel.selectedFormat.underline
       ) {
         viewModel.toggleUnderline()
+      }
+
+      ToolbarMenuButton(title: "More", showLabel: showLabels, width: 32) {
+        Button {
+          viewModel.toggleStrikethrough()
+        } label: {
+          if viewModel.selectedFormat.strikethrough {
+            Label("Strikethrough", systemImage: "checkmark")
+          } else {
+            Label("Strikethrough", systemImage: "strikethrough")
+          }
+        }
+        Divider()
+        Button {
+          viewModel.clearFormats()
+        } label: {
+          Label("Clear Formats", systemImage: "eraser")
+        }
+      } label: {
+        Image(systemName: "ellipsis")
+          .font(
+            .system(size: 13, weight: viewModel.selectedFormat.strikethrough ? .semibold : .regular)
+          )
       }
     }
   }
@@ -299,104 +354,227 @@ struct FormattingToolbar: View {
     }
   }
 
-  private var mergeGroup: some View {
-    HStack(spacing: 4) {
-      Menu {
-        Button("Merge All") { viewModel.mergeSelection(axis: .all) }
-          .disabled(!viewModel.canMergeSelection)
-        Button("Merge Across") { viewModel.mergeSelection(axis: .horizontal) }
-          .disabled(!viewModel.canMergeHorizontally)
-        Button("Merge Vertically") { viewModel.mergeSelection(axis: .vertical) }
-          .disabled(!viewModel.canMergeVertically)
-        Divider()
-        Button("Unmerge") { viewModel.unmergeSelection() }
-          .disabled(!viewModel.canUnmergeSelection)
-      } label: {
-        VStack(spacing: 2) {
-          Image(systemName: "rectangle.split.2x1")
-            .font(.system(size: 13))
-            .frame(width: showLabels ? 48 : 32, height: showLabels ? 24 : 32)
-          if showLabels {
-            Text("Merge")
-              .font(.system(size: 9))
-              .lineLimit(1)
-          }
-        }
-        .frame(minWidth: 40)
-        .contentShape(Rectangle())
-      }
-      .menuStyle(.borderlessButton)
-      .help("Merge cells")
+  private var mergeMenu: some View {
+    ToolbarMenuButton(title: "Merge", showLabel: showLabels, width: 32) {
+      Button("Merge All") { viewModel.mergeSelection(axis: .all) }
+        .disabled(!viewModel.canMergeSelection)
+      Button("Merge Across") { viewModel.mergeSelection(axis: .horizontal) }
+        .disabled(!viewModel.canMergeHorizontally)
+      Button("Merge Vertically") { viewModel.mergeSelection(axis: .vertical) }
+        .disabled(!viewModel.canMergeVertically)
+      Divider()
+      Button("Unmerge") { viewModel.unmergeSelection() }
+        .disabled(!viewModel.canUnmergeSelection)
+    } label: {
+      Image(systemName: "rectangle.split.2x1")
+        .font(.system(size: 13))
     }
+    .help("Merge cells")
   }
 
-  private var alignGroup: some View {
-    HStack(spacing: 4) {
-      ToolbarMenuButton(title: "Align", showLabel: showLabels, width: 32) {
-        Button {
-          viewModel.setHorizontalAlign(.left)
-        } label: {
-          Label("Align left", systemImage: "text.alignleft")
+  /// Align, Vertical, Overflow and Rotate in one menu, with Merge beside it.
+  private var layoutGroup: some View {
+    HStack(spacing: 2) {
+      ToolbarMenuButton(title: "Layout", showLabel: showLabels, width: 32) {
+        Section("Horizontal") {
+          Button {
+            viewModel.setHorizontalAlign(.left)
+          } label: {
+            Label("Align Left", systemImage: "text.alignleft")
+          }
+          Button {
+            viewModel.setHorizontalAlign(.center)
+          } label: {
+            Label("Align Center", systemImage: "text.aligncenter")
+          }
+          Button {
+            viewModel.setHorizontalAlign(.right)
+          } label: {
+            Label("Align Right", systemImage: "text.alignright")
+          }
         }
-        Button {
-          viewModel.setHorizontalAlign(.center)
-        } label: {
-          Label("Align center", systemImage: "text.aligncenter")
+        Section("Vertical") {
+          Button {
+            viewModel.setVerticalAlign(.top)
+          } label: {
+            Label("Align Top", systemImage: "arrow.up.to.line")
+          }
+          Button {
+            viewModel.setVerticalAlign(.middle)
+          } label: {
+            Label("Align Middle", systemImage: "arrow.up.and.down")
+          }
+          Button {
+            viewModel.setVerticalAlign(.bottom)
+          } label: {
+            Label("Align Bottom", systemImage: "arrow.down.to.line")
+          }
         }
-        Button {
-          viewModel.setHorizontalAlign(.right)
-        } label: {
-          Label("Align right", systemImage: "text.alignright")
+        Section("Text") {
+          ForEach([CellFormat.TextDisplay.overflow, .wrap, .clip], id: \.self) { display in
+            Button {
+              viewModel.setTextDisplay(display)
+            } label: {
+              if viewModel.uniformTextDisplay == display {
+                Label(display.toolbarTitle, systemImage: "checkmark")
+              } else {
+                Label(display.toolbarTitle, systemImage: "text.word.spacing")
+              }
+            }
+          }
+          Menu {
+            Button("None") { viewModel.setTextRotation(0) }
+            Divider()
+            Button("Tilt Up") { viewModel.setTextRotation(-45) }
+            Button("Tilt Down") { viewModel.setTextRotation(45) }
+            Button("Stack Vertically") {
+              viewModel.setTextRotation(CellFormat.stackedTextRotation)
+            }
+            Button("Rotate Up") { viewModel.setTextRotation(-90) }
+            Button("Rotate Down") { viewModel.setTextRotation(90) }
+          } label: {
+            Label("Rotate", systemImage: "arrow.trianglehead.counterclockwise.rotate.90")
+          }
         }
       } label: {
         Image(systemName: horizontalAlignIcon)
           .font(.system(size: 13))
       }
+      .help("Align, wrap, and rotate")
 
-      ToolbarMenuButton(title: "Vertical", showLabel: showLabels, width: 32) {
-        Button {
-          viewModel.setVerticalAlign(.top)
-        } label: {
-          Label("Align top", systemImage: "arrow.up.to.line")
-        }
-        Button {
-          viewModel.setVerticalAlign(.middle)
-        } label: {
-          Label("Align middle", systemImage: "arrow.up.and.down")
-        }
-        Button {
-          viewModel.setVerticalAlign(.bottom)
-        } label: {
-          Label("Align bottom", systemImage: "arrow.down.to.line")
-        }
-      } label: {
-        Image(systemName: "arrow.up.and.down.text.horizontal")
-          .font(.system(size: 13))
-      }
-
-      TextDisplayToolbarMenu(viewModel: viewModel)
-
-      RotateToolbarMenu(
-        viewModel: viewModel,
-        showLabel: showLabels,
-        iconHeight: iconAreaHeight
-      )
+      mergeMenu
     }
   }
 
-  /// Filter turns the table around the selection into a filter, and turns it off again.
+  /// Sort, Filter, AutoSum and Highlight: the everyday data tools.
   private var dataGroup: some View {
-    ToolbarIconButton(
-      systemName: "line.3.horizontal.decrease",
-      title: "Filter",
-      showLabel: showLabels,
-      active: viewModel.filterState != nil
-    ) {
-      if viewModel.filterState == nil {
-        viewModel.createFilter()
-      } else {
-        viewModel.clearFilter()
+    HStack(spacing: 2) {
+      ToolbarMenuButton(title: "Sort", showLabel: showLabels, width: 32) {
+        sortItems
+      } label: {
+        Image(systemName: "arrow.up.arrow.down")
+          .font(.system(size: 13))
       }
+      .help("Sort the block around the cell by its column")
+
+      ToolbarIconButton(
+        systemName: "line.3.horizontal.decrease",
+        title: "Filter",
+        showLabel: showLabels,
+        active: viewModel.filterState != nil
+      ) {
+        toggleFilter()
+      }
+
+      ToolbarMenuButton(title: "AutoSum", showLabel: showLabels, width: 32) {
+        autoSumItems
+      } label: {
+        Image(systemName: "sum")
+          .font(.system(size: 13))
+      }
+
+      ToolbarMenuButton(title: "Highlight", showLabel: showLabels, width: 32) {
+        highlightItems
+      } label: {
+        Image(systemName: "circle.lefthalf.filled")
+          .font(.system(size: 13))
+      }
+      .help("Conditional formatting")
+    }
+  }
+
+  /// Chart and Table. Pivot and Link join them in 1.4.
+  private var insertGroup: some View {
+    HStack(spacing: 2) {
+      ToolbarIconButton(systemName: "chart.bar.xaxis", title: "Chart", showLabel: showLabels) {
+        viewModel.beginInsertChart()
+      }
+      let tableIndex = viewModel.selectedTableIndex
+      ToolbarIconButton(
+        systemName: "tablecells", title: "Table", showLabel: showLabels, active: tableIndex != nil
+      ) {
+        toggleTable()
+      }
+      .disabled(tableIndex == nil && viewModel.newTableRange == nil)
+    }
+  }
+
+  /// The groups that did not fit, as one menu at the end of the row.
+  private func overflowMenu(fold: ToolbarFold) -> some View {
+    ToolbarMenuButton(title: "More", showLabel: false, width: 24) {
+      if fold == .layoutDataAndInsert {
+        Menu("Merge") {
+          Button("Merge All") { viewModel.mergeSelection(axis: .all) }
+            .disabled(!viewModel.canMergeSelection)
+          Button("Unmerge") { viewModel.unmergeSelection() }
+            .disabled(!viewModel.canUnmergeSelection)
+        }
+        Menu("Align") {
+          Button("Align Left") { viewModel.setHorizontalAlign(.left) }
+          Button("Align Center") { viewModel.setHorizontalAlign(.center) }
+          Button("Align Right") { viewModel.setHorizontalAlign(.right) }
+          Divider()
+          Button("Wrap") { viewModel.setTextDisplay(.wrap) }
+          Button("Overflow") { viewModel.setTextDisplay(.overflow) }
+        }
+        Divider()
+      }
+      if fold >= .dataAndInsert {
+        Menu("Sort") { sortItems }
+        Button(viewModel.filterState == nil ? "Create a Filter" : "Clear Filter") { toggleFilter() }
+        Menu("AutoSum") { autoSumItems }
+        Menu("Highlight") { highlightItems }
+        Divider()
+      }
+      Button("Chart…") { viewModel.beginInsertChart() }
+      Button(viewModel.selectedTableIndex == nil ? "Create Table" : "Remove Table") {
+        toggleTable()
+      }
+      .disabled(viewModel.selectedTableIndex == nil && viewModel.newTableRange == nil)
+    } label: {
+      Image(systemName: "chevron.right.2")
+        .font(.system(size: 12, weight: .semibold))
+    }
+    .help("More tools")
+  }
+
+  @ViewBuilder private var sortItems: some View {
+    Button("Sort A to Z") { viewModel.quickSort(ascending: true) }
+    Button("Sort Z to A") { viewModel.quickSort(ascending: false) }
+    Divider()
+    Button("Sort Range…") { SortRangePresenter.present(from: viewModel) }
+  }
+
+  @ViewBuilder private var autoSumItems: some View {
+    ForEach(SpreadsheetViewModel.AutoSumFunction.allCases, id: \.self) { function in
+      Button(function.title) { viewModel.autoSum(function) }
+    }
+  }
+
+  @ViewBuilder private var highlightItems: some View {
+    Button("Conditional Formatting…") { ConditionalFormattingPresenter.present(from: viewModel) }
+    Divider()
+    Button("Highlight Duplicates") { viewModel.highlightRepeats(unique: false) }
+    Button("Highlight Unique Values") { viewModel.highlightRepeats(unique: true) }
+    Divider()
+    Button("Clear Rules from Selection") {
+      viewModel.clearConditionalFormats(intersecting: viewModel.selectionRange)
+    }
+  }
+
+  private func toggleFilter() {
+    if viewModel.filterState == nil {
+      viewModel.createFilter()
+    } else {
+      viewModel.clearFilter()
+    }
+  }
+
+  private func toggleTable() {
+    if let index = viewModel.selectedTableIndex {
+      viewModel.removeTable(at: index)
+    } else {
+      viewModel.createTable()
     }
   }
 
@@ -568,12 +746,14 @@ private final class ClickToFocusTextField: NSTextField {
 private struct ToolbarColorSwatch<Icon: View>: View {
   let title: String
   var showLabel = false
+  @Environment(\.toolbarCaptions) private var captions
+  private var shows: Bool { showLabel && captions }
   @Binding var selection: Color
   var suppressColorApply = false
   let onColorChange: (Color) -> Void
   @ViewBuilder var icon: () -> Icon
 
-  private var controlHeight: CGFloat { showLabel ? 24 : 32 }
+  private var controlHeight: CGFloat { shows ? 24 : 32 }
   private let swatchWidth: CGFloat = 30
 
   var body: some View {
@@ -592,7 +772,7 @@ private struct ToolbarColorSwatch<Icon: View>: View {
           .strokeBorder(SpreadsheetChrome.chromeBorderColor, lineWidth: 0.5)
       )
 
-      if showLabel {
+      if shows {
         Text(title)
           .font(.system(size: 9))
           .lineLimit(1)
@@ -609,6 +789,8 @@ private struct ToolbarColorSwatch<Icon: View>: View {
 private struct ToolbarSwatchDisclosure<Icon: View, PopoverContent: View>: View {
   let title: String
   var showLabel = false
+  @Environment(\.toolbarCaptions) private var captions
+  private var shows: Bool { showLabel && captions }
   @Binding var selection: Color
   @Binding var isPopoverPresented: Bool
   var suppressColorApply = false
@@ -618,7 +800,7 @@ private struct ToolbarSwatchDisclosure<Icon: View, PopoverContent: View>: View {
   @ViewBuilder var icon: () -> Icon
   @ViewBuilder var popoverContent: () -> PopoverContent
 
-  private var controlHeight: CGFloat { showLabel ? 24 : 32 }
+  private var controlHeight: CGFloat { shows ? 24 : 32 }
   private let swatchWidth: CGFloat = 30
   private let chevronWidth: CGFloat = 14
 
@@ -647,7 +829,7 @@ private struct ToolbarSwatchDisclosure<Icon: View, PopoverContent: View>: View {
           .frame(minWidth: 220)
       }
 
-      if showLabel {
+      if shows {
         Text(title)
           .font(.system(size: 9))
           .lineLimit(1)
@@ -1058,116 +1240,12 @@ private struct BorderStylePreview: View {
   }
 }
 
-private struct TextDisplayToolbarMenu: View {
-  @Bindable var viewModel: SpreadsheetViewModel
-
-  /// Nil when the selection mixes modes, so the menu does not check one of them.
-  private var uniform: CellFormat.TextDisplay? { viewModel.uniformTextDisplay }
-  private var title: String { viewModel.textDisplayToolbarTitle }
-  private var isActive: Bool { uniform == .wrap || uniform == .clip }
-
-  var body: some View {
-    ToolbarMenuButton(title: title, showLabel: true, width: 32, titleWidth: 64) {
-      textItem(.overflow)
-      textItem(.wrap)
-      textItem(.clip)
-    } label: {
-      Image(systemName: "text.word.spacing")
-        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-          isActive ? SparkStyle.accent.opacity(0.22) : Color.clear,
-          in: RoundedRectangle(cornerRadius: 4)
-        )
-    }
-    .help("Overflow, wrap, or clip text")
-    .accessibilityLabel(title)
-  }
-
-  @ViewBuilder
-  private func textItem(_ display: CellFormat.TextDisplay) -> some View {
-    Button {
-      viewModel.setTextDisplay(display)
-    } label: {
-      if uniform == display {
-        Label(display.toolbarTitle, systemImage: "checkmark")
-      } else {
-        Text(display.toolbarTitle)
-      }
-    }
-  }
-}
-
-private struct RotateToolbarMenu: View {
-  @Bindable var viewModel: SpreadsheetViewModel
-  var showLabel: Bool
-  var iconHeight: CGFloat
-
-  private var isActive: Bool { viewModel.selectedFormat.textRotation != 0 }
-
-  var body: some View {
-    ToolbarMenuButton(title: "Rotate", showLabel: showLabel, width: 32) {
-      Button("None") { viewModel.setTextRotation(0) }
-      Divider()
-      Button("Tilt up") { viewModel.setTextRotation(-45) }
-      Button("Tilt down") { viewModel.setTextRotation(45) }
-      Button("Stack vertically") { viewModel.setTextRotation(CellFormat.stackedTextRotation) }
-      Button("Rotate up") { viewModel.setTextRotation(-90) }
-      Button("Rotate down") { viewModel.setTextRotation(90) }
-    } label: {
-      Image(systemName: "arrow.trianglehead.counterclockwise.rotate.90")
-        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-          isActive ? SparkStyle.accent.opacity(0.22) : Color.clear,
-          in: RoundedRectangle(cornerRadius: 4)
-        )
-    }
-  }
-}
-
-private struct ToolbarDecimalButton: View {
-  let decrease: Bool
-  let title: String
-  var showLabel = false
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      VStack(spacing: 2) {
-        HStack(spacing: 1) {
-          if decrease {
-            Image(systemName: "chevron.left")
-              .font(.system(size: 7, weight: .bold))
-          }
-          Text(".0")
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-          if !decrease {
-            Image(systemName: "chevron.right")
-              .font(.system(size: 7, weight: .bold))
-          }
-        }
-        .frame(width: 32, height: showLabel ? 24 : 32)
-
-        if showLabel {
-          Text(title)
-            .font(.system(size: 9))
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-        }
-      }
-      .frame(minWidth: 40)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .help(decrease ? "Decrease decimals" : "Increase decimals")
-  }
-}
-
 private struct ToolbarIconButton: View {
   let systemName: String
   let title: String
   var showLabel = false
+  @Environment(\.toolbarCaptions) private var captions
+  private var shows: Bool { showLabel && captions }
   var active = false
   let action: () -> Void
 
@@ -1176,12 +1254,12 @@ private struct ToolbarIconButton: View {
       VStack(spacing: 2) {
         Image(systemName: systemName)
           .font(.system(size: 13, weight: active ? .semibold : .regular))
-          .frame(width: 32, height: showLabel ? 24 : 32)
+          .frame(width: 32, height: shows ? 24 : 32)
           .background(
             active ? SparkStyle.accent.opacity(0.22) : Color.clear,
             in: RoundedRectangle(cornerRadius: 4))
 
-        if showLabel {
+        if shows {
           Text(title)
             .font(.system(size: 9))
             .lineLimit(1)
@@ -1193,12 +1271,15 @@ private struct ToolbarIconButton: View {
     }
     .buttonStyle(.plain)
     .help(title)
+    .accessibilityLabel(title)
   }
 }
 
 private struct ToolbarMenuButton<Label: View, MenuContent: View>: View {
   let title: String
   var showLabel = false
+  @Environment(\.toolbarCaptions) private var captions
+  private var shows: Bool { showLabel && captions }
   var width: CGFloat = 32
   /// Wider than the icon when the caption is a word like "Overflow".
   var titleWidth: CGFloat? = nil
@@ -1211,9 +1292,9 @@ private struct ToolbarMenuButton<Label: View, MenuContent: View>: View {
     } label: {
       VStack(spacing: 2) {
         label()
-          .frame(width: width, height: showLabel ? 24 : 32)
+          .frame(width: width, height: shows ? 24 : 32)
 
-        if showLabel {
+        if shows {
           Text(title)
             .font(.system(size: 9))
             .lineLimit(1)
@@ -1228,5 +1309,75 @@ private struct ToolbarMenuButton<Label: View, MenuContent: View>: View {
     .buttonStyle(.plain)
     .fixedSize(horizontal: true, vertical: false)
     .help(title)
+    .accessibilityLabel(title)
+  }
+}
+
+/// Hides toolbar captions in the narrow layouts, whatever Settings says.
+private struct ToolbarCaptionsKey: EnvironmentKey {
+  static let defaultValue = true
+}
+
+extension EnvironmentValues {
+  fileprivate var toolbarCaptions: Bool {
+    get { self[ToolbarCaptionsKey.self] }
+    set { self[ToolbarCaptionsKey.self] = newValue }
+  }
+}
+
+/// One layout of the toolbar's row, with or without captions.
+private struct ToolbarRow<Content: View>: View {
+  let labels: Bool
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    HStack(spacing: 5) {
+      content()
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    .foregroundStyle(SparkStyle.label)
+    .environment(\.toolbarCaptions, labels)
+  }
+}
+
+/// Decimals as one control: fewer on the left half, more on the right, one caption.
+private struct ToolbarDecimalPair: View {
+  var showLabel = false
+  let decrease: () -> Void
+  let increase: () -> Void
+  @Environment(\.toolbarCaptions) private var captions
+  private var shows: Bool { showLabel && captions }
+
+  var body: some View {
+    VStack(spacing: 2) {
+      HStack(spacing: 0) {
+        half(left: true, action: decrease).help("Decrease decimals")
+        half(left: false, action: increase).help("Increase decimals")
+      }
+      if shows {
+        Text("Decimals")
+          .font(.system(size: 9))
+          .lineLimit(1)
+      }
+    }
+    .frame(minWidth: 40)
+  }
+
+  private func half(left: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 1) {
+        if left {
+          Image(systemName: "chevron.left").font(.system(size: 7, weight: .bold))
+        }
+        Text(".0").font(.system(size: 11, weight: .semibold, design: .monospaced))
+        if !left {
+          Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold))
+        }
+      }
+      .frame(width: 26, height: shows ? 24 : 32)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }

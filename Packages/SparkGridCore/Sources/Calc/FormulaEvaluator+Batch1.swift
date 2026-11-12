@@ -150,7 +150,11 @@ extension FormulaEvaluator {
         guard !start.isColOpen, !end.isColOpen else { return .error(.value) }
         return .number(Double(abs(end.col - start.col) + 1))
       default:
-        return .error(.value)
+        // ROWS(UNIQUE(…)) counts the rows the result would fill.
+        guard Self.spills(args[0]) else { return .error(.value) }
+        let array = evaluateArray(args[0])
+        if array.isSingle, case .error = array.first { return array.first }
+        return .number(Double(name == "ROWS" ? array.rows : array.cols))
       }
     case "MAXIFS":
       return evalExtremeIFS(args, pickMin: false)

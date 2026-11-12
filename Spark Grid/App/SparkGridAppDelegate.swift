@@ -263,6 +263,20 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     )
   }
 
+  @objc func exportPDF(_ sender: Any?) {
+    guard let spreadsheetViewModel = resolvedSpreadsheetViewModel() else {
+      let alert = NSAlert()
+      alert.messageText = "Can’t Export"
+      alert.informativeText = "Open a spreadsheet window before exporting a PDF."
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "OK")
+      alert.runModal()
+      return
+    }
+    SpreadsheetPrintController.presentPrintSetup(
+      from: spreadsheetViewModel, in: NSApp.keyWindow ?? NSApp.mainWindow, exportsPDF: true)
+  }
+
   private func configureMainWindow() {
     for window in NSApp.windows where window.canBecomeMain {
       if window.delegate !== self {

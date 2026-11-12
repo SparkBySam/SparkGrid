@@ -10,6 +10,7 @@ public enum FormulaFunctionKind: String, CaseIterable, Hashable {
   case text = "Text"
   case lookup = "Lookup"
   case dateTime = "Date & Time"
+  case financial = "Financial"
 
   public var title: String { rawValue }
 }
@@ -174,6 +175,111 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(name: "ROW", kind: .lookup, arguments: "[reference]"),
     FormulaFunctionEntry(name: "ROWS", kind: .lookup, arguments: "array"),
     FormulaFunctionEntry(name: "COLUMNS", kind: .lookup, arguments: "array"),
+    FormulaFunctionEntry(name: "PMT", kind: .financial, arguments: "rate, nper, pv, [fv], [type]"),
+    FormulaFunctionEntry(
+      name: "IPMT", kind: .financial,
+      arguments: "rate, per, nper, pv, [fv], [type]"),
+    FormulaFunctionEntry(
+      name: "PPMT", kind: .financial,
+      arguments: "rate, per, nper, pv, [fv], [type]"),
+    FormulaFunctionEntry(name: "FV", kind: .financial, arguments: "rate, nper, pmt, [pv], [type]"),
+    FormulaFunctionEntry(name: "PV", kind: .financial, arguments: "rate, nper, pmt, [fv], [type]"),
+    FormulaFunctionEntry(name: "NPER", kind: .financial, arguments: "rate, pmt, pv, [fv], [type]"),
+    FormulaFunctionEntry(
+      name: "RATE", kind: .financial,
+      arguments: "nper, pmt, pv, [fv], [type], [guess]"),
+    FormulaFunctionEntry(name: "NPV", kind: .financial, arguments: "rate, value1, [value2], ..."),
+    FormulaFunctionEntry(name: "IRR", kind: .financial, arguments: "values, [guess]"),
+    FormulaFunctionEntry(name: "XNPV", kind: .financial, arguments: "rate, values, dates"),
+    FormulaFunctionEntry(name: "XIRR", kind: .financial, arguments: "values, dates, [guess]"),
+    FormulaFunctionEntry(name: "DAYS", kind: .dateTime, arguments: "end_date, start_date"),
+    FormulaFunctionEntry(name: "DATEDIF", kind: .dateTime, arguments: "start_date, end_date, unit"),
+    FormulaFunctionEntry(
+      name: "NETWORKDAYS", kind: .dateTime,
+      arguments: "start_date, end_date, [holidays]"),
+    FormulaFunctionEntry(
+      name: "WORKDAY", kind: .dateTime,
+      arguments: "start_date, days, [holidays]"),
+    FormulaFunctionEntry(
+      name: "WEEKNUM", kind: .dateTime,
+      arguments: "serial_number, [return_type]"),
+    FormulaFunctionEntry(name: "ISOWEEKNUM", kind: .dateTime, arguments: "date"),
+    FormulaFunctionEntry(name: "STDEV", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "STDEV.S", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "STDEVP", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "STDEV.P", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "VAR", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "VAR.S", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "VARP", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "VAR.P", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "PERCENTILE", kind: .statistical, arguments: "array, k"),
+    FormulaFunctionEntry(name: "PERCENTILE.INC", kind: .statistical, arguments: "array, k"),
+    FormulaFunctionEntry(name: "QUARTILE", kind: .statistical, arguments: "array, quart"),
+    FormulaFunctionEntry(name: "QUARTILE.INC", kind: .statistical, arguments: "array, quart"),
+    FormulaFunctionEntry(name: "MODE", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(
+      name: "MODE.SNGL", kind: .statistical,
+      arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "CORREL", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "SLOPE", kind: .statistical, arguments: "known_ys, known_xs"),
+    FormulaFunctionEntry(name: "INTERCEPT", kind: .statistical, arguments: "known_ys, known_xs"),
+    FormulaFunctionEntry(name: "FORECAST", kind: .statistical, arguments: "x, known_ys, known_xs"),
+    FormulaFunctionEntry(
+      name: "FORECAST.LINEAR", kind: .statistical,
+      arguments: "x, known_ys, known_xs"),
+    FormulaFunctionEntry(
+      name: "COUNTUNIQUE", kind: .statistical,
+      arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "SUMSQ", kind: .math, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "MROUND", kind: .math, arguments: "number, multiple"),
+    FormulaFunctionEntry(name: "TRUNC", kind: .math, arguments: "number, [num_digits]"),
+    FormulaFunctionEntry(name: "EXP", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "LN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "LOG", kind: .math, arguments: "number, [base]"),
+    FormulaFunctionEntry(name: "LOG10", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "FACT", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "GCD", kind: .math, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "LCM", kind: .math, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "EVEN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ODD", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(
+      name: "SWITCH", kind: .logical,
+      arguments: "expression, value1, result1, ..., [default]"),
+    FormulaFunctionEntry(name: "XOR", kind: .logical, arguments: "logical1, [logical2], ..."),
+    FormulaFunctionEntry(name: "ISEVEN", kind: .logical, arguments: "number"),
+    FormulaFunctionEntry(name: "ISODD", kind: .logical, arguments: "number"),
+    FormulaFunctionEntry(name: "ISLOGICAL", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ISNA", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ISERR", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "NA", kind: .logical, arguments: ""),
+    FormulaFunctionEntry(
+      name: "CHOOSE", kind: .lookup,
+      arguments: "index_num, value1, [value2], ..."),
+    FormulaFunctionEntry(
+      name: "HYPERLINK", kind: .lookup,
+      arguments: "link_location, [friendly_name]"),
+    FormulaFunctionEntry(
+      name: "FILTER", kind: .lookup, arguments: "array, include, [if_empty]"),
+    FormulaFunctionEntry(
+      name: "SORT", kind: .lookup, arguments: "array, [sort_index], [sort_order], [by_col]"),
+    FormulaFunctionEntry(
+      name: "SORTBY", kind: .lookup,
+      arguments: "array, by_array1, [sort_order1], [by_array2, sort_order2], ..."),
+    FormulaFunctionEntry(
+      name: "UNIQUE", kind: .lookup, arguments: "array, [by_col], [exactly_once]"),
+    FormulaFunctionEntry(
+      name: "GETPIVOTDATA", kind: .lookup,
+      arguments: "data_field, pivot_table, [field1, item1], ..."),
+    FormulaFunctionEntry(
+      name: "TEXTBEFORE", kind: .text,
+      arguments: "text, delimiter, [instance_num], [match_mode], [match_end], [if_not_found]"),
+    FormulaFunctionEntry(
+      name: "TEXTAFTER", kind: .text,
+      arguments: "text, delimiter, [instance_num], [match_mode], [match_end], [if_not_found]"),
+    FormulaFunctionEntry(name: "CLEAN", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "CODE", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "UNICODE", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "UNICHAR", kind: .text, arguments: "number"),
   ]
 
   public static func groups(matching query: String) -> [FormulaFunctionGroup] {

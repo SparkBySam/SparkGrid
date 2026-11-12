@@ -45,11 +45,8 @@ struct FilterPopoverView: View {
 
       Divider()
 
-      Picker("Filter by", selection: $mode) {
-        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
+      SparkSegmentedPicker(
+        selection: $mode, options: Mode.allCases.map { ($0, $0.rawValue) }, equalWidths: true)
 
       if mode == .rules {
         rulesPane

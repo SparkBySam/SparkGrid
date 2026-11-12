@@ -126,9 +126,10 @@ public enum ScalarFormulaAnswers {
       if visiting.contains(visit) {
         return .error(.cycle)
       }
-      let raw = workbook.sheets[sheetIndex].cell(at: address).raw
+      let cell = workbook.sheets[sheetIndex].cell(at: address)
+      let raw = cell.raw
       guard FormulaSyntax.isFormula(raw) else {
-        let literal = CellValue.fromLiteralRaw(raw)
+        let literal = cell.literalValue
         memo[sheetIndex][address] = literal
         return literal
       }
@@ -142,8 +143,18 @@ public enum ScalarFormulaAnswers {
           return self.resolve(ref, activeSheet: sheetIndex)
         }
         evaluator.evaluationOrigin = address
+        if workbook.sheets.indices.contains(sheetIndex) {
+          evaluator.formulaSheetName = workbook.sheets[sheetIndex].name
+        }
         evaluator.namedRangeLookup = { [weak self] name in
           self?.namedRangeExpression(name)
+        }
+        evaluator.pivotLookup = { [weak self] sheet, address in
+          self?.workbook.sparkPivot(on: sheet, containing: address)
+        }
+        evaluator.spillBlocked = { [weak self] sheet, address in
+          self?.workbook.sheets.first { $0.name.caseInsensitiveCompare(sheet) == .orderedSame }?
+            .fileExtras.blockedSpills.contains(address) ?? false
         }
         evaluator.sheetExtent = { [weak self] name in
           self?.extent(named: name, activeSheet: sheetIndex) ?? (maxRow: 999, maxCol: 25)

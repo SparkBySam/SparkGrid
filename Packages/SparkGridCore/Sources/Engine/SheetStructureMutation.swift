@@ -10,6 +10,8 @@ import NumberFormat
 public enum SheetStructureMutation {
   public static func insertRows(into sheet: inout Sheet, at index: Int, count: Int = 1) {
     guard count > 0, index >= 0 else { return }
+    // Spilled values do not move with the cells: their formulas fill them in again after.
+    SpillLayout.clearSpills(in: &sheet)
 
     var newCells: [CellAddress: Cell] = [:]
     newCells.reserveCapacity(sheet.cells.count)
@@ -33,6 +35,8 @@ public enum SheetStructureMutation {
 
   public static func deleteRows(in sheet: inout Sheet, at index: Int, count: Int = 1) {
     guard count > 0, index >= 0 else { return }
+    // Spilled values do not move with the cells: their formulas fill them in again after.
+    SpillLayout.clearSpills(in: &sheet)
 
     var newCells: [CellAddress: Cell] = [:]
     for (address, cell) in sheet.cells {
@@ -56,6 +60,8 @@ public enum SheetStructureMutation {
 
   public static func insertColumns(into sheet: inout Sheet, at index: Int, count: Int = 1) {
     guard count > 0, index >= 0 else { return }
+    // Spilled values do not move with the cells: their formulas fill them in again after.
+    SpillLayout.clearSpills(in: &sheet)
 
     var newCells: [CellAddress: Cell] = [:]
     newCells.reserveCapacity(sheet.cells.count)
@@ -79,6 +85,8 @@ public enum SheetStructureMutation {
 
   public static func deleteColumns(in sheet: inout Sheet, at index: Int, count: Int = 1) {
     guard count > 0, index >= 0 else { return }
+    // Spilled values do not move with the cells: their formulas fill them in again after.
+    SpillLayout.clearSpills(in: &sheet)
 
     var newCells: [CellAddress: Cell] = [:]
     for (address, cell) in sheet.cells {
@@ -237,12 +245,28 @@ public enum SheetStructureMutation {
       shiftRangeKeepingSurvivors(
         range, axis: axis, index: index, delta: delta, deleteCount: deleteCount)
     }
+    if let area = extras.printArea { extras.printArea = keep(area) }
+    // A pivot table drawn here moves with its cells; one whose corner is deleted goes.
+    extras.sparkPivots = extras.sparkPivots.compactMap { pivot in
+      var next = pivot
+      switch axis {
+      case .row:
+        guard let row = shift(pivot.anchor.row) else { return nil }
+        next.anchor = CellAddress(row: row, col: pivot.anchor.col)
+      case .column:
+        guard let col = shift(pivot.anchor.col) else { return nil }
+        next.anchor = CellAddress(row: pivot.anchor.row, col: col)
+      }
+      return next
+    }
     switch axis {
     case .row:
+      extras.rowBreaks = shiftSet(extras.rowBreaks).filter { $0 > 0 }
       extras.hiddenRows = shiftSet(extras.hiddenRows)
       extras.rowOutlineLevels = shiftLevels(extras.rowOutlineLevels)
       extras.collapsedRows = shiftSet(extras.collapsedRows)
     case .column:
+      extras.columnBreaks = shiftSet(extras.columnBreaks).filter { $0 > 0 }
       extras.hiddenColumns = shiftSet(extras.hiddenColumns)
       extras.columnOutlineLevels = shiftLevels(extras.columnOutlineLevels)
       extras.collapsedColumns = shiftSet(extras.collapsedColumns)

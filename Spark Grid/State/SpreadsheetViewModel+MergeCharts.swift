@@ -22,6 +22,7 @@ extension SpreadsheetViewModel {
   /// (keeps the top-left cell of each merge, Excel-style).
   @discardableResult
   func mergeSelection(axis: MergeAxis = .all, confirmDiscard: Bool = true) -> MergeOutcome {
+    guard protectionAllows([], structural: true) else { return .cancelled }
     commitEditIfNeeded()
     let range = selectionRange
     let n = range.normalized
@@ -64,6 +65,10 @@ extension SpreadsheetViewModel {
           var cell = sheet.cell(at: address)
           if !cell.raw.isEmpty {
             cell.raw = ""
+            // A formula's saved result goes with it. Left behind in a cell with nothing typed,
+            // it would show and be read as a value that spilled there.
+            cell.importedFormulaResult = nil
+            cell.importedFormulaValueType = nil
             sheet.setCell(cell, at: address)
           }
         }
@@ -301,6 +306,38 @@ extension SpreadsheetViewModel {
     isInsertChartPresented = false
     editingChartID = nil
     return true
+  }
+
+  /// Points every chart on this sheet that reads `old` at `new` instead, as one undo step. A
+  /// pivot chart follows its pivot table this way when the table grows or shrinks.
+  func retargetCharts(from old: CellRange, to new: CellRange) {
+    let sheet = activeSheet
+    guard old != new, sheet.charts.contains(where: { $0.dataRange == old }) else { return }
+    let before = sheet.charts
+    let oldMax = old.normalized.maxCol
+    let newMax = new.normalized.maxCol
+    let charts = sheet.charts.map { chart -> SheetChart in
+      guard chart.dataRange == old else { return chart }
+      var next = chart
+      next.dataRange = new
+      // Columns are absolute. A chart that plotted every column out to the old edge keeps
+      // plotting every column; otherwise series past the new edge go.
+      var series = (chart.valueColumn.map { [$0] } ?? []) + chart.extraValueColumns
+      if let first = series.first, series == Array(first...max(first, oldMax)), first <= newMax {
+        series = Array(first...newMax)
+      } else {
+        series = series.filter { $0 <= newMax }
+      }
+      if chart.valueColumn != nil {
+        next.valueColumn = series.first
+        next.extraValueColumns = Array(series.dropFirst())
+      } else {
+        next.extraValueColumns = series
+      }
+      if let category = chart.categoryColumn, category > newMax { next.categoryColumn = nil }
+      return next
+    }
+    applyCharts(charts, undoBefore: before, actionName: "PivotChart")
   }
 
   func removeChart(id: UUID) {

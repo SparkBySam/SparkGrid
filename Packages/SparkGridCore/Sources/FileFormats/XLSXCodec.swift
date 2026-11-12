@@ -53,6 +53,7 @@ public nonisolated enum XLSXCodec {
     let underlinedFonts = underlinedFontIndices(archiveData: archiveData)
     let textRotationsByStyleIndex = importTextRotationsByStyleIndex(archiveData: archiveData)
     let clipTextStyleIndexes = importClipTextStyleIndexes(archiveData: archiveData)
+    let unlockedStyleIndexes = importUnlockedStyleIndexes(archiveData: archiveData)
     var sheets: [Sheet] = []
     let paths = try worksheetPathsForImport(file: file, archiveData: archiveData)
 
@@ -67,7 +68,8 @@ public nonisolated enum XLSXCodec {
         underlinedFontIds: underlinedFonts,
         themeStyleColors: themeStyleColors,
         textRotationsByStyleIndex: textRotationsByStyleIndex,
-        clipTextStyleIndexes: clipTextStyleIndexes
+        clipTextStyleIndexes: clipTextStyleIndexes,
+        unlockedStyleIndexes: unlockedStyleIndexes
       )
       expandSharedFormulas(into: &sheet, archiveData: archiveData, worksheetPath: path)
       importFormulaCachedValues(
@@ -89,6 +91,7 @@ public nonisolated enum XLSXCodec {
         themeScheme: themeScheme
       )
       importSparkCharts(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
+      importSparkPivots(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importSheetImages(
         into: &sheet,
         archiveData: archiveData,
@@ -98,6 +101,7 @@ public nonisolated enum XLSXCodec {
     }
 
     guard !sheets.isEmpty else { throw CodecError.emptyWorkbook }
+    importSheetBuiltInNames(archiveData: archiveData, into: &sheets)
     return Workbook(
       sheets: sheets,
       activeSheetIndex: 0,
@@ -183,6 +187,7 @@ public nonisolated enum XLSXCodec {
       let underlinedFonts = underlinedFontIndices(archiveData: data)
       let textRotationsByStyleIndex = importTextRotationsByStyleIndex(archiveData: data)
       let clipTextStyleIndexes = importClipTextStyleIndexes(archiveData: data)
+      let unlockedStyleIndexes = importUnlockedStyleIndexes(archiveData: data)
       themeScheme = scheme
       dxfs = importDifferentialFormats(archiveData: data, themeScheme: scheme)
       formats = cellFormatsByStyleIndex(
@@ -190,7 +195,8 @@ public nonisolated enum XLSXCodec {
         underlinedFontIds: underlinedFonts,
         themeStyleColors: themeStyleColors,
         textRotationsByStyleIndex: textRotationsByStyleIndex,
-        clipTextStyleIndexes: clipTextStyleIndexes
+        clipTextStyleIndexes: clipTextStyleIndexes,
+        unlockedStyleIndexes: unlockedStyleIndexes
       )
       sharedTexts = sharedStrings?.items.map(\.text) ?? []
       paths = try worksheetPathsForImport(file: file, archiveData: data)
@@ -203,7 +209,7 @@ public nonisolated enum XLSXCodec {
       let (name, path) = paths[index]
       guard let sheetData = package.data(for: path) else { throw CodecError.unreadable }
       var sheet = Sheet(name: name ?? "Sheet\(index + 1)")
-      let (conditionalFormatting, kept) = StreamingWorksheet.fill(
+      let (conditionalFormatting, kept, arrays) = StreamingWorksheet.fill(
         &sheet,
         data: sheetData,
         sharedTexts: sharedTexts,
@@ -222,10 +228,14 @@ public nonisolated enum XLSXCodec {
       let package = self.package
       importFileExtras(
         into: &sheet, kept: kept, package: { package.data(for: $0) }, worksheetPath: path)
+      XLSXCodec.adoptSpills(arrays, into: &sheet)
+      importSparkPivots(into: &sheet, archiveData: data, sheetIndex: index)
       return sheet
     }
 
     private func assemble(sheets: [Sheet]) -> Model.Workbook {
+      var sheets = sheets
+      importSheetBuiltInNames(archiveData: data, into: &sheets)
       var workbook = Workbook(
         sheets: sheets,
         activeSheetIndex: 0,
@@ -421,6 +431,9 @@ public nonisolated enum XLSXCodec {
           in: .whitespacesAndNewlines),
         !rawName.isEmpty
       else { continue }
+      if isSheetBuiltInName(rawName, localSheetId: xmlAttribute(attrs, named: "localSheetId")) {
+        continue
+      }
       let localSheet: String?
       if let local = xmlAttribute(attrs, named: "localSheetId"), let index = Int(local),
         sheets.indices.contains(index)
@@ -700,7 +713,7 @@ public nonisolated enum XLSXCodec {
   }
 
   /// A copy of the archive with one entry's contents replaced.
-  private static func replacingZipEntry(archiveData: Data, entryPath: String, with contents: Data)
+  public static func replacingZipEntry(archiveData: Data, entryPath: String, with contents: Data)
     -> Data?
   {
     guard let archive = try? Archive(data: archiveData, accessMode: .update, pathEncoding: nil),
@@ -759,7 +772,9 @@ public nonisolated enum XLSXCodec {
   }
 
   public static func zipEntryData(archiveData: Data, entryPath: String) -> Data? {
-    let cached = ZipPackage.cachedEntry(at: entryPath)
+    // An import in progress holds this archive's parts in memory. Only this archive's: another
+    // file loading at the same time must never answer for it.
+    let cached = ZipPackage.cachedEntry(in: archiveData, at: entryPath)
     if cached.0 { return cached.1 }
     let normalized = entryPath.hasPrefix("/") ? String(entryPath.dropFirst()) : entryPath
     guard let archive = try? Archive(data: archiveData, accessMode: .read, pathEncoding: nil) else {
@@ -804,7 +819,8 @@ public nonisolated enum XLSXCodec {
     underlinedFontIds: Set<Int>,
     themeStyleColors: ThemeResolvedStyleColors,
     textRotationsByStyleIndex: [Int: Int],
-    clipTextStyleIndexes: Set<Int>
+    clipTextStyleIndexes: Set<Int>,
+    unlockedStyleIndexes: Set<Int> = []
   ) {
     for row in worksheet.data?.rows ?? [] {
       for cell in row.cells {
@@ -823,7 +839,8 @@ public nonisolated enum XLSXCodec {
             underlinedFontIds: underlinedFontIds,
             themeStyleColors: themeStyleColors,
             textRotationsByStyleIndex: textRotationsByStyleIndex,
-            clipTextStyleIndexes: clipTextStyleIndexes
+            clipTextStyleIndexes: clipTextStyleIndexes,
+            unlockedStyleIndexes: unlockedStyleIndexes
           )
         {
           model.format = format
@@ -873,6 +890,25 @@ public nonisolated enum XLSXCodec {
     return rotations
   }
 
+  /// Cells whose style says `<protection locked="0"/>`: the ones a protected sheet lets people edit.
+  public static func importUnlockedStyleIndexes(archiveData: Data) -> Set<Int> {
+    guard let xml = zipEntryString(archiveData: archiveData, entryPath: "xl/styles.xml"),
+      xml.contains("locked=\"0\""),
+      let start = xml.range(of: "<cellXfs"),
+      let end = xml.range(of: "</cellXfs>", range: start.upperBound..<xml.endIndex),
+      let xfRegex = try? NSRegularExpression(
+        pattern: #"<xf\b[^>]*>(.*?)</xf>|<xf\b[^>]*/>"#, options: [.dotMatchesLineSeparators])
+    else { return [] }
+    let section = String(xml[start.lowerBound..<end.upperBound]) as NSString
+    var indexes = Set<Int>()
+    for (index, match) in xfRegex.matches(
+      in: section as String, range: NSRange(location: 0, length: section.length)
+    ).enumerated() where section.substring(with: match.range).contains("locked=\"0\"") {
+      indexes.insert(index)
+    }
+    return indexes
+  }
+
   /// Clip is not an OOXML alignment flag. Spark Grid stores it beside wrapText so a round trip keeps it.
   public static func importClipTextStyleIndexes(archiveData: Data) -> Set<Int> {
     guard let xml = zipEntryString(archiveData: archiveData, entryPath: "xl/styles.xml") else {
@@ -888,7 +924,10 @@ public nonisolated enum XLSXCodec {
         pattern: #"<xf\b[^>]*>(.*?)</xf>|<xf\b[^>]*/>"#,
         options: [.dotMatchesLineSeparators]
       ),
-      let clipRegex = try? NSRegularExpression(pattern: #"sparkTextDisplay="clip""#)
+      // 1.4 and later write sg:textDisplay in an ignorable namespace; earlier builds wrote
+      // sparkTextDisplay on the alignment element itself.
+      let clipRegex = try? NSRegularExpression(
+        pattern: #"(?:\bsparkTextDisplay|\b[A-Za-z_][\w.-]*:textDisplay)="clip""#)
     else { return [] }
 
     let nsSection = section as NSString
@@ -959,7 +998,8 @@ public nonisolated enum XLSXCodec {
     underlinedFontIds: Set<Int>,
     themeStyleColors: ThemeResolvedStyleColors,
     textRotationsByStyleIndex: [Int: Int],
-    clipTextStyleIndexes: Set<Int>
+    clipTextStyleIndexes: Set<Int>,
+    unlockedStyleIndexes: Set<Int> = []
   ) -> CellFormat? {
     guard let styleIndex else { return nil }
     let xf = styleFormat(at: styleIndex, styles: styles)
@@ -1069,6 +1109,10 @@ public nonisolated enum XLSXCodec {
       format.textRotation = rotation
       changed = true
     }
+    if unlockedStyleIndexes.contains(styleIndex) {
+      format.locked = false
+      changed = true
+    }
     if clipTextStyleIndexes.contains(styleIndex), !format.wrapText {
       format.textDisplay = .clip
       changed = true
@@ -1083,7 +1127,8 @@ public nonisolated enum XLSXCodec {
     underlinedFontIds: Set<Int>,
     themeStyleColors: ThemeResolvedStyleColors,
     textRotationsByStyleIndex: [Int: Int],
-    clipTextStyleIndexes: Set<Int>
+    clipTextStyleIndexes: Set<Int>,
+    unlockedStyleIndexes: Set<Int> = []
   ) -> [CellFormat?] {
     guard let styles, let items = styles.cellFormats?.items, !items.isEmpty else { return [] }
     var formats: [CellFormat?] = []
@@ -1096,7 +1141,8 @@ public nonisolated enum XLSXCodec {
           underlinedFontIds: underlinedFontIds,
           themeStyleColors: themeStyleColors,
           textRotationsByStyleIndex: textRotationsByStyleIndex,
-          clipTextStyleIndexes: clipTextStyleIndexes
+          clipTextStyleIndexes: clipTextStyleIndexes,
+          unlockedStyleIndexes: unlockedStyleIndexes
         )
       )
     }
@@ -1384,10 +1430,17 @@ public nonisolated enum XLSXCodec {
     files["_rels/.rels"] = rootRelsXML
     files["xl/workbook.xml"] = workbookXML(
       workbook, resultsWritten: includeFormulaCaches, pivotCaches: pivotCaches.element)
+    var extraRelationships = pivotCaches.rels
+    if workbook.sheets.contains(where: { !$0.fileExtras.spills.isEmpty }) {
+      files["xl/metadata.xml"] = dynamicArrayMetadataXML
+      extraRelationships +=
+        #"<Relationship Id="rIdMetadata" Type="\#(sheetMetadataRelationshipType)" "#
+        + #"Target="metadata.xml"/>"#
+    }
     files["xl/_rels/workbook.xml.rels"] = workbookRelsXML(
       sheetCount: sheetCount,
       includeTheme: workbook.xlsxThemeData != nil,
-      extraRelationships: pivotCaches.rels
+      extraRelationships: extraRelationships
     )
 
     let writtenSheets = sheetXML.snapshot()
@@ -1405,6 +1458,9 @@ public nonisolated enum XLSXCodec {
       }
       if let chartsData = sparkChartsJSON(workbook.sheets[index].charts) {
         files["xl/sparkGrid/charts\(index + 1).json"] = chartsData
+      }
+      if let pivotsData = sparkPivotsJSON(workbook.sheets[index].fileExtras.sparkPivots) {
+        files["xl/sparkGrid/pivots\(index + 1).json"] = pivotsData
       }
     }
 
@@ -1500,13 +1556,17 @@ public nonisolated enum XLSXCodec {
       ? ""
       : #"<bookViews><workbookView firstSheet="\#(firstVisible)" activeTab="\#(firstVisible)"/></bookViews>"#
     var definedNames = ""
-    if !workbook.namedRanges.isEmpty {
-      let items = workbook.namedRanges.values.sorted { $0.name.uppercased() < $1.name.uppercased() }
-      let body = items.map { named -> String in
+    // A `_xlnm.` name read by an older build has lost its sheet; each sheet writes its own.
+    let items = workbook.namedRanges.values
+      .filter { !$0.name.lowercased().hasPrefix("_xlnm.") }
+      .sorted { $0.name.uppercased() < $1.name.uppercased() }
+    let body =
+      items.map { named -> String in
         let formula = named.referenceText
         return
           #"<definedName name="\#(escapeXML(named.name))">\#(escapeXML(formula))</definedName>"#
-      }.joined()
+      }.joined() + sheetBuiltInNamesXML(workbook.sheets)
+    if !body.isEmpty {
       definedNames = "<definedNames>\(body)</definedNames>"
     }
     // A formula saved without its result (after a sort, say) would open blank in a reader that
@@ -1582,6 +1642,15 @@ public nonisolated enum XLSXCodec {
     }
     xml.append(
       utf8: sheetViewsXML(frozenRows: sheet.frozenRows, frozenColumns: sheet.frozenColumns))
+    // Other apps draw the outline bar only when the sheet says how deep its groups go.
+    let rowDepth = extras.rowOutlineLevels.values.max() ?? 0
+    let columnDepth = extras.columnOutlineLevels.values.max() ?? 0
+    if rowDepth > 0 || columnDepth > 0 {
+      var format = #"<sheetFormatPr defaultRowHeight="15""#
+      if rowDepth > 0 { format += #" outlineLevelRow="\#(rowDepth)""# }
+      if columnDepth > 0 { format += #" outlineLevelCol="\#(columnDepth)""# }
+      xml.append(utf8: format + "/>")
+    }
     xml.append(utf8: columnsXML(sheet))
     xml.append(ascii: "<sheetData>")
     appendRows(
@@ -1609,6 +1678,7 @@ public nonisolated enum XLSXCodec {
     if let layout = extras.pageLayoutXML {
       xml.append(utf8: layout)
     }
+    xml.append(utf8: extras.pageBreaksXML)
     if includeDrawing {
       xml.append(utf8: sheetDrawingRelationshipXML(sheetIndex: 0))
     }
@@ -1646,6 +1716,7 @@ public nonisolated enum XLSXCodec {
     }
     rows.sort()
 
+    let spills = sheet.fileExtras.spills
     var cursor = 0
     for row in rows {
       while cursor < addresses.count {
@@ -1675,6 +1746,7 @@ public nonisolated enum XLSXCodec {
         appendCell(
           sheet.cell(at: address),
           at: address,
+          spill: spills.isEmpty ? nil : spills[address],
           stringIndex: stringIndex,
           formatIndex: formatIndex,
           includeFormulaCaches: includeFormulaCaches,
@@ -1688,6 +1760,7 @@ public nonisolated enum XLSXCodec {
   private static func appendCell(
     _ cell: Cell,
     at address: CellAddress,
+    spill: CellRange? = nil,
     stringIndex: FrozenMap<String, Int>,
     formatIndex: FrozenMap<CellFormat, Int>,
     includeFormulaCaches: Bool,
@@ -1705,13 +1778,21 @@ public nonisolated enum XLSXCodec {
     }
     switch kind {
     case .formula:
-      let formula = String(cell.raw.drop(while: { $0 == "=" || $0.isWhitespace }))
+      let formula = ExcelFutureFunctions.prefixed(
+        String(cell.raw.drop(while: { $0 == "=" || $0.isWhitespace })))
       let cache =
         includeFormulaCaches
         ? formulaCacheMarkup(cell)
         : (typeAttribute: "", valueElement: "")
       xml.append(utf8: cache.typeAttribute)
-      xml.append(ascii: "><f>")
+      if let spill {
+        // Marks the formula as spilling (metadata.xml) and gives the cells its results fill.
+        xml.append(ascii: " cm=\"1\"><f t=\"array\" ref=\"")
+        xml.append(utf8: spill.a1Label)
+        xml.append(ascii: "\">")
+      } else {
+        xml.append(ascii: "><f>")
+      }
       xml.append(escaped: formula)
       xml.append(ascii: "</f>")
       xml.append(utf8: cache.valueElement)
@@ -1734,6 +1815,22 @@ public nonisolated enum XLSXCodec {
         xml.append(escaped: cell.raw)
         xml.append(ascii: "</t></is></c>")
       }
+    case .spilled:
+      // A spilled result is saved as the value it shows.
+      let markup = formulaCacheMarkup(cell)
+      if markup.typeAttribute == #" t="str""# {
+        let text = cell.importedFormulaResult ?? ""
+        xml.append(ascii: " t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+        xml.append(escaped: text)
+        xml.append(ascii: "</t></is></c>")
+      } else if markup.valueElement.isEmpty {
+        xml.append(ascii: "/>")
+      } else {
+        xml.append(utf8: markup.typeAttribute)
+        xml.append(ascii: ">")
+        xml.append(utf8: markup.valueElement)
+        xml.append(ascii: "</c>")
+      }
     case .emptyFormatted:
       xml.append(ascii: "/>")
     case .skip:
@@ -1744,6 +1841,7 @@ public nonisolated enum XLSXCodec {
   /// ECMA-376 error codes. Anything else is written as text so the package stays valid.
   private static let ooxmlErrorCodes: Set<String> = [
     "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A", "#GETTING_DATA",
+    "#SPILL!", "#CALC!",
   ]
 
   private static func formulaCacheMarkup(_ cell: Cell) -> (
@@ -1862,8 +1960,10 @@ public nonisolated enum XLSXCodec {
       let alignmentXML = style.alignmentXML
       let applyBorder = borderId == 0 ? "0" : "1"
       let applyAlignment = alignmentXML.isEmpty ? "0" : "1"
+      let protection = style.locked ? "" : #"<protection locked="0"/>"#
+      let applyProtection = style.locked ? "" : #" applyProtection="1""#
       cellXfs +=
-        #"<xf numFmtId="\#(numFmtId)" fontId="\#(fontId)" fillId="\#(fillId)" borderId="\#(borderId)" xfId="0" applyFont="1" applyFill="1" applyBorder="\#(applyBorder)" applyAlignment="\#(applyAlignment)" applyNumberFormat="1">\#(alignmentXML)</xf>"#
+        #"<xf numFmtId="\#(numFmtId)" fontId="\#(fontId)" fillId="\#(fillId)" borderId="\#(borderId)" xfId="0" applyFont="1" applyFill="1" applyBorder="\#(applyBorder)" applyAlignment="\#(applyAlignment)" applyNumberFormat="1"\#(applyProtection)>\#(alignmentXML)\#(protection)</xf>"#
     }
 
     let numFmts =
@@ -1871,9 +1971,15 @@ public nonisolated enum XLSXCodec {
       .sorted { $0.value < $1.value }
       .map { #" <numFmt numFmtId="\#($0.value)" formatCode="\#(escapeXML($0.key))"/>"# }
       .joined()
+    let styleSheetExtraNamespaces =
+      styles.contains(where: \.clipText)
+      ? #" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006""#
+        + #" xmlns:\#(StyleKey.sparkPrefix)="\#(StyleKey.sparkNamespace)""#
+        + #" mc:Ignorable="\#(StyleKey.sparkPrefix)""#
+      : ""
     let xml = """
       <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-      <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+      <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"\(styleSheetExtraNamespaces)>
       <numFmts count="\(customFormats.count)">\(numFmts)</numFmts>
       <fonts count="\(styles.count)">\(fonts)</fonts>
       <fills count="\(fillCount)">\(fills)</fills>
@@ -1946,6 +2052,7 @@ public nonisolated enum XLSXCodec {
     if upper == "TRUE" || upper == "FALSE" { return .boolean }
     if Double(cell.raw) != nil, !cell.raw.contains(where: \.isLetter) { return .number }
     if !cell.raw.isEmpty { return .sharedString }
+    if cell.importedFormulaResult != nil { return .spilled }
     if cell.format != nil { return .emptyFormatted }
     return .skip
   }
@@ -1967,6 +2074,7 @@ private nonisolated enum ExportCellKind {
   case number
   case boolean
   case sharedString
+  case spilled
   case emptyFormatted
   case skip
 }
@@ -2135,6 +2243,11 @@ private nonisolated struct StyleBorderKey: Hashable {
 }
 
 private nonisolated struct StyleKey: Hashable {
+  /// Spark Grid's own style settings live in this namespace, which the style sheet marks
+  /// mc:Ignorable so other apps skip them instead of reporting the file as damaged.
+  static let sparkPrefix = "sg"
+  static let sparkNamespace = "urn:sparkgrid:xlsx:2026"
+
   var bold = false
   var italic = false
   var underline = false
@@ -2151,6 +2264,7 @@ private nonisolated struct StyleKey: Hashable {
   var wrapText = false
   var clipText = false
   var textRotation = 0
+  var locked = true
 
   static let `default` = StyleKey()
 
@@ -2172,6 +2286,7 @@ private nonisolated struct StyleKey: Hashable {
     wrapText = format.wrapText
     clipText = format.textDisplay == .clip
     textRotation = format.textRotation
+    locked = format.locked
   }
 
   var alignmentXML: String {
@@ -2188,7 +2303,7 @@ private nonisolated struct StyleKey: Hashable {
     case .middle: attrs.append(#"vertical="center""#)
     }
     if wrapText { attrs.append(#"wrapText="1""#) }
-    if clipText { attrs.append(#"sparkTextDisplay="clip""#) }
+    if clipText { attrs.append(#"\#(Self.sparkPrefix):textDisplay="clip""#) }
     if textRotation != 0 { attrs.append(#"textRotation="\#(textRotation)""#) }
     guard !attrs.isEmpty else { return "" }
     return "<alignment \(attrs.joined(separator: " "))/>"

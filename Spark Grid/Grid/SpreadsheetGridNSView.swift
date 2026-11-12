@@ -11,6 +11,15 @@ final class SpreadsheetGridNSView: NSView {
   static let defaultRowHeight = Workbook.defaultRowHeight
   /// Theme colors resolved for this view's appearance and accent. See `theme`.
   private var themeCache: (key: SparkTheme.PaletteKey, palette: SparkTheme.Palette)?
+  private struct OutlineCacheKey: Equatable {
+    var revision: Int
+    var sheet: Int
+  }
+  private var outlineCache:
+    (
+      key: OutlineCacheKey, rows: [Int: SpreadsheetViewModel.OutlineGroup],
+      columns: [Int: SpreadsheetViewModel.OutlineGroup]
+    )?
 
   var viewModel: SpreadsheetViewModel? {
     didSet {
@@ -34,6 +43,9 @@ final class SpreadsheetGridNSView: NSView {
           if self.scrollTilesPresented {
             self.rerenderPresentedTiles()
           } else {
+            // Idle scroll pictures were drawn with the old paint.
+            self.needsViewportTileWarm = true
+            self.discardScrollTiles()
             self.needsDisplay = true
           }
         }
@@ -210,6 +222,8 @@ final class SpreadsheetGridNSView: NSView {
   private var inGridDraw = false
   private var testingSkipDraw = false
   private(set) var liveScrollTextPaints = 0
+  /// Debug checks: every string the live grid painted since this was set to an empty set.
+  var testingPaintedTexts: Set<String>?
   private(set) var liveScrollPlaneBuilds = 0
   private(set) var liveScrollHeaderDraws = 0
   private(set) var liveScrollMaxRow = -1
@@ -239,6 +253,17 @@ final class SpreadsheetGridNSView: NSView {
     let bytes = data.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
     return "\(bytes[offset]),\(bytes[offset + 1]),\(bytes[offset + 2]),\(bytes[offset + 3])"
   }
+
+  /// Drops the scroll pictures so the next draw paints every cell itself. A snapshot of the
+  /// grid's layer then shows the cells rather than only the headers drawn around the pictures.
+  func testingPaintCellsLive() {
+    discardScrollTiles()
+    needsViewportTileWarm = false
+    needsDisplay = true
+  }
+
+  /// What the grid last painted for itself, without the views on top of it.
+  func testingFrameImage() -> CGImage? { frameBitmap?.makeImage() }
 
   func testingWriteLayerPNG(to path: String) {
     let width = Int(bounds.width.rounded(.down))
@@ -5451,6 +5476,7 @@ final class SpreadsheetGridNSView: NSView {
         visible.fill()
         // Under the label, so the number or letter stays readable.
         drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
+        drawOutlineButtons(outlineButtons(column: col, rect: rect))
         drawHeaderLabel(
           A1Notation.columnLabel(for: col) as NSString,
           centeredIn: onScreen,
@@ -5535,9 +5561,16 @@ final class SpreadsheetGridNSView: NSView {
         // The accent marks every row of a filtered list.
         // Under the label, so the number or letter stays readable.
         drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
+        let rowButtons = outlineButtons(row: row, rect: rect)
+        drawOutlineButtons(rowButtons)
+        var labelRect = onScreen
+        if !rowButtons.isEmpty {
+          labelRect.origin.x += 10
+          labelRect.size.width = max(0, labelRect.width - 10)
+        }
         drawHeaderLabel(
           "\(row + 1)" as NSString,
-          centeredIn: onScreen,
+          centeredIn: labelRect,
           clip: visible,
           color: viewModel?.isShownByActiveFilter(row) == true ? theme.accent : headerText
         )
@@ -5581,13 +5614,13 @@ final class SpreadsheetGridNSView: NSView {
     var marks: [HiddenRunChevron] = []
     // At the header's left edge: row numbers are centered and long ones reached the right edge.
     let x = rect.minX + 3
-    if sheet.isRowHidden(row + 1) {
+    if sheet.isRowHidden(row + 1), !startsGroupWithButton(.rows, at: row + 1) {
       marks.append(
         HiddenRunChevron(
           rect: NSRect(x: x, y: rect.maxY - 8, width: 9, height: 5), direction: .down,
           axis: .rows, hiddenIndex: row + 1))
     }
-    if row > 0, sheet.isRowHidden(row - 1) {
+    if row > 0, sheet.isRowHidden(row - 1), outlineButtonMap(.rows)[row] == nil {
       marks.append(
         HiddenRunChevron(
           rect: NSRect(x: x, y: rect.minY + 3, width: 9, height: 5), direction: .up,
@@ -5602,13 +5635,13 @@ final class SpreadsheetGridNSView: NSView {
     else { return [] }
     var marks: [HiddenRunChevron] = []
     let y = rect.midY - 4.5
-    if sheet.isColumnHidden(col + 1) {
+    if sheet.isColumnHidden(col + 1), !startsGroupWithButton(.columns, at: col + 1) {
       marks.append(
         HiddenRunChevron(
           rect: NSRect(x: rect.maxX - 8, y: y, width: 5, height: 9), direction: .right,
           axis: .columns, hiddenIndex: col + 1))
     }
-    if col > 0, sheet.isColumnHidden(col - 1) {
+    if col > 0, sheet.isColumnHidden(col - 1), outlineButtonMap(.columns)[col] == nil {
       marks.append(
         HiddenRunChevron(
           rect: NSRect(x: rect.minX + 3, y: y, width: 5, height: 9), direction: .left,
@@ -5647,6 +5680,93 @@ final class SpreadsheetGridNSView: NSView {
       theme.accent.withAlphaComponent(0.55).setStroke()
       path.stroke()
     }
+  }
+
+  // MARK: - Group (outline) buttons
+
+  /// A +/− box in the header just past a group of rows or columns. Clicking folds the group.
+  private struct OutlineButton {
+    var rect: NSRect
+    var axis: SpreadsheetViewModel.HideAxis
+    var group: SpreadsheetViewModel.OutlineGroup
+    var collapsed: Bool
+  }
+
+  /// The view model's buttons, worked out once per content change rather than per header.
+  private func outlineButtonMap(_ axis: SpreadsheetViewModel.HideAxis)
+    -> [Int: SpreadsheetViewModel.OutlineGroup]
+  {
+    guard let viewModel else { return [:] }
+    let key = OutlineCacheKey(
+      revision: viewModel.contentRevision, sheet: viewModel.workbook.activeSheetIndex)
+    if outlineCache?.key != key {
+      outlineCache = (key, viewModel.outlineButtons(.rows), viewModel.outlineButtons(.columns))
+    }
+    return axis == .rows ? outlineCache?.rows ?? [:] : outlineCache?.columns ?? [:]
+  }
+
+  /// True when `index` starts a group whose +/− button already marks the fold.
+  private func startsGroupWithButton(_ axis: SpreadsheetViewModel.HideAxis, at index: Int) -> Bool {
+    outlineButtonMap(axis).values.contains { $0.start == index }
+  }
+
+  private func outlineButtons(row: Int, rect: NSRect) -> [OutlineButton] {
+    guard let viewModel, viewModel.hasOutline.rows, rect.height >= 12,
+      let group = outlineButtonMap(.rows)[row]
+    else { return [] }
+    // At the left edge; the row number moves right to make room.
+    let box = NSRect(x: rect.minX + 3, y: rect.midY - 4.5, width: 9, height: 9)
+    return [
+      OutlineButton(
+        rect: box, axis: .rows, group: group,
+        collapsed: viewModel.isOutlineGroupCollapsed(group, .rows))
+    ]
+  }
+
+  private func outlineButtons(column col: Int, rect: NSRect) -> [OutlineButton] {
+    guard let viewModel, viewModel.hasOutline.columns, rect.width >= 30,
+      let group = outlineButtonMap(.columns)[col]
+    else { return [] }
+    let box = NSRect(x: rect.maxX - 22, y: rect.midY - 5, width: 10, height: 10)
+    return [
+      OutlineButton(
+        rect: box, axis: .columns, group: group,
+        collapsed: viewModel.isOutlineGroupCollapsed(group, .columns))
+    ]
+  }
+
+  private func drawOutlineButtons(_ buttons: [OutlineButton]) {
+    for button in buttons {
+      let r = button.rect.insetBy(dx: 0.5, dy: 0.5)
+      let color = theme.accent.withAlphaComponent(0.8)
+      color.setStroke()
+      let box = NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2)
+      box.lineWidth = 1
+      box.stroke()
+      let sign = NSBezierPath()
+      sign.lineWidth = 1.25
+      sign.lineCapStyle = .round
+      sign.move(to: NSPoint(x: r.minX + 2.5, y: r.midY))
+      sign.line(to: NSPoint(x: r.maxX - 2.5, y: r.midY))
+      if button.collapsed {
+        sign.move(to: NSPoint(x: r.midX, y: r.minY + 2.5))
+        sign.line(to: NSPoint(x: r.midX, y: r.maxY - 2.5))
+      }
+      sign.stroke()
+    }
+  }
+
+  private func outlineButton(at point: NSPoint) -> OutlineButton? {
+    let candidates: [OutlineButton]
+    switch headerHit(at: point) {
+    case .row(let row):
+      candidates = outlineButtons(row: row, rect: rowHeaderRect(for: row))
+    case .column(let col):
+      candidates = outlineButtons(column: col, rect: columnHeaderRect(for: col))
+    default:
+      return nil
+    }
+    return candidates.first { $0.rect.insetBy(dx: -3, dy: -3).contains(point) }
   }
 
   /// The chevron under `point` in a header, with a little slack around it.
@@ -6035,7 +6155,7 @@ final class SpreadsheetGridNSView: NSView {
     let paintFormat = viewModel.resolvedFormat(at: address)
     let hasBorders = paintFormat?.borders.hasAny == true || cell.format?.borders.hasAny == true
     let hasFill = paintFormat?.fillColor != nil
-    if cell.raw.isEmpty && !hasFill && !hasBorders { return }
+    if !cell.hasContent && !hasFill && !hasBorders { return }
     if viewModel.isEditing && address == viewModel.selectionAnchor && isEditorActive {
       if drawBorders, let borders = paintFormat?.borders ?? cell.format?.borders, borders.hasAny {
         CellFormatRenderer.drawBorders(borders, in: rect, scale: zoomScale)
@@ -6048,7 +6168,7 @@ final class SpreadsheetGridNSView: NSView {
       rect.fill()
     }
 
-    if !cell.raw.isEmpty {
+    if cell.hasContent {
       let value = viewModel.displayValue(at: address)
       let text = viewModel.displayString(at: address)
       let insetX = 4 * zoomScale
@@ -6064,6 +6184,11 @@ final class SpreadsheetGridNSView: NSView {
           drawFormat.textColor = CellFormatRenderer.codableColor(from: theme.errorText)
           CellFormatRenderer.drawText(text, in: textRect, format: drawFormat)
         } else {
+          if paintIsDarkMode(), CellFormatRenderer.fillColor(for: paintFormat) == nil,
+            drawFormat.textColor == SpreadsheetViewModel.linkTextColor
+          {
+            drawFormat.textColor = Self.darkModeLinkColor
+          }
           CellFormatRenderer.drawText(text, in: textRect, format: drawFormat)
         }
         NSGraphicsContext.restoreGraphicsState()
@@ -7260,7 +7385,7 @@ final class SpreadsheetGridNSView: NSView {
     let isFilterHeader = filterHeaderCell(row: address.row, col: address.col, viewModel: viewModel)
     let hideValue = paint.dataBarFraction != nil && paint.dataBarShowValue == false
     let drawFormat = paintFormat ?? cell.format ?? CellFormat()
-    if !hideValue, !cell.raw.isEmpty, !drawFormat.overflowsUnclipped {
+    if !hideValue, cell.hasContent, !drawFormat.overflowsUnclipped {
       if !displayText.isEmpty {
         let textRect = textDrawingRect(
           in: rect, hasIcon: paint.icon != nil, isFilterHeader: isFilterHeader)
@@ -7298,6 +7423,10 @@ final class SpreadsheetGridNSView: NSView {
     return textRect
   }
 
+  /// Link blue as shown on the dark grid.
+  static let darkModeLinkColor = CodableColor(
+    red: 88.0 / 255, green: 166.0 / 255, blue: 255.0 / 255, alpha: 1)
+
   private func drawPreparedText(
     _ text: String,
     value: CellValue,
@@ -7314,6 +7443,7 @@ final class SpreadsheetGridNSView: NSView {
       return
     }
     if tileCapture == nil { liveScrollTextPaints += 1 }
+    if tileCapture == nil { testingPaintedTexts?.insert(text) }
     var drawFormat = format
     let baseSize = drawFormat.fontSize ?? CellFormatRenderer.defaultFontSize
     drawFormat.fontSize = baseSize * zoomScale
@@ -7323,6 +7453,11 @@ final class SpreadsheetGridNSView: NSView {
       drawFormat.textColor = CellFormatRenderer.codableColor(
         from: Self.selectedCellTextColor(over: fillColor, theme: theme)
       )
+    } else if isDarkMode, fillColor == nil,
+      drawFormat.textColor == SpreadsheetViewModel.linkTextColor
+    {
+      // Link blue is dim on the dark grid; the file keeps it, the screen shows it lighter.
+      drawFormat.textColor = Self.darkModeLinkColor
     } else if isDarkMode, drawFormat.textColor == nil, let fillColor {
       // Automatic text is white in dark mode. On a file's light fill, such as a totals row,
       // it was nearly invisible; it now follows the fill, as conditional fills already do.
@@ -7597,7 +7732,7 @@ final class SpreadsheetGridNSView: NSView {
     }
     if !painted.insert(address).inserted { return }
     let cell = sheet.cell(at: address)
-    guard !cell.raw.isEmpty else { return }
+    guard cell.hasContent else { return }
     if rasterTarget == nil, let viewModel,
       viewModel.isEditing && address == viewModel.selectionAnchor && isEditorActive
     {
@@ -7627,6 +7762,7 @@ final class SpreadsheetGridNSView: NSView {
     let baseSize = measureFormat.fontSize ?? CellFormatRenderer.defaultFontSize
     measureFormat.fontSize = baseSize * zoomScale
     if tileCapture == nil { liveScrollTextPaints += 1 }
+    if tileCapture == nil { testingPaintedTexts?.insert(text) }
     let textWidth = CellFormatRenderer.overflowWidth(for: text, format: measureFormat)
     let row = address.row
     // Full size. A merge that is narrower than the sentence continues through empty cells
@@ -7648,7 +7784,7 @@ final class SpreadsheetGridNSView: NSView {
         let neighborRole = self.mergeRole(at: neighborAddress, sheet: sheet)
         if case .none = neighborRole {
           let neighbor = sheet.cell(at: neighborAddress)
-          guard !neighbor.raw.isEmpty else { return false }
+          guard neighbor.hasContent else { return false }
           return !self.cachedCellPaint(
             at: neighborAddress,
             viewModel: viewModel,
@@ -7749,7 +7885,7 @@ final class SpreadsheetGridNSView: NSView {
     case .anchor, .covered:
       return true
     case .none:
-      return !sheet.cell(at: address).raw.isEmpty
+      return sheet.cell(at: address).hasContent
     }
   }
 
@@ -7973,6 +8109,7 @@ final class SpreadsheetGridNSView: NSView {
     }
     drawFormulaReferenceHighlights(in: dirtyRect)
     drawCommentMarks(in: dirtyRect, sheet: sheet)
+    drawPageBreaks(in: dirtyRect, sheet: sheet)
     drawDropdownHints(in: dirtyRect, sheet: sheet)
     drawSelection(in: dirtyRect)
     drawDropdownButton(in: dirtyRect)
@@ -7996,6 +8133,46 @@ final class SpreadsheetGridNSView: NSView {
   /// A small corner triangle on each cell that has a comment, as other spreadsheet apps draw it.
   /// A small speech bubble in the top-right corner of each cell with a comment. A red corner
   /// triangle read as an error, or as part of a dropdown.
+  /// Manual page breaks: a dashed line above the row or left of the column that starts a page.
+  private func drawPageBreaks(in dirtyRect: NSRect, sheet: Sheet) {
+    let extras = sheet.fileExtras
+    guard !extras.rowBreaks.isEmpty || !extras.columnBreaks.isEmpty else { return }
+    let frozenRows = frozenRowCount()
+    let frozenCols = frozenColumnCount()
+    // Scrolled rows and columns pass under the frozen ones.
+    let scrolledTop =
+      frozenRows > 0 ? yForRow(frozenRows - 1) + rowHeight(at: frozenRows - 1) : headerSize
+    let scrolledLeft =
+      frozenCols > 0 ? xForColumn(frozenCols - 1) + columnWidth(at: frozenCols - 1) : headerSize
+    let path = NSBezierPath()
+    path.lineWidth = max(1, zoomScale)
+    path.setLineDash([4 * zoomScale, 3 * zoomScale], count: 2, phase: 0)
+    for row in extras.rowBreaks {
+      let y = yForRow(row).rounded() + 0.5
+      let top = row < frozenRows ? headerSize : scrolledTop
+      guard y > top, y >= dirtyRect.minY - 1, y <= dirtyRect.maxY + 1 else { continue }
+      path.move(to: NSPoint(x: headerSize, y: y))
+      path.line(to: NSPoint(x: bounds.maxX, y: y))
+    }
+    for col in extras.columnBreaks {
+      let x = xForColumn(col).rounded() + 0.5
+      let left = col < frozenCols ? headerSize : scrolledLeft
+      guard x > left, x >= dirtyRect.minX - 1, x <= dirtyRect.maxX + 1 else { continue }
+      path.move(to: NSPoint(x: x, y: headerSize))
+      path.line(to: NSPoint(x: x, y: bounds.maxY))
+    }
+    guard !path.isEmpty else { return }
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(
+      rect: NSRect(
+        x: headerSize, y: headerSize, width: max(0, bounds.width - headerSize),
+        height: max(0, bounds.height - headerSize))
+    ).addClip()
+    NSColor.secondaryLabelColor.setStroke()
+    path.stroke()
+    NSGraphicsContext.restoreGraphicsState()
+  }
+
   private func drawCommentMarks(in dirtyRect: NSRect, sheet: Sheet) {
     let comments = sheet.fileExtras.comments
     guard !comments.isEmpty else { return }
@@ -8172,10 +8349,20 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   @objc private func handleMenuOpenLink(_ sender: NSMenuItem) {
-    guard let viewModel, let link = viewModel.hyperlink(at: viewModel.selectionAnchor) else {
+    guard let viewModel, let link = viewModel.followableLink(at: viewModel.selectionAnchor) else {
       return
     }
     viewModel.openHyperlink(link)
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuLink(_ sender: NSMenuItem) {
+    guard let viewModel else { return }
+    LinkPresenter.present(from: viewModel, in: window)
+  }
+
+  @objc private func handleMenuRemoveLink(_ sender: NSMenuItem) {
+    viewModel?.removeLink()
     needsDisplay = true
   }
 
@@ -8430,6 +8617,7 @@ final class SpreadsheetGridNSView: NSView {
       visible.fill()
       // Under the label, so the number or letter stays readable.
       drawHiddenRunChevrons(hiddenRunChevrons(column: col, rect: rect))
+      drawOutlineButtons(outlineButtons(column: col, rect: rect))
       drawHeaderLabel(
         A1Notation.columnLabel(for: col) as NSString,
         centeredIn: visible,
@@ -8464,9 +8652,16 @@ final class SpreadsheetGridNSView: NSView {
       visible.fill()
       // Under the label, so the number or letter stays readable.
       drawHiddenRunChevrons(hiddenRunChevrons(row: row, rect: rect))
+      let rowButtons = outlineButtons(row: row, rect: rect)
+      drawOutlineButtons(rowButtons)
+      var labelRect = visible
+      if !rowButtons.isEmpty {
+        labelRect.origin.x += 10
+        labelRect.size.width = max(0, labelRect.width - 10)
+      }
       drawHeaderLabel(
         "\(row + 1)" as NSString,
-        centeredIn: visible,
+        centeredIn: labelRect,
         clip: visible,
         color: labelColor
       )
@@ -9000,6 +9195,17 @@ final class SpreadsheetGridNSView: NSView {
       testingInvalidateReason += " tiles"
       return
     }
+    // Pictures drawn for scrolling while the grid sat idle still show these cells as they were.
+    // The next trackpad scroll shows them, so typed text went blank until a click. Draw them again.
+    if !tileImageCache.isEmpty || !scrollTiles.isEmpty {
+      refreshScrollTiles(covering: addresses, sheet: sheet)
+      needsViewportTileWarm = true
+      // After the background queue has the new values, so the warm-up does not wait on it.
+      tileValues.queue.async { [weak self] in
+        DispatchQueue.main.async { self?.scheduleViewportTileWarm() }
+      }
+      testingInvalidateReason += " cached-tiles"
+    }
     // Frozen rows draw their spilling text in the frozen pass, which a limited repaint skips.
     let frozenRows = frozenRowCount()
     if frozenRows > 0, addresses.contains(where: { $0.row < frozenRows }) {
@@ -9073,7 +9279,7 @@ final class SpreadsheetGridNSView: NSView {
         while col >= 0, col <= lastColumn, walked < reach {
           let neighbor = CellAddress(row: address.row, col: col)
           result.insert(neighbor)
-          if !sheet.cell(at: neighbor).raw.isEmpty { break }
+          if sheet.cell(at: neighbor).hasContent { break }
           col += step
           walked += 1
         }
@@ -9131,11 +9337,14 @@ final class SpreadsheetGridNSView: NSView {
     let sheetID = sheet.id
     let dirty = addresses
     let palette = paletteResolvedOnMainThread()
+    let contentRevision = viewModel.contentRevision
     advanceTileCalcGeneration()
     tileValues.queue.async {
       let engine = FormulaEngine()
       engine.activateSheet(workbook)
       self.tileValues.engine = engine
+      // The warm-up would otherwise build this engine again, on the main thread.
+      self.tileValues.preparedContentRevision = contentRevision
       self.tileValues.sheet = sheet
       self.tileValues.sheetID = sheetID
       self.tileValues.rangeValueCache.removeAll(keepingCapacity: true)
@@ -9546,6 +9755,12 @@ final class SpreadsheetGridNSView: NSView {
       return
     }
 
+    if let button = outlineButton(at: point) {
+      viewModel?.toggleOutlineGroup(button.group, button.axis)
+      needsDisplay = true
+      return
+    }
+
     // Before resizing: the chevrons sit right at the edge a resize grabs.
     if let chevron = hiddenRunChevron(at: point) {
       viewModel?.unhideRun(chevron.axis, containing: chevron.hiddenIndex)
@@ -9695,6 +9910,15 @@ final class SpreadsheetGridNSView: NSView {
       window?.makeFirstResponder(self)
       return
     }
+    // Command-click on a link follows it; on any other cell it adds to the selection.
+    if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift),
+      let viewModel, let link = viewModel.followableLink(at: address)
+    {
+      viewModel.select(address)
+      viewModel.openHyperlink(link)
+      needsDisplay = true
+      return
+    }
     if event.modifierFlags.contains(.command) {
       let alreadySelected = viewModel?.isAddressSelected(address) == true
       viewModel?.commandClickCell(address)
@@ -9711,7 +9935,7 @@ final class SpreadsheetGridNSView: NSView {
     if event.clickCount >= 2 {
       isDraggingSelection = false
       viewModel?.beginEditing()
-      showEditor(selectAll: false)
+      if viewModel?.isEditing == true { showEditor(selectAll: false) }
     } else {
       // Keep the expanded merge selected, but stay on the cell that was clicked.
       scrollAddressIntoView(rawAddress)
@@ -9899,7 +10123,7 @@ final class SpreadsheetGridNSView: NSView {
       let normalized = source.normalized
       if end.row > normalized.maxRow || end.col > normalized.maxCol {
         viewModel.fillSelection(
-          from: source, to: end, copyOnly: event.modifierFlags.contains(.option))
+          from: source, to: end, alternate: event.modifierFlags.contains(.option))
       } else {
         viewModel.selectRange(from: source.start, to: source.end)
       }
@@ -9922,6 +10146,9 @@ final class SpreadsheetGridNSView: NSView {
       updateCursor(for: point)
     }
     headerDrag = nil
+    if isDraggingSelection {
+      viewModel?.applyFormatPainterIfActive()
+    }
     isDraggingSelection = false
     if isDraggingDeselection {
       isDraggingDeselection = false
@@ -10053,8 +10280,16 @@ final class SpreadsheetGridNSView: NSView {
     }
 
     let menu = NSMenu()
-    if let viewModel, viewModel.hyperlink(at: viewModel.selectionAnchor) != nil {
+    if let viewModel, viewModel.followableLink(at: viewModel.selectionAnchor) != nil {
       _ = addMenuItem(menu, "Open Link", #selector(handleMenuOpenLink(_:)))
+    }
+    if let viewModel, viewModel.selectionAxis == .cells {
+      let hasLink = viewModel.selectedHyperlink != nil
+      _ = addMenuItem(
+        menu, hasLink ? "Edit Link…" : "Add Link…", #selector(handleMenuLink(_:)))
+      if hasLink {
+        _ = addMenuItem(menu, "Remove Link", #selector(handleMenuRemoveLink(_:)))
+      }
       menu.addItem(.separator())
     }
     if let viewModel, viewModel.selectionAxis == .cells {
@@ -10577,6 +10812,10 @@ final class SpreadsheetGridNSView: NSView {
         needsDisplay = true
         return
       }
+      if viewModel.formatPainterBlock != nil {
+        viewModel.formatPainterBlock = nil
+        return
+      }
     case 123, 124, 125, 126:
       if let imageID = viewModel.selectedImageID, let image = viewModel.image(with: imageID) {
         let nudge = event.modifierFlags.contains(.shift) ? 8.0 : 1.0
@@ -10628,14 +10867,14 @@ final class SpreadsheetGridNSView: NSView {
     case 120:
       // F2 edits the selected cell with the caret at the end, as other spreadsheet apps do.
       viewModel.beginEditing()
-      showEditor(selectAll: false)
+      if viewModel.isEditing { showEditor(selectAll: false) }
     case 36:
       if viewModel.isFindBarVisible {
         super.keyDown(with: event)
         return
       }
       viewModel.beginEditing()
-      showEditor(selectAll: false)
+      if viewModel.isEditing { showEditor(selectAll: false) }
       return
     case 48:
       // While editing, Tab / Shift-Tab already committed and moved one cell.
@@ -10662,9 +10901,7 @@ final class SpreadsheetGridNSView: NSView {
           || CharacterSet.symbols.contains(scalar)
           || scalar == " "
         if isPrintable {
-          viewModel.editText = chars
-          viewModel.isEditing = true
-          showEditor(selectAll: false)
+          if viewModel.beginTyping(chars) { showEditor(selectAll: false) }
           return
         }
       }
@@ -11052,7 +11289,7 @@ enum SpreadsheetEditorFlush {
     if let grid {
       grid.commitEditingForSave()
     } else {
-      (NSApp.delegate as? SparkGridAppDelegate)?.documentStore?.activeViewModel?
+      SparkGridAppDelegate.current?.documentStore?.activeViewModel?
         .commitEditIfNeeded()
     }
   }

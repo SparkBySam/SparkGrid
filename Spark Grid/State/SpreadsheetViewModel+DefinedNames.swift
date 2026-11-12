@@ -105,13 +105,7 @@ extension SpreadsheetViewModel {
   }
 
   private func registerDefinedNameUndo(before: Workbook, after: Workbook, action: String) {
-    undoManager?.registerUndo(withTarget: self) { target in
-      target.workbook = before
-      target.undoManager?.registerUndo(withTarget: target) { inner in
-        inner.workbook = after
-      }
-    }
-    undoManager?.setActionName(action)
+    registerPlainWorkbookUndo(before: before, after: after, action: action)
   }
 }
 

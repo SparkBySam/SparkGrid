@@ -1,6 +1,10 @@
 # Status
 
-Updated: 2026-11-04. Commit this file in the same commit as the work it describes.
+Updated: 2026-11-12. Commit this file in the same commit as the work it describes.
+
+## 1.4, on `claude/1.4`
+
+- Deleting rows or columns at the edge of a range shrinks the range (`=SUM(A2:A10)` with row 2 deleted is `=SUM(A2:A9)`). It used to become `#REF!` whenever a deleted row was the range's first or last one. A range is `#REF!` only when all of its rows (or columns) are deleted. This covers ranges on other sheets, whole-column and whole-row ranges, and named ranges (`FormulaRewriter.shiftRange`, `StructureShiftRangeTests`).
 
 ## 1.3 (version 1.3, build 7), not yet submitted
 

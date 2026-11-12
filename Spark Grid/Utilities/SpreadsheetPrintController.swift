@@ -1,18 +1,20 @@
 import AppKit
 import SparkGridCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Renders one sheet region for print preview and printing.
 final class SpreadsheetPrintNSView: NSView {
-  private let sheet: Sheet
+  let sheet: Sheet
   private let formulaEngine: FormulaEngine
   private let showGridlines: Bool
-  private let normalized: (minRow: Int, maxRow: Int, minCol: Int, maxCol: Int)
-  private let maxRow: Int
-  private let columnXs: [CGFloat]
-  private let columnWidths: [CGFloat]
-  private let rowYs: [CGFloat]
-  private let rowHeights: [CGFloat]
+  let normalized: (minRow: Int, maxRow: Int, minCol: Int, maxCol: Int)
+  let maxRow: Int
+  /// Positions and sizes in the view, one per printed column or row. Hidden ones are zero wide.
+  let columnXs: [CGFloat]
+  let columnWidths: [CGFloat]
+  let rowYs: [CGFloat]
+  let rowHeights: [CGFloat]
 
   static let headerWidth: CGFloat = 28
   static let headerHeight: CGFloat = 20
@@ -54,8 +56,11 @@ final class SpreadsheetPrintNSView: NSView {
     var columnWidths: [CGFloat] = []
     var columnXs: [CGFloat] = []
     var x = Self.headerWidth
+    let hiddenColumns = sheet.fileExtras.hiddenColumns
     for col in normalized.minCol...normalized.maxCol {
-      let width = sheet.columnWidth(for: col, default: Workbook.defaultColumnWidth)
+      let width =
+        hiddenColumns.contains(col)
+        ? 0 : sheet.columnWidth(for: col, default: Workbook.defaultColumnWidth)
       columnXs.append(x)
       columnWidths.append(width)
       x += width
@@ -115,7 +120,13 @@ final class SpreadsheetPrintNSView: NSView {
     bounds
   }
 
+  /// The part being drawn. Page strips draw one part each; anything outside it is left out so a
+  /// PDF holds each cell's text once.
+  private var drawRect = NSRect.infinite
+
   override func draw(_ dirtyRect: NSRect) {
+    drawRect = dirtyRect
+    defer { drawRect = .infinite }
     NSColor.white.setFill()
     bounds.fill()
 
@@ -129,8 +140,8 @@ final class SpreadsheetPrintNSView: NSView {
     }
 
     // Fills and in-cell text first, then overflow so a later fill cannot cover spilled text.
-    drawSheetCells(overflowPass: false)
-    drawSheetCells(overflowPass: true)
+    drawSheetCells(overflowPass: false, in: dirtyRect)
+    drawSheetCells(overflowPass: true, in: dirtyRect)
 
     let corner = NSRect(x: 0, y: 0, width: Self.headerWidth, height: Self.headerHeight)
     headerFill.setFill()
@@ -145,12 +156,14 @@ final class SpreadsheetPrintNSView: NSView {
 
     for col in normalized.minCol...normalized.maxCol {
       let colIndex = col - normalized.minCol
+      guard columnWidths[colIndex] > 0 else { continue }
       let header = NSRect(
         x: columnXs[colIndex],
         y: 0,
         width: columnWidths[colIndex],
         height: Self.headerHeight
       )
+      guard header.intersects(dirtyRect) else { continue }
       headerFill.setFill()
       header.fill()
       if showGridlines {
@@ -174,6 +187,7 @@ final class SpreadsheetPrintNSView: NSView {
         width: Self.headerWidth,
         height: rowHeights[rowIndex]
       )
+      guard header.intersects(dirtyRect) else { continue }
       headerFill.setFill()
       header.fill()
       if showGridlines {
@@ -233,7 +247,7 @@ final class SpreadsheetPrintNSView: NSView {
     path.stroke()
   }
 
-  private func drawSheetCells(overflowPass: Bool) {
+  private func drawSheetCells(overflowPass: Bool, in dirtyRect: NSRect) {
     for (address, cell) in sheet.cells {
       guard
         address.row >= normalized.minRow,
@@ -244,12 +258,19 @@ final class SpreadsheetPrintNSView: NSView {
       let rowIndex = address.row - normalized.minRow
       guard rowHeights[rowIndex] > 0 else { continue }
       let colIndex = address.col - normalized.minCol
+      guard columnWidths[colIndex] > 0 else { continue }
       let rect = NSRect(
         x: columnXs[colIndex],
         y: rowYs[rowIndex],
         width: columnWidths[colIndex],
         height: rowHeights[rowIndex]
       )
+      // Overflowing text can reach other columns, so only rows are culled on that pass.
+      if overflowPass {
+        guard rect.maxY > dirtyRect.minY, rect.minY < dirtyRect.maxY else { continue }
+      } else if !rect.intersects(dirtyRect) {
+        continue
+      }
       drawCellContent(cell, at: address, in: rect, overflowPass: overflowPass)
     }
   }
@@ -264,7 +285,7 @@ final class SpreadsheetPrintNSView: NSView {
       rect.fill()
     }
 
-    if !cell.raw.isEmpty, format.overflowsUnclipped == overflowPass {
+    if cell.hasContent, format.overflowsUnclipped == overflowPass {
       let text = formulaEngine.displayString(at: address, sheet: sheet, format: cell.format)
       let textRect = rect.insetBy(dx: 4, dy: 2)
       if textRect.width > 1, textRect.height > 1, !text.isEmpty {
@@ -272,6 +293,7 @@ final class SpreadsheetPrintNSView: NSView {
           overflowPass
           ? overflowClipRect(
             for: address, text: text, format: format, textRect: textRect, cellRect: rect) : rect
+        guard clip.intersects(drawRect) else { return }
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: clip).addClip()
         CellFormatRenderer.drawText(
@@ -380,7 +402,7 @@ final class SpreadsheetPrintNSView: NSView {
     let paintFormat = resolvedFormat(at: address, cell: cell)
     drawCellContent(cell, at: address, in: rect, overflowPass: false)
     drawCellContent(cell, at: address, in: rect, overflowPass: true)
-    if showGridlines || !cell.raw.isEmpty || paintFormat?.fillColor != nil {
+    if showGridlines || cell.hasContent || paintFormat?.fillColor != nil {
       gridLine.setStroke()
       NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).stroke()
     }
@@ -424,15 +446,16 @@ final class SpreadsheetPrintNSView: NSView {
   }
 }
 
-/// Full paper page with the grid drawn according to scale and alignment options.
+/// Full paper pages of one grid region, split on row and column edges by `SpreadsheetPrintLayout`.
 final class SpreadsheetPrintPaginatedView: NSView {
   private let gridView: SpreadsheetPrintNSView
   private let options: SpreadsheetPrintOptions
   private let sheetName: String
-  private let pageIndex: Int
-  private let pageCount: Int
-  private let fitScale: CGFloat
-  private let pageOffset: NSPoint
+  /// The page drawn outside a print operation, for the preview.
+  var pageIndex: Int
+  let layout: SpreadsheetPrintLayout
+
+  var pageCount: Int { max(1, layout.pages.count) }
 
   override var isFlipped: Bool { true }
 
@@ -440,25 +463,16 @@ final class SpreadsheetPrintPaginatedView: NSView {
     gridView: SpreadsheetPrintNSView,
     options: SpreadsheetPrintOptions,
     sheetName: String,
-    pageIndex: Int = 1,
-    pageCount: Int = 1
+    pageIndex: Int = 1
   ) {
     self.gridView = gridView
     self.options = options
     self.sheetName = sheetName
+    self.layout = SpreadsheetPrintLayout(
+      gridView: gridView, sheet: gridView.sheet, options: options)
     self.pageIndex = max(1, pageIndex)
-    self.pageCount = max(1, pageCount)
-    let naturalSize = gridView.bounds.size
-    self.fitScale = options.fitScale(forContent: naturalSize)
-    self.pageOffset = Self.pageContentOffset(
-      pageIndex: self.pageIndex,
-      options: options,
-      contentSize: naturalSize,
-      scale: self.fitScale
-    )
-
     super.init(frame: NSRect(origin: .zero, size: options.pageSize))
-    gridView.frame = NSRect(origin: .zero, size: naturalSize)
+    gridView.frame = NSRect(origin: .zero, size: gridView.bounds.size)
   }
 
   @available(*, unavailable)
@@ -475,85 +489,22 @@ final class SpreadsheetPrintPaginatedView: NSView {
     bounds
   }
 
-  private var activePageIndex: Int {
-    if let current = NSPrintOperation.current?.currentPage, current >= 1 {
-      return min(current, pageCount)
-    }
-    return pageIndex
-  }
-
-  /// Content scroll offset (in unscaled points) for a 1-based page index.
-  static func pageContentOffset(
-    pageIndex: Int,
-    options: SpreadsheetPrintOptions,
-    contentSize: NSSize,
-    scale: CGFloat
-  ) -> NSPoint {
-    let margin = options.margins.inset
-    let printableWidth = max(1, options.pageSize.width - margin * 2)
-    let printableHeight = max(1, options.pageSize.height - margin * 2)
-    let scaledWidth = contentSize.width * scale
-    let scaledHeight = contentSize.height * scale
-    let pagesAcross = max(1, Int(ceil(scaledWidth / printableWidth)))
-    let pagesDown = max(1, Int(ceil(scaledHeight / printableHeight)))
-    let index = max(0, pageIndex - 1)
-
-    let col: Int
-    let row: Int
-    switch options.pageOrder {
-    case .overThenDown:
-      col = index % pagesAcross
-      row = index / pagesAcross
-    case .downThenOver:
-      row = index % pagesDown
-      col = index / pagesDown
-    }
-
-    return NSPoint(
-      x: CGFloat(col) * printableWidth / max(scale, 0.0001),
-      y: CGFloat(row) * printableHeight / max(scale, 0.0001)
-    )
-  }
+  /// Set by `SpreadsheetPrintBookView`, which knows the page across every sheet printed.
+  private var activePageIndex: Int { min(max(1, pageIndex), pageCount) }
 
   override func draw(_ dirtyRect: NSRect) {
     NSColor.white.setFill()
     bounds.fill()
 
-    let naturalSize = gridView.bounds.size
-    guard naturalSize.width > 1, naturalSize.height > 1 else { return }
-    guard let context = NSGraphicsContext.current?.cgContext else { return }
-
+    guard gridView.bounds.width > 1, gridView.bounds.height > 1,
+      let context = NSGraphicsContext.current?.cgContext
+    else { return }
     let currentPage = activePageIndex
-    let offset = Self.pageContentOffset(
-      pageIndex: currentPage,
-      options: options,
-      contentSize: naturalSize,
-      scale: fitScale
-    )
-
-    let margin = options.margins.inset
-    let printable = NSRect(
-      x: margin,
-      y: margin,
-      width: max(0, bounds.width - margin * 2),
-      height: max(0, bounds.height - margin * 2)
-    )
-
-    // Align within the first page's printable area; later pages are scrolled via offset.
-    let baseOrigin = options.contentOrigin(contentSize: naturalSize, scale: fitScale)
-    let drawOrigin =
-      currentPage == 1
-      ? baseOrigin
-      : NSPoint(x: margin, y: margin)
-
-    context.saveGState()
-    NSBezierPath(rect: printable).addClip()
-    context.translateBy(x: drawOrigin.x, y: drawOrigin.y)
-    context.scaleBy(x: fitScale, y: fitScale)
-    context.translateBy(x: -offset.x, y: -offset.y)
-    gridView.draw(NSRect(origin: .zero, size: naturalSize))
-    context.restoreGState()
-
+    if layout.pages.indices.contains(currentPage - 1) {
+      SpreadsheetPrintLayout.draw(
+        page: layout.pages[currentPage - 1], of: gridView, scale: layout.scale, options: options,
+        in: context)
+    }
     drawHeadersAndFooters(forPage: currentPage)
   }
 
@@ -590,72 +541,62 @@ final class SpreadsheetPrintPaginatedView: NSView {
   }
 }
 
-/// Stacks one or more sheet regions for workbook printing.
-final class SpreadsheetPrintStackNSView: NSView {
-  private let sectionViews: [SpreadsheetPrintNSView]
-  private let sectionTitles: [String?]
+/// Every printed region's pages in one run: one sheet, or each sheet in turn when printing the
+/// workbook. Print, preview and PDF export all page through this.
+final class SpreadsheetPrintBookView: NSView {
+  let sections: [SpreadsheetPrintPaginatedView]
+  /// The page drawn outside a print operation, counted across all sections.
+  var pageIndex = 1
+
+  var pageCount: Int { max(1, sections.reduce(0) { $0 + $1.pageCount }) }
 
   override var isFlipped: Bool { true }
+  override var isOpaque: Bool { true }
 
-  init(pages: [SpreadsheetPrintPage], showGridlines: Bool, workbook: Workbook? = nil) {
-    var views: [SpreadsheetPrintNSView] = []
-    var titles: [String?] = []
-    var y: CGFloat = 0
-    var maxWidth: CGFloat = 0
-    let titleGap: CGFloat = 28
-
-    for page in pages {
-      if let title = page.title {
-        y += titleGap
-      }
-      let view = SpreadsheetPrintNSView(
+  init(pages: [SpreadsheetPrintPage], options: SpreadsheetPrintOptions, workbook: Workbook) {
+    sections = pages.map { page in
+      let grid = SpreadsheetPrintNSView(
         sheet: page.sheet,
         range: page.range,
-        showGridlines: showGridlines,
+        showGridlines: options.showGridlines,
         workbook: workbook,
         hiddenRows: page.hiddenRows
       )
-      views.append(view)
-      titles.append(page.title)
-      maxWidth = max(maxWidth, view.bounds.width)
-      y += view.bounds.height + 32
+      return SpreadsheetPrintPaginatedView(
+        gridView: grid, options: options, sheetName: page.sheet.name)
     }
-
-    self.sectionViews = views
-    self.sectionTitles = titles
-    super.init(frame: NSRect(x: 0, y: 0, width: maxWidth, height: max(y, 1)))
-
-    y = 0
-    for (index, view) in views.enumerated() {
-      if sectionTitles[index] != nil {
-        y += titleGap
-      }
-      view.frame.origin = NSPoint(x: 0, y: y)
-      addSubview(view)
-      y += view.bounds.height + 32
-    }
+    super.init(frame: NSRect(origin: .zero, size: options.pageSize))
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
-  override var isOpaque: Bool { true }
+  override func knowsPageRange(_ range: NSRangePointer) -> Bool {
+    range.pointee = NSRange(location: 1, length: pageCount)
+    return true
+  }
+
+  override func rectForPage(_ page: Int) -> NSRect { bounds }
+
+  /// The section and its own page number for a page counted across the book.
+  func locate(_ page: Int) -> (SpreadsheetPrintPaginatedView, Int)? {
+    var remaining = page
+    for section in sections {
+      if remaining <= section.pageCount { return (section, remaining) }
+      remaining -= section.pageCount
+    }
+    return nil
+  }
 
   override func draw(_ dirtyRect: NSRect) {
-    NSColor.white.setFill()
-    dirtyRect.fill()
-
-    for (index, title) in sectionTitles.enumerated() {
-      guard let title else { continue }
-      let view = sectionViews[index]
-      let titleRect = NSRect(x: 0, y: view.frame.minY - 22, width: bounds.width, height: 18)
-      guard dirtyRect.intersects(titleRect) else { continue }
-      let attrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-        .foregroundColor: NSColor(calibratedWhite: 0.25, alpha: 1),
-      ]
-      (title as NSString).draw(in: titleRect, withAttributes: attrs)
+    let current = NSPrintOperation.current?.currentPage ?? pageIndex
+    guard let (section, index) = locate(min(max(1, current), pageCount)) else {
+      NSColor.white.setFill()
+      bounds.fill()
+      return
     }
+    section.pageIndex = index
+    section.draw(bounds)
   }
 }
 
@@ -663,38 +604,51 @@ enum SpreadsheetPrintController {
   private final class SetupWindowController: NSObject, NSWindowDelegate {
     var window: NSWindow?
 
+    /// Ends the sheet on its document window, so a save panel or print panel can take its place.
     func close() {
-      window?.close()
-      window = nil
+      // Cleared first: ending the sheet calls back into close().
+      guard let window else { return }
+      self.window = nil
+      window.sheetParent?.endSheet(window)
+      window.close()
     }
   }
 
   private static var setupController = SetupWindowController()
 
   @MainActor
-  static func presentPrintSetup(from viewModel: SpreadsheetViewModel, in window: NSWindow?) {
+  static func presentPrintSetup(
+    from viewModel: SpreadsheetViewModel, in window: NSWindow?, exportsPDF: Bool = false
+  ) {
     viewModel.commitEditIfNeeded()
+    // Found now: once this window is up it is the key window, and after it closes there may be none.
+    let window = window ?? NSApp.keyWindow ?? NSApp.mainWindow
     let documentTitle =
-      window?.title
-      .replacingOccurrences(of: " — Edited", with: "")
-      .replacingOccurrences(of: ".csv", with: "")
-      ?? "Untitled"
+      window.map {
+        ($0.title.replacingOccurrences(of: " — Edited", with: "") as NSString)
+          .deletingPathExtension
+      } ?? "Untitled"
     let options = SpreadsheetPrintOptions.default(for: viewModel, documentTitle: documentTitle)
     let rootView = SpreadsheetPrintSetupView(
       viewModel: viewModel,
       options: options,
+      exportsPDF: exportsPDF,
       onCancel: {
         setupController.close()
       },
       onPrint: { finalOptions in
         setupController.close()
         runSystemPrint(options: finalOptions, viewModel: viewModel, in: window)
+      },
+      onSavePDF: { finalOptions in
+        setupController.close()
+        savePDF(options: finalOptions, viewModel: viewModel, in: window)
       }
     )
 
     let hosting = NSHostingController(rootView: rootView)
     let setupWindow = NSWindow(contentViewController: hosting)
-    setupWindow.title = "Print"
+    setupWindow.title = exportsPDF ? "Export as PDF" : "Print"
     setupWindow.styleMask = [.titled, .closable]
     setupWindow.setContentSize(NSSize(width: 980, height: 660))
     setupWindow.minSize = NSSize(width: 820, height: 520)
@@ -737,42 +691,8 @@ enum SpreadsheetPrintController {
     let printInfo = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
     options.apply(to: printInfo)
 
-    let pageCount = max(
-      1,
-      SpreadsheetPrintSnapshotRenderer.estimatedPageCount(
-        for: SpreadsheetPrintPreviewContent(
-          contentRevision: viewModel.contentRevision,
-          options: options,
-          pages: pages,
-          workbook: viewModel.workbook
-        )
-      ))
-
-    let paginatedView: NSView
-    if pages.count == 1, pages[0].title == nil {
-      let page = pages[0]
-      let gridView = SpreadsheetPrintNSView(
-        sheet: page.sheet,
-        range: page.range,
-        showGridlines: options.showGridlines,
-        workbook: viewModel.workbook,
-        hiddenRows: page.hiddenRows
-      )
-      paginatedView = SpreadsheetPrintPaginatedView(
-        gridView: gridView,
-        options: options,
-        sheetName: page.sheet.name,
-        pageIndex: 1,
-        pageCount: pageCount
-      )
-    } else {
-      paginatedView = SpreadsheetPrintStackNSView(
-        pages: pages,
-        showGridlines: options.showGridlines,
-        workbook: viewModel.workbook
-      )
-    }
-
+    let paginatedView = SpreadsheetPrintBookView(
+      pages: pages, options: options, workbook: viewModel.workbook)
     paginatedView.frame = paginatedView.bounds
     paginatedView.layoutSubtreeIfNeeded()
     paginatedView.setNeedsDisplay(paginatedView.bounds)
@@ -807,6 +727,42 @@ enum SpreadsheetPrintController {
       operation.runModal(for: parentWindow, delegate: nil, didRun: nil, contextInfo: nil)
     } else {
       _ = operation.run()
+    }
+  }
+
+  /// Asks where to save, then writes every page of the chosen range as a PDF.
+  @MainActor
+  private static func savePDF(
+    options: SpreadsheetPrintOptions, viewModel: SpreadsheetViewModel, in window: NSWindow?
+  ) {
+    viewModel.commitEditIfNeeded()
+    let pages = options.pages(for: viewModel)
+    let panel = NSSavePanel()
+    panel.title = "Export as PDF"
+    panel.allowedContentTypes = [.pdf]
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = options.documentTitle + ".pdf"
+    let write = { (url: URL) in
+      do {
+        let result = try SpreadsheetPDFExporter.pdfData(
+          pages: pages, options: options, workbook: viewModel.workbook)
+        try result.data.write(to: url, options: .atomic)
+      } catch {
+        let alert = NSAlert()
+        alert.messageText = "Can’t Export PDF"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+      }
+    }
+    if let parent = window ?? NSApp.keyWindow ?? NSApp.mainWindow {
+      panel.beginSheetModal(for: parent) { response in
+        guard response == .OK, let url = panel.url else { return }
+        write(url)
+      }
+    } else if panel.runModal() == .OK, let url = panel.url {
+      write(url)
     }
   }
 
