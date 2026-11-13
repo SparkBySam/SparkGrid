@@ -29,6 +29,7 @@ Fixed
 • Results such as 186,000 × 70% show as 130200, not 130199.99999999999.
 • Undoing a sort puts every formula back as it was. Before, a total row sorted into the table could come back as #REF!.
 • Workbooks with cells set to clip their text open in other spreadsheet apps without a repair message.
+• Print setup can leave out the column letters and row numbers.
 • Printed pages end between rows and columns instead of cutting a row in half. Repeat frozen rows and columns now repeat on every page, and hidden rows and columns stay off the page.
 • Print areas from other apps' files open on the right sheet, and each sheet keeps its own.
 • Sort A to Z and Z to A leave a total row under the table where it is.

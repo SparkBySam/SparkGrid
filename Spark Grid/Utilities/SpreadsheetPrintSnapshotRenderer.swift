@@ -24,6 +24,7 @@ struct SpreadsheetPrintPreviewContent: Equatable {
       String(contentRevision),
       options.scope.rawValue,
       options.showGridlines ? "1" : "0",
+      options.showHeadings ? "1" : "0",
       options.paper.rawValue,
       options.isLandscape ? "L" : "P",
       options.scale.rawValue,

@@ -100,6 +100,8 @@ struct SpreadsheetPrintOptions: Equatable {
   var scale: SpreadsheetPrintScale
   var margins: SpreadsheetPrintMarginPreset
   var showGridlines: Bool
+  /// Column letters and row numbers around the cells.
+  var showHeadings: Bool = true
   var pageOrder: SpreadsheetPrintPageOrder
   var horizontalAlign: SpreadsheetPrintHorizontalAlign
   var verticalAlign: SpreadsheetPrintVerticalAlign

@@ -58,8 +58,8 @@ struct SpreadsheetPrintLayout {
     }()
     let titleHeight = titleRows.map { r in r.reduce(CGFloat(0)) { $0 + rowHeight($1) } } ?? 0
     let titleWidth = titleColumns.map { c in c.reduce(CGFloat(0)) { $0 + colWidth($1) } } ?? 0
-    let headerHeight = SpreadsheetPrintNSView.headerHeight
-    let headerWidth = SpreadsheetPrintNSView.headerWidth
+    let headerHeight = gridView.headerHeight
+    let headerWidth = gridView.headerWidth
 
     // Fit to page puts everything on one page; fit to width puts every column on each page.
     let extras = sheet.fileExtras

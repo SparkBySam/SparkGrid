@@ -12,6 +12,10 @@ Updated: 2026-11-12. Commit this file in the same commit as the work it describe
 
 - Size limit on opening files (Sam agreed Nov 13): 2 GB unpacked in all, and no part over 200 MB. Bytes are counted as they unpack, not taken from the sizes the file declares, so a small file that unpacks to far more stops early with "This workbook is too large to open…" instead of filling memory (`ZipPackage.Limits`, `ZipLimitTests`). The other two places that unpack parts use the same per-part cap.
 
+- Sam's 1.3 reports (Nov 13): (1) typing over a value showed the new letter over the old word (the typed letter drawn over a predicted word) while typing. The cell editor had macOS inline word predictions on, drawn a few points off the typed letters; predictions and automatic completion are now off in the cell editor and formula bar (`EditorSpellCheck`). (2) Coloring filtered rows also colored the rows the filter hid; formatting now skips filter-hidden rows, as Delete already did (`applyFormat`). Both in BugBash ("typing over a value hides the old text", "fill skips filtered rows"; each fails without its fix). Open: a fill that shows two shades split partway through a row, not yet reproduced (needs Sam's steps).
+
+- Print setup has a "Row and column headings" switch (Sam, Nov 13), on by default as before. Off, the printout leaves out the column letters and row numbers and pages reserve no room for them, so more rows fit. Like Gridlines it is chosen at print time, not saved in the file (BugBash "print without headings").
+
 ## 1.3 (version 1.3, build 7), not yet submitted
 
 1.2 (build 6) is in App Review. 1.3 is on `claude/1.3` (Spark-Grid#79, SparkGrid#3). Release notes are in `docs/release-notes-1.3.md`; `docs/BUGS.md` lists the fixes.

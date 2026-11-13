@@ -70,6 +70,9 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { printAreaAndPageBreaks() })
       results.append(MainActor.assumeIsolated { pdfExportKeepsPages() })
       results.append(MainActor.assumeIsolated { scrollWhileEditingKeepsColumnText() })
+      results.append(MainActor.assumeIsolated { typingOverAValueHidesTheOldText() })
+      results.append(MainActor.assumeIsolated { fillSkipsFilteredRows() })
+      results.append(MainActor.assumeIsolated { printWithoutHeadings() })
       results.append(MainActor.assumeIsolated { editThenTileScrollShowsEdit() })
       results.append(MainActor.assumeIsolated { linksInsertFollowRemove() })
       results.append(MainActor.assumeIsolated { pivotCreateDrawRefreshUndo() })
@@ -1612,6 +1615,222 @@ typealias Cell = SparkGridCore.Cell
 
     /// Typing in a cell, then scrolling before pressing Return, left other cells in that
     /// column blank until the edit ended (reported on 1.3, Nov 10).
+    /// Print setup can leave out the column letters and row numbers (Sam, Nov 13).
+    @MainActor
+    private static func printWithoutHeadings() -> Result {
+      let name = "print without headings"
+      var sheet = Sheet(name: "Report")
+      var red = CellFormat()
+      red.fillColor = CodableColor(red: 1, green: 0.23, blue: 0.25, alpha: 1)
+      for row in 0..<60 {
+        for col in 0..<3 {
+          var cell = Cell(raw: "r\(row) c\(col)")
+          cell.format = red
+          sheet.setCell(cell, at: CellAddress(row: row, col: col))
+        }
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      var options = SpreadsheetPrintOptions.default(for: vm)
+      options.scale = .normal
+      guard options.showHeadings, let page = options.pages(for: vm).first else {
+        return Result(name: name, passed: false, detail: "headings should start on")
+      }
+      let with = SpreadsheetPrintNSView(sheet: page.sheet, range: page.range)
+      options.showHeadings = false
+      let without = SpreadsheetPrintNSView(
+        sheet: page.sheet, range: page.range, showHeadings: options.showHeadings)
+      let widthSaved = with.bounds.width - without.bounds.width
+      let heightSaved = with.bounds.height - without.bounds.height
+      guard widthSaved == SpreadsheetPrintNSView.headerWidth,
+        heightSaved == SpreadsheetPrintNSView.headerHeight, without.columnXs.first == 0,
+        without.rowYs.first == 0
+      else {
+        return Result(
+          name: name, passed: false, detail: "size saved \(widthSaved) x \(heightSaved)")
+      }
+      // Pages reserve no heading strip, so more rows fit on each.
+      let pagesWith = SpreadsheetPrintLayout(gridView: with, sheet: page.sheet, options: options)
+      let pagesWithout = SpreadsheetPrintLayout(
+        gridView: without, sheet: page.sheet, options: options)
+      guard pagesWithout.pages.allSatisfy({ $0.yBands.first?.length == 0 }),
+        pagesWithout.pages.allSatisfy({ $0.xBands.first?.length == 0 }),
+        (pagesWithout.pages.first?.rows.count ?? 0) >= (pagesWith.pages.first?.rows.count ?? 0)
+      else {
+        return Result(name: name, passed: false, detail: "pages still keep a heading strip")
+      }
+      // The top-left corner shows the first cell's fill, not the gray heading corner.
+      guard let drawn = without.bitmapImageRepForCachingDisplay(in: without.bounds) else {
+        return Result(name: name, passed: false, detail: "no drawing")
+      }
+      without.cacheDisplay(in: without.bounds, to: drawn)
+      let scale = CGFloat(drawn.pixelsWide) / without.bounds.width
+      let corner = drawn.colorAt(x: Int(10 * scale), y: Int(8 * scale))?.usingColorSpace(.deviceRGB)
+      guard let corner, corner.redComponent > 0.8, corner.greenComponent < 0.45 else {
+        return Result(
+          name: name, passed: false,
+          detail: "top-left is not the cell: \(String(describing: corner))")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "no letters or numbers; \(pagesWithout.pages.first?.rows.count ?? 0) rows on page 1"
+      )
+    }
+
+    /// Coloring filtered rows (Sam, 1.3) also colored the rows the filter hid.
+    @MainActor
+    private static func fillSkipsFilteredRows() -> Result {
+      let name = "fill skips filtered rows"
+      var sheet = Sheet(name: "Leads")
+      sheet.setCell(Cell(raw: "Status"), at: .origin)
+      for (offset, status) in ["close", "open", "close", "open", "close"].enumerated() {
+        sheet.setCell(Cell(raw: status), at: CellAddress(row: offset + 1, col: 0))
+        sheet.setCell(Cell(raw: "note \(offset + 1)"), at: CellAddress(row: offset + 1, col: 1))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      let red = CodableColor(red: 1, green: 0.23, blue: 0.25, alpha: 1)
+      func filled() -> [Int] {
+        (1...5).filter { row in
+          (0...1).allSatisfy {
+            vm.activeSheet.cell(at: CellAddress(row: row, col: $0)).format?.fillColor == red
+          }
+        }
+      }
+      vm.selectRange(from: .origin, to: CellAddress(row: 5, col: 1))
+      step { vm.createFilter() }
+      step { vm.setFilterValues(column: 0, values: ["close"]) }
+      // Select the shown rows' cells, as dragging over them does, and fill.
+      vm.selectRange(from: CellAddress(row: 1, col: 0), to: CellAddress(row: 5, col: 1))
+      step { vm.setFillColor(red) }
+      guard filled() == [1, 3, 5] else {
+        return Result(name: name, passed: false, detail: "filled rows \(filled()), want [1, 3, 5]")
+      }
+      step { vm.setFilterValues(column: 0, values: nil) }
+      guard filled() == [1, 3, 5] else {
+        return Result(name: name, passed: false, detail: "after showing all: \(filled())")
+      }
+      undo.undo()
+      undo.undo()
+      guard filled().isEmpty else {
+        return Result(name: name, passed: false, detail: "undo left \(filled())")
+      }
+      return Result(name: name, passed: true, detail: "only the shown rows take the fill")
+    }
+
+    /// Typing over a cell's value (Sam, 1.3) showed the typed letter over another word: macOS's predicted end of the
+    /// word, drawn off the typed letters. Predictions are off, and nothing under the clear editor
+    /// (the frame, or the scroll pictures) still shows the old value.
+    @MainActor
+    private static func typingOverAValueHidesTheOldText() -> Result {
+      let name = "typing over a value hides the old text"
+      var sheet = Sheet(name: "Activity")
+      var red = CellFormat()
+      red.fillColor = CodableColor(red: 1, green: 0.23, blue: 0.25, alpha: 1)
+      for row in 0..<60 {
+        // Only the cell typed over has text, so no other text can be mistaken for it.
+        var cell = Cell(raw: row == 12 ? "Placeholder Name" : "")
+        cell.format = red
+        sheet.setCell(cell, at: CellAddress(row: row, col: 1))
+      }
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.viewModel = viewModel
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+      let target = CellAddress(row: 12, col: 1)
+      viewModel.selection = target
+      grid.display()
+      // As in Sam's screenshot: a scroll first, so the scroll pictures of the cells are showing.
+      let deadline = Date().addingTimeInterval(10)
+      while !grid.testingViewportTileCacheReady(), Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      }
+      grid.testingApplyScroll(dx: 0, dy: 2)
+      grid.testingFinishScrollTileFills()
+      RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+      let picturesBeforeTyping = grid.testingScrollTilesPresented
+      guard viewModel.beginTyping("S") else {
+        return Result(name: name, passed: false, detail: "typing refused")
+      }
+      grid.showEditor(selectAll: false)
+      window.displayIfNeeded()
+      RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+      window.displayIfNeeded()
+      // macOS's predicted end of the word drew over the typed letters (Sam's 1.3 report).
+      guard let typing = window.firstResponder as? NSTextView else {
+        return Result(name: name, passed: false, detail: "no text view while typing")
+      }
+      guard typing.inlinePredictionType == .no, !typing.isAutomaticTextCompletionEnabled else {
+        return Result(name: name, passed: false, detail: "word predictions are on in the cell")
+      }
+      // The pictures hold the old value; the editor is clear. They must be gone once typing starts.
+      if grid.testingScrollTilesPresented || grid.testingScrollSurfacesPresented {
+        return Result(
+          name: name, passed: false,
+          detail: "scroll pictures with the old value still show under the editor")
+      }
+      guard let image = grid.testingFrameImage() else {
+        return Result(name: name, passed: false, detail: "no frame")
+      }
+      // The cell's right part, past the typed "S", must be its plain fill in the grid's frame.
+      let rect = grid.rectForCell(row: target.row, col: target.col)
+      let scale = CGFloat(image.width) / grid.bounds.width
+      let rep = NSBitmapImageRep(cgImage: image)
+      func textPixels(flippedY: Bool) -> (text: Int, fill: Int) {
+        var text = 0
+        var fill = 0
+        let x0 = Int((rect.minX + 30) * scale)
+        let x1 = Int((rect.maxX - 4) * scale)
+        let y0 = Int((rect.minY + 4) * scale)
+        let y1 = Int((rect.maxY - 4) * scale)
+        guard x1 > x0, y1 > y0 else { return (0, 0) }
+        for y in stride(from: y0, to: y1, by: 1) {
+          let py = flippedY ? image.height - 1 - y : y
+          for x in stride(from: x0, to: x1, by: 2) {
+            guard let c = rep.colorAt(x: x, y: py)?.usingColorSpace(.deviceRGB) else { continue }
+            if c.redComponent > 0.8, c.greenComponent < 0.45 { fill += 1 } else { text += 1 }
+          }
+        }
+        return (text, fill)
+      }
+      // Only the cell typed over has text, so either way up, text over red is the old value.
+      let readings = [textPixels(flippedY: false), textPixels(flippedY: true)]
+        .filter { $0.fill > 0 }
+      let found = (text: readings.map(\.text).max() ?? 0, fill: readings.map(\.fill).max() ?? 0)
+      guard found.fill > 0 else {
+        return Result(name: name, passed: false, detail: "cell fill not found in the frame")
+      }
+      guard found.text == 0 else {
+        return Result(
+          name: name, passed: false,
+          detail: "old text still drawn under the editor: \(found.text) text pixels")
+      }
+      return Result(
+        name: name, passed: true,
+        detail:
+          "only the fill under the editor (pictures showing before typing: \(picturesBeforeTyping))"
+      )
+    }
+
     @MainActor
     private static func scrollWhileEditingKeepsColumnText() -> Result {
       let name = "scroll while editing keeps column text"
