@@ -384,6 +384,11 @@ public nonisolated enum FormulaRewriter {
     case .binary(let op, let lhs, let rhs):
       return serializeBinary(op, lhs, rhs)
     case .call(let name, let args):
+      if name == FormulaExpr.anchorArrayFunction, args.count == 1,
+        case .cellRef(let ref) = args[0]
+      {
+        return A1Reference.format(ref) + "#"
+      }
       let joined = args.map(serialize).joined(separator: ",")
       return "\(name)(\(joined))"
     }

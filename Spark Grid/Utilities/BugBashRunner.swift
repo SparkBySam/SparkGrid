@@ -79,6 +79,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { insertRowUndoRedoAlternates() })
       results.append(MainActor.assumeIsolated { undoRedoAlternatesForEveryStep() })
       results.append(MainActor.assumeIsolated { spillsSurviveMovingCells() })
+      results.append(MainActor.assumeIsolated { spillReferencesFollowTheSpill() })
       results.append(MainActor.assumeIsolated { mergeLeavesNoSavedResult() })
       results.append(MainActor.assumeIsolated { filterPopoverModel() })
       results.append(MainActor.assumeIsolated { commandArrowJumps() })
@@ -1933,6 +1934,66 @@ typealias Cell = SparkGridCore.Cell
         passed.append(item.label)
       }
       return Result(name: name, passed: true, detail: passed.joined(separator: ", "))
+    }
+
+    /// `C1#` reads every cell C1's results spill into. Typing in the data, growing the spill,
+    /// and blocking it must each update the formulas that read it, without a full recalculation.
+    @MainActor
+    private static func spillReferencesFollowTheSpill() -> Result {
+      let name = "spill references follow the spill"
+      var sheet = Sheet(name: "Data")
+      for (r, value) in ["30", "10", "20"].enumerated() {
+        sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: 0))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      /// Waits for the background update that finishes an edit, as the app shows it a moment later.
+      func text(_ labels: [String]) -> [String] {
+        vm.formulaEngine.finishPendingCrossSheet()
+        return labels.map { vm.displayString(at: address($0)) }
+      }
+      let watched = ["E1", "E2", "E3", "G1", "G2", "G3", "G4"]
+      func fail(_ what: String) -> Result {
+        Result(name: name, passed: false, detail: "\(what): \(watched) = \(text(watched))")
+      }
+      step { vm.setCellValue("=SORT(A1:A3)", at: address("C1")) }
+      step { vm.setCellValue("=SUM(C1#)", at: address("E1")) }
+      step { vm.setCellValue("=ROWS(C1#)", at: address("E2")) }
+      step { vm.setCellValue("=INDEX(C1#,1)", at: address("E3")) }
+      step { vm.setCellValue("=C1#*2", at: address("G1")) }
+      guard text(watched) == ["60", "3", "10", "20", "40", "60", ""] else { return fail("start") }
+
+      // New data: the sorted results change, and so does everything reading them.
+      step { vm.setCellValue("5", at: address("A2")) }
+      guard text(watched) == ["55", "3", "5", "10", "40", "60", ""] else {
+        return fail("typed in the data")
+      }
+
+      // The spill grows by a row.
+      step { vm.setCellValue("1", at: address("A4")) }
+      step { vm.setCellValue("=SORT(A1:A4)", at: address("C1")) }
+      guard text(watched) == ["56", "4", "1", "2", "10", "40", "60"] else {
+        return fail("spill grew")
+      }
+
+      // Something typed in its way blocks it: nothing to read.
+      step { vm.setCellValue("in the way", at: address("C3")) }
+      guard text(["E1", "E2"]) == ["#REF!", "#REF!"] else { return fail("spill blocked") }
+      undo.undo()
+      guard text(watched) == ["56", "4", "1", "2", "10", "40", "60"] else {
+        return fail("undo block")
+      }
+      return Result(name: name, passed: true, detail: "C1# follows typing, growth and a block")
     }
 
     /// Inserting or deleting rows and columns, and sorting, move cells. Spilled results must

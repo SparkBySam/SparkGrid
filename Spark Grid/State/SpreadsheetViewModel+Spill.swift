@@ -25,6 +25,7 @@ extension SpreadsheetViewModel {
       let extrasBefore = sheet.fileExtras
       let outcome = SpillLayout.apply(arrays, to: &sheet)
       let changed = outcome.changedCells.union(outcome.changedAnchors)
+        .union(SpillLayout.anchors(of: outcome.changedCells, in: sheet))
       guard !changed.isEmpty || sheet.fileExtras != extrasBefore else { return }
       // Worked out from the formulas each time, so not a step Undo goes through.
       undoManager?.disableUndoRegistration()

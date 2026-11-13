@@ -829,6 +829,9 @@ extension FormulaEvaluator {
     if case .namedRange(let name) = expr, let resolved = namedRangeLookup(name) {
       return resolved
     }
+    if case .call(let name, let args) = expr, Self.isSpillReference(name) {
+      return spillReferenceRange(args) ?? .error(.ref)
+    }
     return expr
   }
 

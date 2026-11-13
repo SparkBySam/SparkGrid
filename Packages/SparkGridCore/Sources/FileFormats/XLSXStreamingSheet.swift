@@ -808,7 +808,8 @@ public nonisolated enum StreamingWorksheet {
       }
       guard let width = attributeDouble(tag, "width") else { return }
       let pixels = CGFloat(width) * 7
-      guard pixels > 0 else { return }
+      // The default width is written for grouped or hidden columns; it is not a set width.
+      guard pixels > 0, abs(pixels - Workbook.defaultColumnWidth) > 0.5 else { return }
       for col in span {
         sheet.columnWidths[col - 1] = pixels
       }
@@ -1332,16 +1333,52 @@ public nonisolated final class ZipPackage: @unchecked Sendable {
   private let key: ArchiveKey?
   private let files: [String: Data]
 
-  public init(archiveData: Data) throws {
+  /// The largest file Spark Grid opens, counted in unpacked bytes as they come out, not from
+  /// the sizes the file declares: a small file can unpack to far more than memory holds.
+  public struct Limits: Sendable {
+    public var totalBytes: Int
+    public var partBytes: Int
+
+    public init(totalBytes: Int, partBytes: Int) {
+      self.totalBytes = totalBytes
+      self.partBytes = partBytes
+    }
+
+    /// 2 GB in all, and no part over 200 MB.
+    public static let standard = Limits(totalBytes: 2_000_000_000, partBytes: 200_000_000)
+  }
+
+  struct LimitExceeded: Error {}
+
+  /// One part's bytes. Stops as soon as the part passes `limits.partBytes` or `total`, the bytes
+  /// unpacked so far, passes `limits.totalBytes`.
+  static func extract(
+    _ entry: Entry, from archive: Archive, total: inout Int, limits: Limits = .standard
+  ) throws -> Data {
+    var data = Data()
+    _ = try archive.extract(entry) { chunk in
+      total += chunk.count
+      guard data.count + chunk.count <= limits.partBytes, total <= limits.totalBytes else {
+        throw LimitExceeded()
+      }
+      data.append(chunk)
+    }
+    return data
+  }
+
+  public init(archiveData: Data, limits: Limits = .standard) throws {
     guard let archive = try? Archive(data: archiveData, accessMode: .read, pathEncoding: nil) else {
       throw XLSXCodec.CodecError.unreadable
     }
     var files: [String: Data] = [:]
+    var total = 0
     for entry in archive {
       if entry.path.hasSuffix("/") { continue }
-      var extracted = Data()
+      let extracted: Data
       do {
-        _ = try archive.extract(entry) { extracted.append($0) }
+        extracted = try Self.extract(entry, from: archive, total: &total, limits: limits)
+      } catch is LimitExceeded {
+        throw XLSXCodec.CodecError.tooLarge
       } catch {
         continue
       }

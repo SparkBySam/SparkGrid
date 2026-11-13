@@ -128,6 +128,13 @@ public nonisolated struct FormulaParser {
         throw FormulaParseError.expectedToken("cell reference")
       }
       return .cellRef(parsed)
+    case .spillRef(let text):
+      try advance()
+      guard let parsed = A1Reference.parseFormulaRef(text) else {
+        throw FormulaParseError.expectedToken("cell reference")
+      }
+      // Saved files write `G1#` as `_xlfn.ANCHORARRAY(G1)`; both read the same.
+      return .call(FormulaExpr.anchorArrayFunction, [.cellRef(parsed)])
     case .range(let text):
       try advance()
       guard let (start, end) = A1Reference.parseFormulaRange(text) else {

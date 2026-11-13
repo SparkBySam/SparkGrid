@@ -381,6 +381,10 @@ private nonisolated final class EvaluationContext {
       self.workbook.sheets.first { $0.name.caseInsensitiveCompare(sheet) == .orderedSame }?
         .fileExtras.blockedSpills.contains(address) ?? false
     }
+    evaluator.spillRange = { [self] sheet, address in
+      self.workbook.sheets.first { $0.name.caseInsensitiveCompare(sheet) == .orderedSame }?
+        .fileExtras.spills[address]
+    }
     evaluator.sheetExtent = { [self] sheetName in
       self.extent(for: sheetName)
     }

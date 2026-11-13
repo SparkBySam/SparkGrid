@@ -14,7 +14,8 @@ public nonisolated enum SpillLayout {
     for (address, raw) in sheet.formulaIngestByColumn.values.joined() {
       let upper = raw.uppercased()
       guard
-        FormulaEvaluator.arrayFunctionNames.contains(where: { upper.contains($0 + "(") }),
+        upper.contains("#")
+          || FormulaEvaluator.arrayFunctionNames.contains(where: { upper.contains($0 + "(") }),
         let expr = try? FormulaParser.parse(raw), FormulaEvaluator.spills(expr)
       else { continue }
       found.append(address)
@@ -69,6 +70,17 @@ public nonisolated enum SpillLayout {
     public var changedCells: Set<CellAddress>
     /// Formula cells that started or stopped showing #SPILL!.
     public var changedAnchors: Set<CellAddress>
+  }
+
+  /// The formulas whose spills cover any of `cells`. A formula that reads `C1#` depends on C1,
+  /// so when C1's spilled cells change, C1 is reported changed too and that formula recalculates.
+  public static func anchors(of cells: Set<CellAddress>, in sheet: Sheet) -> Set<CellAddress> {
+    guard !cells.isEmpty else { return [] }
+    var found: Set<CellAddress> = []
+    for (anchor, range) in sheet.fileExtras.spills where cells.contains(where: range.contains) {
+      found.insert(anchor)
+    }
+    return found
   }
 
   /// Writes each anchor's result into `sheet`. `arrays` holds the result of every formula that
