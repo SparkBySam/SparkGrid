@@ -145,6 +145,8 @@ extension XLSXCodec {
       workbook.pivotCaches.append(
         PivotCachePart(cacheID: cacheID, definitionXML: definition, recordsXML: records))
     }
+    // Parts Spark Grid wrote for its own pivots are written again from them on the next save.
+    ExcelPivotWriter.droppingWrittenParts(from: &workbook)
   }
 
   static func dataValidationRules(in xml: String) -> [DataValidationRule] {

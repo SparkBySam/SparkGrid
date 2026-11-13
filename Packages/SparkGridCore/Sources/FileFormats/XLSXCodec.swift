@@ -1335,6 +1335,8 @@ public nonisolated enum XLSXCodec {
   public static func exportWorkbook(_ workbook: Model.Workbook, includeFormulaCaches: Bool = true)
     throws -> Data
   {
+    // Spark Grid's pivot tables go in as real pivot tables, so other apps can refresh them.
+    let workbook = ExcelPivotWriter.addingParts(to: workbook)
     let sheetCount = workbook.sheets.count
     let collected = ExportSlots<SheetExportDraft>(count: sheetCount)
     if sheetCount > 0 {
