@@ -25,6 +25,8 @@ extension XLSXCodec {
       let r = range.normalized
       // The formula is the range's top-left cell; anything else is not a spill.
       guard r.minRow == anchor.row, r.minCol == anchor.col else { continue }
+      // A one-cell array is a formula that can spill but fills only itself, or is blocked.
+      guard r.maxRow > r.minRow || r.maxCol > r.minCol else { continue }
       for address in range.allAddresses() where address != anchor {
         var cell = sheet.cell(at: address)
         guard !cell.raw.isEmpty, !FormulaSyntax.isFormula(cell.raw) else { continue }

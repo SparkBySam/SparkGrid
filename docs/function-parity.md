@@ -1,6 +1,6 @@
 # Function parity
 
-Every worksheet function below is either present in `FormulaFunctions.all` or not. Ground truth means a saved result from Excel, Google Sheets, or Numbers, cleared and recalculated by Spark Grid. No function has that check yet. The scalar evaluator comparing itself to the grid is not ground truth.
+Every worksheet function below is either present in `FormulaFunctions.all` or not. Ground truth means a saved result from Excel, Google Sheets, or Numbers, cleared and recalculated by Spark Grid. FILTER, SORT, SORTBY and UNIQUE have that check (`ExcelSavedSpillTests`, a file Excel 16.115 saved); no other function does yet. The scalar evaluator comparing itself to the grid is not ground truth.
 
 Add a function to this table when you find a worksheet function that is missing. Compatibility names are included. Cube, web, and database functions are included even though Spark Grid has no pivot, web, or database engine.
 
@@ -271,7 +271,7 @@ Add a function to this table when you find a worksheet function that is missing.
 | `COLUMNS` | Lookup | yes | no |
 | `DROP` | Lookup | no | no |
 | `EXPAND` | Lookup | no | no |
-| `FILTER` | Lookup | yes | no |
+| `FILTER` | Lookup | yes | yes |
 | `FORMULATEXT` | Lookup | no | no |
 | `GETPIVOTDATA` | Lookup | yes | no |
 | `GROUPBY` | Lookup | no | no |
@@ -288,13 +288,13 @@ Add a function to this table when you find a worksheet function that is missing.
 | `ROW` | Lookup | yes | no |
 | `ROWS` | Lookup | yes | no |
 | `RTD` | Lookup | no | no |
-| `SORT` | Lookup | yes | no |
-| `SORTBY` | Lookup | yes | no |
+| `SORT` | Lookup | yes | yes |
+| `SORTBY` | Lookup | yes | yes |
 | `TAKE` | Lookup | no | no |
 | `TOCOL` | Lookup | no | no |
 | `TOROW` | Lookup | no | no |
 | `TRANSPOSE` | Lookup | no | no |
-| `UNIQUE` | Lookup | yes | no |
+| `UNIQUE` | Lookup | yes | yes |
 | `VLOOKUP` | Lookup | yes | no |
 | `VSTACK` | Lookup | no | no |
 | `WRAPCOLS` | Lookup | no | no |

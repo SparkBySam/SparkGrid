@@ -15,12 +15,18 @@ public nonisolated enum XLSXCodec {
     case unreadable
     case emptyWorkbook
     case writeFailed
+    /// Unpacked, the file is larger than Spark Grid opens (see `ZipPackage.Limits`).
+    case tooLarge
 
     public var errorDescription: String? {
       switch self {
       case .unreadable: return "Couldn't read the Excel workbook."
       case .emptyWorkbook: return "The Excel workbook has no sheets."
       case .writeFailed: return "Couldn't write the Excel workbook."
+      case .tooLarge:
+        return
+          "This workbook is too large to open. Spark Grid opens workbooks up to 2 GB once "
+          + "unpacked, with no single part over 200 MB."
       }
     }
   }
@@ -749,10 +755,8 @@ public nonisolated enum XLSXCodec {
     for entry in archive {
       let path = entry.path
       if path.hasSuffix("/") { continue }
-      var data = Data()
-      do {
-        _ = try archive.extract(entry) { data.append($0) }
-      } catch {
+      var total = 0
+      guard let data = try? ZipPackage.extract(entry, from: archive, total: &total) else {
         return nil
       }
       files[path] = data
@@ -783,15 +787,10 @@ public nonisolated enum XLSXCodec {
     let candidates = [normalized, normalized.hasPrefix("xl/") ? normalized : "xl/\(normalized)"]
     for path in candidates {
       guard let entry = archive[path] else { continue }
-      var data = Data()
-      do {
-        _ = try archive.extract(entry) { chunk in
-          data.append(chunk)
-        }
-      } catch {
-        continue
-      }
-      guard !data.isEmpty else { continue }
+      var total = 0
+      guard let data = try? ZipPackage.extract(entry, from: archive, total: &total),
+        !data.isEmpty
+      else { continue }
       return data
     }
     return nil
@@ -1309,7 +1308,8 @@ public nonisolated enum XLSXCodec {
     for column in worksheet.columns?.items ?? [] {
       // Excel character widths ≈ pixels / 7 for default fonts.
       let width = CGFloat(column.width) * 7
-      guard width > 0 else { continue }
+      // The default width is written for grouped or hidden columns; it is not a set width.
+      guard width > 0, abs(width - Workbook.defaultColumnWidth) > 0.5 else { continue }
       for col in column.min...column.max {
         sheet.columnWidths[col - 1] = width
       }
@@ -1431,7 +1431,7 @@ public nonisolated enum XLSXCodec {
     files["xl/workbook.xml"] = workbookXML(
       workbook, resultsWritten: includeFormulaCaches, pivotCaches: pivotCaches.element)
     var extraRelationships = pivotCaches.rels
-    if workbook.sheets.contains(where: { !$0.fileExtras.spills.isEmpty }) {
+    if workbook.sheets.contains(where: savesDynamicArrays) {
       files["xl/metadata.xml"] = dynamicArrayMetadataXML
       extraRelationships +=
         #"<Relationship Id="rIdMetadata" Type="\#(sheetMetadataRelationshipType)" "#
@@ -1779,16 +1779,19 @@ public nonisolated enum XLSXCodec {
     switch kind {
     case .formula:
       let formula = ExcelFutureFunctions.prefixed(
-        String(cell.raw.drop(while: { $0 == "=" || $0.isWhitespace })))
+        ExcelFutureFunctions.anchorArrays(
+          String(cell.raw.drop(while: { $0 == "=" || $0.isWhitespace }))))
       let cache =
         includeFormulaCaches
         ? formulaCacheMarkup(cell)
         : (typeAttribute: "", valueElement: "")
       xml.append(utf8: cache.typeAttribute)
-      if let spill {
+      // A formula that can spill is saved as one even when it fills one cell or is blocked;
+      // saved as a plain formula, other apps would read it the pre-spill way.
+      if let range = spill ?? (spills(cell.raw) ? CellRange(start: address, end: address) : nil) {
         // Marks the formula as spilling (metadata.xml) and gives the cells its results fill.
         xml.append(ascii: " cm=\"1\"><f t=\"array\" ref=\"")
-        xml.append(utf8: spill.a1Label)
+        xml.append(utf8: range.a1Label)
         xml.append(ascii: "\">")
       } else {
         xml.append(ascii: "><f>")
@@ -1838,11 +1841,17 @@ public nonisolated enum XLSXCodec {
     }
   }
 
-  /// ECMA-376 error codes. Anything else is written as text so the package stays valid.
+  /// ECMA-376 error codes, the only ones a saved result may use. Newer errors such as #SPILL!
+  /// and #CALC! are written as text: saved as errors, Excel reports the file as damaged.
   private static let ooxmlErrorCodes: Set<String> = [
     "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A", "#GETTING_DATA",
-    "#SPILL!", "#CALC!",
   ]
+
+  /// Whether any formula on `sheet` is saved as a dynamic array, which needs `xl/metadata.xml`.
+  static func savesDynamicArrays(_ sheet: Sheet) -> Bool {
+    if !sheet.fileExtras.spills.isEmpty { return true }
+    return sheet.cells.values.contains { FormulaSyntax.isFormula($0.raw) && spills($0.raw) }
+  }
 
   private static func formulaCacheMarkup(_ cell: Cell) -> (
     typeAttribute: String, valueElement: String

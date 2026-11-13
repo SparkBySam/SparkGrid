@@ -186,6 +186,8 @@ struct SpreadsheetPrintSetupView: View {
         SparkDialogDivider()
         switchRow("Gridlines", isOn: $options.showGridlines)
         SparkDialogDivider()
+        switchRow("Row and column headings", isOn: $options.showHeadings)
+        SparkDialogDivider()
         switchRow("Repeat frozen rows", isOn: $options.repeatFrozenRows, disabled: !hasFrozenRows)
         SparkDialogDivider()
         switchRow(

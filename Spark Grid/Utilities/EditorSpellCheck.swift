@@ -16,7 +16,8 @@ enum EditorSpellCheck {
   }
 
   /// Turns continuous spell checking on or off for `text`.
-  /// Automatic correction stays off so a suggestion never rewrites the cell by itself.
+  /// Automatic correction, predictions and completion stay off so a suggestion never rewrites
+  /// or covers the cell by itself.
   /// `refresh` asks the system checker to mark the current text again after attributes were replaced.
   static func apply(to textView: NSTextView, text: String, refresh: Bool = false) {
     let enabled = shouldCheck(text)
@@ -25,6 +26,14 @@ enum EditorSpellCheck {
     }
     if textView.isGrammarCheckingEnabled {
       textView.isGrammarCheckingEnabled = false
+    }
+    // macOS draws a predicted end of the word in grey as you type. In a cell it lands a few
+    // points off the typed letters, so the typed letter showed over a predicted word (Sam, 1.3).
+    if textView.inlinePredictionType != .no {
+      textView.inlinePredictionType = .no
+    }
+    if textView.isAutomaticTextCompletionEnabled {
+      textView.isAutomaticTextCompletionEnabled = false
     }
     if textView.isContinuousSpellCheckingEnabled != enabled {
       textView.isContinuousSpellCheckingEnabled = enabled

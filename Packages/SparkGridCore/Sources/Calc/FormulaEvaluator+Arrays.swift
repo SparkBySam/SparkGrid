@@ -1,6 +1,7 @@
 import Formula
 import Foundation
 import GridCore
+import Model
 
 /// A formula result with a shape: rows of values, row-major. A formula whose result has more
 /// than one value spills it into the cells below and to the right.
@@ -55,7 +56,7 @@ extension FormulaEvaluator {
 
   /// Functions whose result can be many cells.
   public static let arrayFunctionNames: Set<String> = [
-    "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE",
+    "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", FormulaExpr.anchorArrayFunction,
   ]
 
   /// The name without the `_xlfn.` and `_xlws.` prefixes Excel saves newer functions with.
@@ -110,11 +111,35 @@ extension FormulaEvaluator {
       case "SORTBY": return arraySORTBY(args)
       case "UNIQUE": return arrayUNIQUE(args)
       case "SEQUENCE": return arraySEQUENCE(args)
+      case FormulaExpr.anchorArrayFunction: return arrayANCHORARRAY(args)
       default: return ArrayResult(evaluate(expr))
       }
     default:
       return ArrayResult(evaluate(expr))
     }
+  }
+
+  /// `G1#` and `_xlfn.ANCHORARRAY(G1)`.
+  static func isSpillReference(_ name: String) -> Bool {
+    plainFunctionName(name) == FormulaExpr.anchorArrayFunction
+  }
+
+  /// `G1#` as the range G1's results spill into: a range like any other, so COUNTIF, INDEX and
+  /// the rest read it. Nil (shown as #REF!) when nothing spills from G1 or its spill is blocked.
+  func spillReferenceRange(_ args: [FormulaExpr]) -> FormulaExpr? {
+    guard args.count == 1, case .cellRef(let ref) = args[0] else { return nil }
+    let sheet = ref.sheet ?? formulaSheetName ?? ""
+    guard let range = spillRange(sheet, CellAddress(row: ref.row, col: ref.col)) else { return nil }
+    let r = range.normalized
+    return .range(
+      FormulaRef(sheet: ref.sheet, row: r.minRow, col: r.minCol, absRow: false, absCol: false),
+      FormulaRef(sheet: ref.sheet, row: r.maxRow, col: r.maxCol, absRow: false, absCol: false))
+  }
+
+  private func arrayANCHORARRAY(_ args: [FormulaExpr]) -> ArrayResult {
+    if let range = spillReferenceRange(args) { return evaluateArray(range) }
+    if args.count == 1, case .error(let error) = args[0] { return ArrayResult(.error(error)) }
+    return ArrayResult(.error(.ref))
   }
 
   /// Element by element. A single value or a single row or column stretches to the other.

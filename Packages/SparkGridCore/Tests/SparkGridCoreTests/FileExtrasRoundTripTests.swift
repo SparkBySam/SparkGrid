@@ -358,4 +358,26 @@ final class FileExtrasRoundTripTests: XCTestCase {
     XCTAssertEqual(decoded.fileExtras, SheetFileExtras())
     XCTAssertFalse(String(data: encoded, encoding: .utf8)?.contains("fileExtras") ?? true)
   }
+
+  /// Excel reads a `<col>` with no width as zero wide, so grouped columns opened hidden in it
+  /// (Excel 16.115, Nov 13 2026). Each `<col>` carries a width; the default one is not kept as
+  /// a set width when the file opens again.
+  func testGroupedAndHiddenColumnsHaveAWidth() throws {
+    var sheet = Sheet(name: "S")
+    sheet.setCell(Cell(raw: "x"), at: .origin)
+    sheet.fileExtras.columnOutlineLevels = [1: 1, 2: 1]
+    sheet.fileExtras.hiddenColumns = [4]
+    sheet.columnWidths[6] = 140
+    let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [sheet]))
+    let xml = try XCTUnwrap(
+      XLSXCodec.zipEntryString(archiveData: data, entryPath: "xl/worksheets/sheet1.xml"))
+    let cols = xml.components(separatedBy: "<col ").dropFirst()
+    XCTAssertEqual(cols.count, 3, xml)
+    for col in cols { XCTAssertTrue(col.contains("width=\""), "no width: <col \(col)") }
+    XCTAssertTrue(xml.contains(#"<col min="7" max="7" width="20.0" customWidth="1"/>"#), xml)
+    let reopened = try XLSXCodec.importWorkbook(from: data).activeSheet
+    XCTAssertEqual(reopened.columnWidths, [6: 140])
+    XCTAssertEqual(reopened.fileExtras.columnOutlineLevels, [1: 1, 2: 1])
+    XCTAssertEqual(reopened.fileExtras.hiddenColumns, [4])
+  }
 }

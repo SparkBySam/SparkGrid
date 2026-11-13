@@ -11,7 +11,7 @@ New
 • Fill Down (Command-D) and Fill Right (Command-R) copy the top row or left column across the selection.
 • Option-drag the fill handle to count up from one number: 1 becomes 1, 2, 3, 4. Option-drag a series such as 1, 2 to copy it instead.
 • 66 more functions, among them PMT, IPMT, FV, PV, RATE, NPV, IRR, XIRR, NETWORKDAYS, WORKDAY, DATEDIF, WEEKNUM, STDEV, VAR, PERCENTILE, QUARTILE, CORREL, FORECAST, MROUND, SWITCH, CHOOSE, TEXTBEFORE and TEXTAFTER. Insert Function has a Financial group.
-• FILTER, SORT, SORTBY and UNIQUE. Their results fill the cells below and beside the formula and update as the data changes. If something is typed in the way, the formula shows #SPILL! until the cells are clear. SEQUENCE spills too.
+• FILTER, SORT, SORTBY and UNIQUE. Their results fill the cells below and beside the formula and update as the data changes. If something is typed in the way, the formula shows #SPILL! until the cells are clear. SEQUENCE spills too. Put # after the formula's cell, as in =SUM(C1#), to use all of its results, however many there are.
 • Data > Text to Columns splits one column at commas, tabs, semicolons, spaces or a character you choose, with a preview. Text in quotes stays together. Fixed width splits lined-up text at chosen character positions, and suggests them.
 • Group rows or columns (Shift-Command-K) and fold them with the + and − beside the row numbers and column letters. Ungroup is Shift-Command-J. Sheet > Show Row Levels and Show Column Levels fold to a chosen depth. Groups from other apps' files show and fold too.
 • Sheet > Protect Sheet, with an optional password, stops changes to locked cells, rows, columns and formatting. Format > Locked chooses which cells stay open for typing, and the Protect Sheet window can still allow formatting, inserting or deleting rows and columns, links and sorting. Protected sheets from other apps' files keep their password and what they allow.
@@ -29,6 +29,7 @@ Fixed
 • Results such as 186,000 × 70% show as 130200, not 130199.99999999999.
 • Undoing a sort puts every formula back as it was. Before, a total row sorted into the table could come back as #REF!.
 • Workbooks with cells set to clip their text open in other spreadsheet apps without a repair message.
+• Print setup can leave out the column letters and row numbers.
 • Printed pages end between rows and columns instead of cutting a row in half. Repeat frozen rows and columns now repeat on every page, and hidden rows and columns stay off the page.
 • Print areas from other apps' files open on the right sheet, and each sheet keeps its own.
 • Sort A to Z and Z to A leave a total row under the table where it is.

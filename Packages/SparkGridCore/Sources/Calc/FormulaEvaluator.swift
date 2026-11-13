@@ -43,6 +43,9 @@ public nonisolated struct FormulaEvaluator {
   /// True when the array formula in this cell cannot spill because cells in the way are not
   /// empty. It then shows #SPILL!.
   public var spillBlocked: (String, CellAddress) -> Bool = { _, _ in false }
+  /// The cells a formula's results spill into, by sheet name and the formula's cell, for `G1#`.
+  /// Nil when nothing spills from that cell, or its spill is blocked.
+  public var spillRange: (String, CellAddress) -> CellRange? = { _, _ in nil }
   /// Defaults to a modest grid so open ranges don't explode when extent isn't wired.
   public var sheetExtent: SheetExtentLookup = { _ in (maxRow: 999, maxCol: 25) }
   /// Cell being evaluated (`COLUMN()` / `ROW()` with no argument). Held in a class cell so batch strip eval can set origin without mutating the evaluator struct.
@@ -578,7 +581,7 @@ public nonisolated struct FormulaEvaluator {
       return evalCHAR(args)
     case "REPT":
       return evalREPT(args)
-    case "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE":
+    case "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE", FormulaExpr.anchorArrayFunction:
       // The cell shows the first value; the rest spill into the cells below and beside it.
       if spillIsBlocked { return .error(.spill) }
       // A blank in an array result shows as 0, as other apps show it.
@@ -833,6 +836,8 @@ public nonisolated struct FormulaEvaluator {
       return expr
     case .namedRange(let name):
       return namedRangeLookup(name)
+    case .call(let name, let args) where Self.isSpillReference(name):
+      return spillReferenceRange(args)
     default:
       return nil
     }
@@ -1362,7 +1367,11 @@ public enum FormulaDependencies {
         intoDeps: &intoDeps,
         intoRanges: &intoRanges
       )
-    case .call(_, let args):
+    case .call(let name, let args):
+      // `C1#` reads C1's spilled cells, which are laid out after C1 recalculates. The background
+      // update recalculates it from the workbook graph, where it reads C1; recalculated here, it
+      // read C1's old results and the background update kept that.
+      guard !FormulaEvaluator.isSpillReference(name) else { break }
       for arg in args {
         collectForIngest(
           arg,

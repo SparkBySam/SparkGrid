@@ -1870,7 +1870,8 @@ final class SpreadsheetViewModel {
   }
 
   /// Formats every cell in `ranges` in one pass over one copy of the sheet, with one undo step.
-  /// Empty cells are visited too, so a fill reaches them.
+  /// Empty cells are visited too, so a fill reaches them. Rows the filter hides are left alone,
+  /// as Delete leaves them and as other apps do: a fill on filtered rows colored the hidden ones.
   func applyFormat(
     toRanges ranges: [CellRange],
     actionName: String?,
@@ -1881,8 +1882,10 @@ final class SpreadsheetViewModel {
     var sheet = activeSheet
     var before: [CellAddress: CellFormat?] = [:]
     var after: [CellAddress: CellFormat?] = [:]
+    let filtered = hiddenRowsForPrint()
     for range in ranges {
-      for address in range.allAddresses() where after[address] == nil {
+      for address in range.allAddresses()
+      where after[address] == nil && !filtered.contains(address.row) {
         var cell = sheet.cell(at: address)
         let oldFormat = cell.format ?? CellFormat()
         var format = oldFormat

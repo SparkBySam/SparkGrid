@@ -294,6 +294,9 @@ public final class FormulaEngine {
     evaluator.spillBlocked = { [weak self] name, address in
       self?.spillBlocked(on: name, at: address, current: sheet) ?? false
     }
+    evaluator.spillRange = { [weak self] name, address in
+      self?.spillRange(on: name, at: address, current: sheet)
+    }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -537,6 +540,12 @@ public final class FormulaEngine {
     evaluator.namedRangeLookup = { [weak self] name in
       self?.namedRangeExpr(named: name)
     }
+    evaluator.spillBlocked = { [weak self] name, address in
+      self?.spillBlocked(on: name, at: address, current: sheet) ?? false
+    }
+    evaluator.spillRange = { [weak self] name, address in
+      self?.spillRange(on: name, at: address, current: sheet)
+    }
     evaluator.pivotLookup = { [weak self] name, address in
       self?.sparkPivot(on: name, containing: address, current: sheet)
     }
@@ -583,6 +592,9 @@ public final class FormulaEngine {
     }
     evaluator.spillBlocked = { [weak self] name, address in
       self?.spillBlocked(on: name, at: address, current: sheet) ?? false
+    }
+    evaluator.spillRange = { [weak self] name, address in
+      self?.spillRange(on: name, at: address, current: sheet)
     }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
@@ -826,6 +838,15 @@ public final class FormulaEngine {
         queue.append(kid)
       }
     }
+    // A spilling formula about to recalculate: ranges over its cell, `C1#` among them, must not
+    // read its old value from the range snapshots. Other formulas in ranges are finished by
+    // the background update, which skips cells recalculated here.
+    if !sheet.fileExtras.spills.isEmpty {
+      for address in seen where sheet.fileExtras.spills[address] != nil {
+        aggregateRangeCache.invalidate(sheetName: activeSheetName, address: address)
+        lookupTableCache.invalidate(sheetName: activeSheetName, address: address)
+      }
+    }
     var before: [CellAddress: CellValue] = [:]
     var absent: Set<CellAddress> = []
     before.reserveCapacity(seen.count)
@@ -909,6 +930,16 @@ public final class FormulaEngine {
     if recalculatedSheetValues.keys.contains(where: { $0 != activeKey }) {
       recalculatedSheetValues = recalculatedSheetValues.filter { $0.key == activeKey }
     }
+    // An update not yet applied is replaced by this one, so this one carries its cells too.
+    // Laying out spills makes several updates in a row; the formulas the first one would have
+    // reached were left with old results.
+    var edited = editedAddresses
+    var recalculated = recalculated
+    if let pending = pendingCrossSheet, sheetKey(pending.editedSheetName) == activeKey {
+      let carried = Set(pending.editedAddresses).subtracting(edited)
+      edited.append(contentsOf: carried.sorted { ($0.row, $0.col) < ($1.row, $1.col) })
+      recalculated.formUnion(pending.calculatedEdits.keys)
+    }
     var calculated: [CellAddress: CellValue] = [:]
     calculated.reserveCapacity(recalculated.count)
     for address in recalculated where formulaAST[address] != nil {
@@ -921,7 +952,7 @@ public final class FormulaEngine {
       workbook: workbook,
       editedSheetName: sheet.name,
       editedSheet: sheet,
-      editedAddresses: editedAddresses,
+      editedAddresses: edited,
       calculatedEdits: calculated,
       graph: dependencyGraph,
       onlySheetName: nil
@@ -1220,6 +1251,18 @@ public final class FormulaEngine {
       }
     }
     return workbook.sparkPivot(on: name, containing: address)
+  }
+
+  /// The cells the formula in a cell spills into, for `G1#`.
+  private func spillRange(on name: String, at address: CellAddress, current sheet: Sheet)
+    -> CellRange?
+  {
+    if name.caseInsensitiveCompare(sheet.name) == .orderedSame {
+      return sheet.fileExtras.spills[address]
+    }
+    return workbook.sheets.first {
+      $0.name.caseInsensitiveCompare(name) == .orderedSame
+    }?.fileExtras.spills[address]
   }
 
   private func spillBlocked(on name: String, at address: CellAddress, current sheet: Sheet)
@@ -2031,6 +2074,9 @@ public final class FormulaEngine {
     evaluator.spillBlocked = { [weak self] name, address in
       self?.spillBlocked(on: name, at: address, current: sheet) ?? false
     }
+    evaluator.spillRange = { [weak self] name, address in
+      self?.spillRange(on: name, at: address, current: sheet)
+    }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -2227,6 +2273,9 @@ public final class FormulaEngine {
       }
       evaluator.spillBlocked = { [weak self] name, address in
         self?.spillBlocked(on: name, at: address, current: sheet) ?? false
+      }
+      evaluator.spillRange = { [weak self] name, address in
+        self?.spillRange(on: name, at: address, current: sheet)
       }
       evaluator.sheetExtent = { [weak self] sheetName in
         guard let self else { return (999, 25) }

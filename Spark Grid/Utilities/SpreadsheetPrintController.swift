@@ -8,6 +8,8 @@ final class SpreadsheetPrintNSView: NSView {
   let sheet: Sheet
   private let formulaEngine: FormulaEngine
   private let showGridlines: Bool
+  /// Column letters across the top and row numbers down the side.
+  private let showHeadings: Bool
   let normalized: (minRow: Int, maxRow: Int, minCol: Int, maxCol: Int)
   let maxRow: Int
   /// Positions and sizes in the view, one per printed column or row. Hidden ones are zero wide.
@@ -18,6 +20,9 @@ final class SpreadsheetPrintNSView: NSView {
 
   static let headerWidth: CGFloat = 28
   static let headerHeight: CGFloat = 20
+  /// The heading strips on this printout: none when headings are off.
+  let headerWidth: CGFloat
+  let headerHeight: CGFloat
 
   override var isFlipped: Bool { true }
 
@@ -25,6 +30,7 @@ final class SpreadsheetPrintNSView: NSView {
     sheet: Sheet,
     range: CellRange,
     showGridlines: Bool = true,
+    showHeadings: Bool = true,
     previewRowCap: Int? = nil,
     workbook: Workbook? = nil,
     hiddenRows: Set<Int> = []
@@ -48,6 +54,11 @@ final class SpreadsheetPrintNSView: NSView {
     }
     self.formulaEngine = engine
     self.showGridlines = showGridlines
+    self.showHeadings = showHeadings
+    let headerWidth = showHeadings ? Self.headerWidth : 0
+    let headerHeight = showHeadings ? Self.headerHeight : 0
+    self.headerWidth = headerWidth
+    self.headerHeight = headerHeight
     let normalized = range.normalized
     self.normalized = normalized
     let maxRow = previewRowCap.map { min($0, normalized.maxRow) } ?? normalized.maxRow
@@ -55,7 +66,7 @@ final class SpreadsheetPrintNSView: NSView {
 
     var columnWidths: [CGFloat] = []
     var columnXs: [CGFloat] = []
-    var x = Self.headerWidth
+    var x = headerWidth
     let hiddenColumns = sheet.fileExtras.hiddenColumns
     for col in normalized.minCol...normalized.maxCol {
       let width =
@@ -80,7 +91,7 @@ final class SpreadsheetPrintNSView: NSView {
     )
     var rowHeights: [CGFloat] = []
     var rowYs: [CGFloat] = []
-    var y = Self.headerHeight
+    var y = headerHeight
     for row in normalized.minRow...maxRow {
       let height =
         hiddenRows.contains(row)
@@ -99,8 +110,8 @@ final class SpreadsheetPrintNSView: NSView {
     self.rowHeights = rowHeights
 
     let size = NSSize(
-      width: max(x, Self.headerWidth + Workbook.defaultColumnWidth),
-      height: max(y, Self.headerHeight + Workbook.defaultRowHeight)
+      width: max(x, headerWidth + Workbook.defaultColumnWidth),
+      height: max(y, headerHeight + Workbook.defaultRowHeight)
     )
     super.init(frame: NSRect(origin: .zero, size: size))
     appearance = NSAppearance(named: .aqua)
@@ -143,7 +154,8 @@ final class SpreadsheetPrintNSView: NSView {
     drawSheetCells(overflowPass: false, in: dirtyRect)
     drawSheetCells(overflowPass: true, in: dirtyRect)
 
-    let corner = NSRect(x: 0, y: 0, width: Self.headerWidth, height: Self.headerHeight)
+    guard showHeadings else { return }
+    let corner = NSRect(x: 0, y: 0, width: headerWidth, height: headerHeight)
     headerFill.setFill()
     corner.fill()
     if showGridlines {
@@ -161,7 +173,7 @@ final class SpreadsheetPrintNSView: NSView {
         x: columnXs[colIndex],
         y: 0,
         width: columnWidths[colIndex],
-        height: Self.headerHeight
+        height: headerHeight
       )
       guard header.intersects(dirtyRect) else { continue }
       headerFill.setFill()
@@ -184,7 +196,7 @@ final class SpreadsheetPrintNSView: NSView {
       let header = NSRect(
         x: 0,
         y: rowYs[rowIndex],
-        width: Self.headerWidth,
+        width: headerWidth,
         height: rowHeights[rowIndex]
       )
       guard header.intersects(dirtyRect) else { continue }
@@ -353,8 +365,8 @@ final class SpreadsheetPrintNSView: NSView {
   private func columnOrigin(_ col: Int) -> CGFloat {
     let index = col - normalized.minCol
     if columnXs.indices.contains(index) { return columnXs[index] }
-    if col < normalized.minCol { return columnXs.first ?? Self.headerWidth }
-    let lastX = columnXs.last ?? Self.headerWidth
+    if col < normalized.minCol { return columnXs.first ?? headerWidth }
+    let lastX = columnXs.last ?? headerWidth
     let lastWidth = columnWidths.last ?? Workbook.defaultColumnWidth
     return lastX + lastWidth
   }
@@ -559,6 +571,7 @@ final class SpreadsheetPrintBookView: NSView {
         sheet: page.sheet,
         range: page.range,
         showGridlines: options.showGridlines,
+        showHeadings: options.showHeadings,
         workbook: workbook,
         hiddenRows: page.hiddenRows
       )

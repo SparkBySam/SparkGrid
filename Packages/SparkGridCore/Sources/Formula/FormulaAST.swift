@@ -53,6 +53,9 @@ public nonisolated struct FormulaRef: Equatable, Hashable, Sendable {
 }
 
 public nonisolated indirect enum FormulaExpr: Equatable, Hashable {
+  /// `G1#` parses as a call of this function on `G1`, the name files save it under.
+  public static let anchorArrayFunction = "ANCHORARRAY"
+
   case number(Double)
   case string(String)
   case boolean(Bool)

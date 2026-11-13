@@ -315,6 +315,9 @@ extension XLSXCodec {
       var attributes = ""
       if let width = sheet.columnWidths[col] {
         attributes += #" width="\#(width / 7)" customWidth="1""#
+      } else {
+        // Excel reads a `<col>` with no width as zero wide: grouped columns opened hidden.
+        attributes += #" width="\#(Workbook.defaultColumnWidth / 7)""#
       }
       if extras.hiddenColumns.contains(col) { attributes += #" hidden="1""# }
       if let level = extras.columnOutlineLevels[col] { attributes += #" outlineLevel="\#(level)""# }

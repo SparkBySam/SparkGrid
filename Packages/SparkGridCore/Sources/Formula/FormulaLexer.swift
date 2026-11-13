@@ -8,6 +8,8 @@ public nonisolated enum FormulaToken: Equatable {
   case error(FormulaError)
   case identifier(String)
   case cellRef(String)
+  /// A cell followed by `#`, as in `G1#`: every cell its formula's results spill into.
+  case spillRef(String)
   case range(String)
   case plus
   case minus
@@ -133,9 +135,12 @@ public nonisolated struct FormulaLexer {
     let start = index
     while index < chars.count {
       let ch = chars[index]
+      // `/` is part of #N/A and #DIV/0!, and divides anywhere else.
+      let soFar = String(chars[start..<index]).uppercased()
+      let inErrorName = ch == "/" && (soFar == "#N" || soFar == "#DIV")
       if ch.isWhitespace || ch == "," || ch == ")" || ch == "(" || ch == "+" || ch == "-"
-        || ch == "*" || ch == "/" || ch == "^" || ch == "&" || ch == "=" || ch == "<" || ch == ">"
-        || ch == ":"
+        || ch == "*" || (ch == "/" && !inErrorName) || ch == "^" || ch == "&" || ch == "="
+        || ch == "<" || ch == ">" || ch == ":"
       {
         break
       }
@@ -246,7 +251,7 @@ public nonisolated struct FormulaLexer {
     // A name that reads as a cell but is followed by "(" is a function, as in LOG10(100).
     if A1Reference.isValidAddressToken(text), text.contains("$") || !nextNonWhitespaceIsOpenParen()
     {
-      return .cellRef(text)
+      return cellOrSpillRef(text)
     }
     return .identifier(upper)
   }
@@ -294,7 +299,16 @@ public nonisolated struct FormulaLexer {
     guard A1Reference.isValidAddressToken(left) else {
       throw FormulaParseError.expectedToken("cell reference")
     }
-    return .cellRef("\(sheetName)!\(left)")
+    return cellOrSpillRef("\(sheetName)!\(left)")
+  }
+
+  /// `text` is a cell. A `#` right after it makes it a spill reference.
+  private mutating func cellOrSpillRef(_ text: String) -> FormulaToken {
+    if index < chars.count, chars[index] == "#" {
+      index += 1
+      return .spillRef(text)
+    }
+    return .cellRef(text)
   }
 
   private func nextNonWhitespaceIsOpenParen() -> Bool {
