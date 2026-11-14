@@ -25,6 +25,9 @@ extension XLSXCodec {
     }
     extras.sheetPropertiesXML = kept["sheetPr"]?.first
     extras.protectionXML = kept["sheetProtection"]?.first
+    if let ranges = kept["protectedRanges"]?.first {
+      extras.editableRanges = editableRanges(in: ranges)
+    }
     var layout = ""
     for name in [
       "printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
@@ -947,5 +950,50 @@ extension XLSXCodec {
       }
     }
     return result
+  }
+}
+
+// MARK: - Editable ranges
+
+extension XLSXCodec {
+  /// Password attributes a `<protectedRange>` can carry, in the order files write them.
+  static let rangePasswordAttributes = [
+    "password", "algorithmName", "hashValue", "saltValue", "spinCount",
+  ]
+
+  /// The ranges in a `<protectedRanges>` element.
+  static func editableRanges(in xml: String) -> [EditableRange] {
+    tagAttributes(in: xml, localName: "protectedRange").compactMap { attributes in
+      guard let sqref = attributes["sqref"] else { return nil }
+      let ranges = sqref.split(separator: " ").compactMap { parseCellRange(String($0)) }
+      guard !ranges.isEmpty else { return nil }
+      let password = rangePasswordAttributes.compactMap { name in
+        attributes[name].map { #"\#(name)="\#(escapeXML(decodeXMLEntities($0)))""# }
+      }.joined(separator: " ")
+      return EditableRange(
+        name: decodeXMLEntities(attributes["name"] ?? "Range"), ranges: ranges,
+        passwordAttributes: password)
+    }
+  }
+
+  /// `<protectedRanges>`, or "" when the sheet has none.
+  static func editableRangesXML(_ ranges: [EditableRange]) -> String {
+    guard !ranges.isEmpty else { return "" }
+    return "<protectedRanges>" + ranges.map(\.xml).joined() + "</protectedRanges>"
+  }
+
+  public static func importRangeLocks(into sheet: inout Sheet, archiveData: Data, sheetIndex: Int) {
+    let path = "xl/sparkGrid/locks\(sheetIndex + 1).json"
+    guard let data = zipEntryData(archiveData: archiveData, entryPath: path),
+      let locks = try? JSONDecoder().decode([RangeLock].self, from: data)
+    else { return }
+    sheet.fileExtras.rangeLocks = locks
+  }
+
+  static func rangeLocksJSON(_ locks: [RangeLock]) -> Data? {
+    guard !locks.isEmpty else { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try? encoder.encode(locks)
   }
 }

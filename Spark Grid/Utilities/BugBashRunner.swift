@@ -73,6 +73,8 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { typingOverAValueHidesTheOldText() })
       results.append(MainActor.assumeIsolated { fillSkipsFilteredRows() })
       results.append(MainActor.assumeIsolated { printWithoutHeadings() })
+      results.append(MainActor.assumeIsolated { undoCannotUnprotect() })
+      results.append(MainActor.assumeIsolated { rangeLocksAndEditableRanges() })
       results.append(MainActor.assumeIsolated { editThenTileScrollShowsEdit() })
       results.append(MainActor.assumeIsolated { linksInsertFollowRemove() })
       results.append(MainActor.assumeIsolated { pivotCreateDrawRefreshUndo() })
@@ -1615,6 +1617,141 @@ typealias Cell = SparkGridCore.Cell
 
     /// Typing in a cell, then scrolling before pressing Return, left other cells in that
     /// column blank until the edit ended (reported on 1.3, Nov 10).
+    /// Sam (1.4) asked for protected ranges, both kinds: a range locked on its own, and ranges a
+    /// protected sheet still lets people edit (Allow Edit Ranges), some with a password.
+    @MainActor
+    private static func rangeLocksAndEditableRanges() -> Result {
+      let name = "range locks and editable ranges"
+      var sheet = Sheet(name: "Budget")
+      for row in 0..<8 {
+        for col in 0..<8 {
+          sheet.setCell(Cell(raw: "\(row)-\(col)"), at: CellAddress(row: row, col: col))
+        }
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      func raw(_ a1: String) -> String { vm.activeSheet.cell(at: address(a1)).raw }
+      func fail(_ what: String) -> Result { Result(name: name, passed: false, detail: what) }
+
+      // A range locked on its own, sheet not protected.
+      vm.selectRange(from: address("B2"), to: address("C3"))
+      step { vm.lockSelectedRange(name: "Totals", password: "pw") }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+      guard !undo.canUndo, !vm.isSheetProtected else { return fail("Undo can take the lock off") }
+      step { vm.setCellValue("typed", at: address("B2")) }
+      guard raw("B2") == "1-1", vm.protectionNotice?.contains("Totals is locked") == true else {
+        return fail("typing in the lock went through")
+      }
+      vm.protectionNotice = nil
+      step { vm.setCellValue("typed", at: address("E5")) }
+      guard raw("E5") == "typed", vm.protectionNotice == nil else {
+        return fail("a cell outside the lock was refused")
+      }
+      vm.select(address("C3"))
+      step { vm.toggleBold() }
+      guard vm.activeSheet.cell(at: address("C3")).format?.bold != true else {
+        return fail("bold went through in the lock")
+      }
+      vm.select(address("A2"))
+      step { vm.deleteSelectedRows() }
+      guard raw("B2") == "1-1" else { return fail("deleting a row through the lock went through") }
+      vm.select(address("A1"))
+      step { vm.insertRowsAbove() }
+      guard vm.activeSheet.fileExtras.rangeLocks.first?.ranges.map(\.a1Label) == ["B3:C4"],
+        raw("B3") == "1-1"
+      else { return fail("the lock did not move with an inserted row") }
+      vm.select(address("B3"))
+      guard let lock = vm.selectedRangeLocks.first, !vm.removeRangeLock(lock.id, password: "nope"),
+        vm.removeRangeLock(lock.id, password: "pw")
+      else { return fail("lock password check wrong") }
+      step { vm.setCellValue("now open", at: address("B3")) }
+      guard raw("B3") == "now open" else { return fail("cell still refused after unlock") }
+
+      // Allow Edit Ranges on a protected sheet.
+      vm.selectRange(from: address("E2"), to: address("E4"))
+      step { vm.addEditableRange(name: "Inputs", password: nil) }
+      vm.selectRange(from: address("G2"), to: address("G3"))
+      step { vm.addEditableRange(name: "Rates", password: "rate") }
+      step { vm.protectSheet(password: "sheet") }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+      step { vm.setCellValue("open", at: address("E3")) }
+      guard raw("E3") == "open" else { return fail("open editable range refused") }
+      vm.protectionNotice = nil
+      step { vm.setCellValue("x", at: address("G2")) }
+      guard raw("G2") != "x", vm.protectionNotice?.contains("Rates needs its password") == true
+      else { return fail("password range took typing without its password") }
+      vm.select(address("G2"))
+      guard vm.closedEditableRangesAtSelection.map(\.name) == ["Rates"],
+        !vm.unlockEditableRange(named: "Rates", password: "nope"),
+        vm.unlockEditableRange(named: "Rates", password: "rate")
+      else { return fail("unlocking the password range went wrong") }
+      step { vm.setCellValue("x", at: address("G2")) }
+      guard raw("G2") == "x" else { return fail("unlocked range still refused") }
+      step { vm.setCellValue("y", at: address("A8")) }
+      guard raw("A8") != "y" else { return fail("a locked cell outside the ranges was changed") }
+      guard !vm.canEditEditableRanges else { return fail("ranges editable while protected") }
+      do {
+        let back = try XLSXCodec.importWorkbook(from: XLSXCodec.exportWorkbook(vm.workbook))
+          .activeSheet
+        guard back.fileExtras.editableRanges.map(\.name) == ["Inputs", "Rates"],
+          SheetProtection.isOn(back.fileExtras.protectionXML)
+        else { return fail("editable ranges lost in save") }
+      } catch {
+        return fail(error.localizedDescription)
+      }
+      return Result(
+        name: name, passed: true,
+        detail:
+          "lock refuses typing, bold and delete, moves, unlocks; edit ranges open, one by password")
+    }
+
+    /// Sam (1.4): ⌘Z took a sheet's protection off, no password asked. Protecting or unprotecting
+    /// empties Undo and Redo, as other apps do, so Undo cannot unprotect, or change locked cells
+    /// through edits made before protection went on.
+    @MainActor
+    private static func undoCannotUnprotect() -> Result {
+      let name = "undo cannot unprotect"
+      var sheet = Sheet(name: "Inputs")
+      sheet.setCell(Cell(raw: "fixed"), at: .origin)
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      let undo = UndoManager()
+      undo.groupsByEvent = false
+      vm.undoManager = undo
+      func step(_ body: () -> Void) {
+        undo.beginUndoGrouping()
+        body()
+        undo.endUndoGrouping()
+      }
+      step { vm.setCellValue("typed before", at: .origin) }
+      step { vm.protectSheet(password: "secret") }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+      guard !undo.canUndo, !undo.canRedo else {
+        return Result(name: name, passed: false, detail: "Undo still has steps after protecting")
+      }
+      if undo.canUndo { undo.undo() }
+      guard vm.isSheetProtected, vm.activeSheet.cell(at: .origin).raw == "typed before" else {
+        return Result(name: name, passed: false, detail: "Undo changed the protected sheet")
+      }
+      step { vm.setCellValue("typed while protected", at: CellAddress(row: 5, col: 5)) }
+      var unprotected = false
+      step { unprotected = vm.unprotectSheet(password: "secret") }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+      guard unprotected, !undo.canUndo, !vm.isSheetProtected else {
+        return Result(name: name, passed: false, detail: "unprotect left an Undo step")
+      }
+      return Result(name: name, passed: true, detail: "protect and unprotect empty Undo")
+    }
+
     /// Print setup can leave out the column letters and row numbers (Sam, Nov 13).
     @MainActor
     private static func printWithoutHeadings() -> Result {

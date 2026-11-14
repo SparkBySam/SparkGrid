@@ -143,6 +143,22 @@ extension SpreadsheetViewModel {
     recordFileExtrasChange(before: before, after: after, actionName: actionName)
   }
 
+  /// Changes the active sheet's file settings with no undo step, and empties Undo and Redo, as
+  /// protecting a sheet does in other apps: Undo must not take protection off without the
+  /// password, or change locked cells through edits made before it was on.
+  func updateFileExtrasClearingUndo(_ change: (inout SheetFileExtras) -> Void) {
+    commitEditIfNeeded()
+    let before = activeSheet.fileExtras
+    var after = before
+    change(&after)
+    guard after != before else { return }
+    applyFileExtras(after, sheetID: activeSheet.id)
+    // Emptied once the command's event ends: emptying inside it also ends the undo group the
+    // event opened, and closing that group then fails.
+    let manager = undoManager
+    DispatchQueue.main.async { manager?.removeAllActions() }
+  }
+
   /// Applies `after` to the active sheet with an undo step that puts `before` back on that same
   /// sheet, even when another sheet is showing by the time Undo is chosen.
   private func recordFileExtrasChange(

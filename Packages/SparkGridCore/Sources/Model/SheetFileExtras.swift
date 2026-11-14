@@ -43,6 +43,12 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
   public var spills: [CellAddress: CellRange] = [:]
   /// Array formulas whose results are blocked by cells that are not empty; they show #SPILL!.
   public var blockedSpills: Set<CellAddress> = []
+  /// Ranges a protected sheet still lets people edit, some with a password of their own
+  /// (`<protectedRanges>` in the file, as other apps' Allow Edit Ranges).
+  public var editableRanges: [EditableRange] = []
+  /// Ranges locked on their own, whether the sheet is protected or not. Spark Grid keeps these
+  /// in its own part of the file; other apps do not lock them.
+  public var rangeLocks: [RangeLock] = []
 
   public init() {}
 
@@ -53,7 +59,7 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     case collapsedRows, collapsedColumns, sheetPropertiesXML, protectionXML, pageLayoutXML
     case printArea, rowBreaks, columnBreaks, builtInNames
     case dataValidations, hyperlinks, comments, tables, foreignCharts, pivotTables, sparkPivots
-    case spills, blockedSpills
+    case spills, blockedSpills, editableRanges, rangeLocks
   }
 
   public init(from decoder: Decoder) throws {
@@ -91,6 +97,9 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     spills = try c.decodeIfPresent([CellAddress: CellRange].self, forKey: .spills) ?? [:]
     blockedSpills =
       try c.decodeIfPresent(Set<CellAddress>.self, forKey: .blockedSpills) ?? []
+    editableRanges =
+      try c.decodeIfPresent([EditableRange].self, forKey: .editableRanges) ?? []
+    rangeLocks = try c.decodeIfPresent([RangeLock].self, forKey: .rangeLocks) ?? []
   }
 }
 
@@ -287,5 +296,69 @@ public nonisolated struct PivotCachePart: Codable, Equatable, Sendable {
     self.cacheID = cacheID
     self.definitionXML = definitionXML
     self.recordsXML = recordsXML
+  }
+}
+
+/// A range a protected sheet still lets people edit. With a password, the range opens for
+/// editing once the password is given.
+public nonisolated struct EditableRange: Codable, Equatable, Sendable {
+  public var name: String
+  public var ranges: [CellRange]
+  /// The password as the file writes it, as attributes: `password="CBEB"`, or `algorithmName`,
+  /// `hashValue`, `saltValue` and `spinCount`. Empty when there is none.
+  public var passwordAttributes: String
+
+  public init(name: String, ranges: [CellRange], passwordAttributes: String = "") {
+    self.name = name
+    self.ranges = ranges
+    self.passwordAttributes = passwordAttributes
+  }
+
+  public var hasPassword: Bool { !passwordAttributes.isEmpty }
+
+  /// The range as one `<protectedRange>` element.
+  public var xml: String {
+    let sqref = ranges.map(\.a1Label).joined(separator: " ")
+    let attributes = passwordAttributes.isEmpty ? "" : " " + passwordAttributes
+    return #"<protectedRange name="\#(Self.escape(name))" sqref="\#(sqref)"\#(attributes)/>"#
+  }
+
+  public func covers(_ address: CellAddress) -> Bool {
+    ranges.contains { $0.contains(address) }
+  }
+
+  private static func escape(_ text: String) -> String {
+    text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+  }
+}
+
+/// A range locked on its own: nothing in it can be typed over, formatted, cleared or moved
+/// until it is unlocked, whether the sheet is protected or not.
+public nonisolated struct RangeLock: Codable, Equatable, Sendable, Identifiable {
+  public var id: UUID
+  public var name: String
+  public var ranges: [CellRange]
+  /// The password's hash in the 16-bit form sheet protection uses, or nil for none.
+  public var passwordHash: String?
+
+  public init(id: UUID = UUID(), name: String, ranges: [CellRange], passwordHash: String? = nil) {
+    self.id = id
+    self.name = name
+    self.ranges = ranges
+    self.passwordHash = passwordHash
+  }
+
+  public func covers(_ address: CellAddress) -> Bool {
+    ranges.contains { $0.contains(address) }
+  }
+
+  public func intersects(_ range: CellRange) -> Bool {
+    let r = range.normalized
+    return ranges.contains { lock in
+      let l = lock.normalized
+      return l.minRow <= r.maxRow && r.minRow <= l.maxRow && l.minCol <= r.maxCol
+        && r.minCol <= l.maxCol
+    }
   }
 }

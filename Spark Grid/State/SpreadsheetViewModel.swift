@@ -71,6 +71,8 @@ final class SpreadsheetViewModel {
   var formatPainterBlock: [[CellFormat?]]?
   /// Set when sheet protection refused a change; the window shows it, then clears it.
   var protectionNotice: String?
+  /// Editable ranges opened with their password since the file was opened, by sheet id and name.
+  var unlockedEditableRanges: Set<String> = []
   /// True while spilled values are being written, so writing them does not start another pass.
   @ObservationIgnored var isSyncingSpills = false
   /// Why a pivot table from the file was left as it was, after Refresh PivotTable.

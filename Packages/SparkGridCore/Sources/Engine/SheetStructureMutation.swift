@@ -276,6 +276,17 @@ public enum SheetStructureMutation {
       next.ranges = rule.ranges.compactMap(keep)
       return next.ranges.isEmpty ? nil : next
     }
+    // Editable ranges and range locks move with their cells; one whose cells are all deleted goes.
+    extras.editableRanges = extras.editableRanges.compactMap { range in
+      var next = range
+      next.ranges = range.ranges.compactMap(keep)
+      return next.ranges.isEmpty ? nil : next
+    }
+    extras.rangeLocks = extras.rangeLocks.compactMap { lock in
+      var next = lock
+      next.ranges = lock.ranges.compactMap(keep)
+      return next.ranges.isEmpty ? nil : next
+    }
     extras.hyperlinks = extras.hyperlinks.compactMap { link in
       guard let range = keep(link.range) else { return nil }
       var next = link
