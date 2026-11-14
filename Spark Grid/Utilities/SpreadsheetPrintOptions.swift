@@ -133,6 +133,37 @@ struct SpreadsheetPrintOptions: Equatable {
   }
 
   func pages(for viewModel: SpreadsheetViewModel) -> [SpreadsheetPrintPage] {
+    rangePages(for: viewModel).map(withPrintTitles)
+  }
+
+  /// A range that starts below the frozen rows (or right of the frozen columns) still gets them
+  /// on every page, as other apps print their titles: the range reaches back to take them in,
+  /// and the rows or columns between are left off the page. The first page then shows the
+  /// titles too, and later pages repeat them as for any range that starts at the top.
+  private func withPrintTitles(_ page: SpreadsheetPrintPage) -> SpreadsheetPrintPage {
+    var sheet = page.sheet
+    let n = page.range.normalized
+    var minRow = n.minRow
+    var minCol = n.minCol
+    var hidden = page.hiddenRows
+    if repeatFrozenRows, sheet.frozenRows > 0, n.minRow > sheet.frozenRows - 1 {
+      hidden.formUnion(sheet.frozenRows..<n.minRow)
+      minRow = 0
+    }
+    if repeatFrozenColumns, sheet.frozenColumns > 0, n.minCol > sheet.frozenColumns - 1 {
+      sheet.fileExtras.hiddenColumns.formUnion(sheet.frozenColumns..<n.minCol)
+      minCol = 0
+    }
+    guard minRow != n.minRow || minCol != n.minCol else { return page }
+    return SpreadsheetPrintPage(
+      sheet: sheet,
+      range: CellRange(
+        start: CellAddress(row: minRow, col: minCol), end: CellAddress(row: n.maxRow, col: n.maxCol)
+      ),
+      title: page.title, hiddenRows: hidden)
+  }
+
+  private func rangePages(for viewModel: SpreadsheetViewModel) -> [SpreadsheetPrintPage] {
     // Rows a filter hides and rows hidden or folded in a group stay off the page.
     let activeHidden = viewModel.hiddenRowsForPrint().union(
       viewModel.activeSheet.fileExtras.hiddenRows)

@@ -73,6 +73,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { typingOverAValueHidesTheOldText() })
       results.append(MainActor.assumeIsolated { fillSkipsFilteredRows() })
       results.append(MainActor.assumeIsolated { printWithoutHeadings() })
+      results.append(MainActor.assumeIsolated { frozenTitlesRepeatForALaterRange() })
       results.append(MainActor.assumeIsolated { undoCannotUnprotect() })
       results.append(MainActor.assumeIsolated { rangeLocksAndEditableRanges() })
       results.append(MainActor.assumeIsolated { editThenTileScrollShowsEdit() })
@@ -1750,6 +1751,52 @@ typealias Cell = SparkGridCore.Cell
         return Result(name: name, passed: false, detail: "unprotect left an Undo step")
       }
       return Result(name: name, passed: true, detail: "protect and unprotect empty Undo")
+    }
+
+    /// A range that starts below the frozen header (Sam, Nov 14) printed no header at all; other
+    /// apps print it on every page. The header now heads the first page and repeats on the rest.
+    @MainActor
+    private static func frozenTitlesRepeatForALaterRange() -> Result {
+      let name = "frozen titles repeat for a later range"
+      var sheet = Sheet(name: "Orders")
+      for (col, header) in ["Order", "Region", "Amount"].enumerated() {
+        sheet.setCell(Cell(raw: header), at: CellAddress(row: 0, col: col))
+      }
+      for row in 1..<300 {
+        sheet.setCell(Cell(raw: "SO-\(row)"), at: CellAddress(row: row, col: 0))
+        sheet.setCell(Cell(raw: "West"), at: CellAddress(row: row, col: 1))
+        sheet.setCell(Cell(raw: String(row * 10)), at: CellAddress(row: row, col: 2))
+      }
+      sheet.frozenRows = 1
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      vm.selectRange(from: CellAddress(row: 149, col: 0), to: CellAddress(row: 289, col: 2))
+      var options = SpreadsheetPrintOptions.default(for: vm)
+      options.scope = .selectedCells
+      options.scale = .normal
+      guard options.repeatFrozenRows, let page = options.pages(for: vm).first else {
+        return Result(name: name, passed: false, detail: "no page")
+      }
+      let grid = SpreadsheetPrintNSView(
+        sheet: page.sheet, range: page.range, showGridlines: true, showHeadings: true,
+        hiddenRows: page.hiddenRows)
+      let layout = SpreadsheetPrintLayout(gridView: grid, sheet: page.sheet, options: options)
+      let n = page.range.normalized
+      // The header row is printed; the rows between it and the selection take no room.
+      guard n.minRow == 0, grid.rowHeights[0] > 0,
+        (1..<149).allSatisfy({ grid.rowHeights[$0] == 0 }), grid.rowHeights[149] > 0
+      else {
+        return Result(name: name, passed: false, detail: "range \(page.range.a1Label)")
+      }
+      guard layout.pages.count >= 2, layout.pages[0].rows.lowerBound == 0,
+        layout.pages.dropFirst().allSatisfy({ $0.yBands.count == 3 })
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "pages \(layout.pages.map { "\($0.rows) bands \($0.yBands.count)" })")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "header on page 1 and repeated on \(layout.pages.count - 1) more pages")
     }
 
     /// Print setup can leave out the column letters and row numbers (Sam, Nov 13).
