@@ -22,6 +22,8 @@ struct FormattingToolbar: View {
   @State private var colorSyncGeneration = 0
 
   private var showLabels: Bool { settings.showToolbarLabels }
+  @State private var variantWidths: [Int: CGFloat] = [:]
+  @State private var availableWidth: CGFloat = 0
 
   enum ToolbarFold: Int, Comparable {
     case none, insert, dataAndInsert, layoutDataAndInsert
@@ -31,29 +33,62 @@ struct FormattingToolbar: View {
   private var dividerHeight: CGFloat { showLabels ? 36 : 30 }
   private var iconAreaHeight: CGFloat { 24 }
 
+  /// The toolbar's variants, widest first: captions, then none, then the Insert group and then
+  /// the Data group folded into the » menu.
+  private var variants: [(labels: Bool, fold: ToolbarFold)] {
+    (showLabels ? [(true, ToolbarFold.none)] : [])
+      + [(false, .none), (false, .insert), (false, .dataAndInsert)]
+  }
+
+  /// The first variant whose measured width fits, or nil for the narrowest (scrolling) one.
+  /// Until the widths are measured it is the narrowest, which never overflows: a wider one
+  /// would widen the space measured for it, and then every variant would seem to fit.
+  private var chosenVariant: Int? {
+    guard variantWidths.count == variants.count, availableWidth > 0 else { return nil }
+    return variants.indices.first { (variantWidths[$0] ?? .infinity) <= availableWidth }
+  }
+
   var body: some View {
     HStack(spacing: 0) {
       // One row at any width: captions go first, then the Insert group and then the Data group
-      // fold into a » menu at the end. Nothing scrolls out of sight.
-      ViewThatFits(in: .horizontal) {
-        if showLabels {
-          toolbarContent(labels: true, fold: .none)
-        }
-        toolbarContent(labels: false, fold: .none)
-        toolbarContent(labels: false, fold: .insert)
-        toolbarContent(labels: false, fold: .dataAndInsert)
-        // Narrower still: the formatting scrolls, and the » menu stays in reach at the end.
-        HStack(spacing: 0) {
-          ScrollView(.horizontal, showsIndicators: false) {
-            toolbarContent(labels: false, fold: .layoutDataAndInsert, overflow: false)
+      // fold into a » menu at the end. Nothing scrolls out of sight. Each variant's width is
+      // measured once; ViewThatFits measured every variant again on each selection change,
+      // about 65 ms a move in a half-screen window.
+      Group {
+        if let index = chosenVariant {
+          toolbarContent(labels: variants[index].labels, fold: variants[index].fold)
+        } else {
+          // Narrower still: the formatting scrolls, and the » menu stays in reach at the end.
+          HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+              toolbarContent(labels: false, fold: .layoutDataAndInsert, overflow: false)
+            }
+            toolbarDivider
+            overflowMenu(fold: .layoutDataAndInsert)
+              .environment(\.toolbarCaptions, false)
+              .padding(.horizontal, 6)
           }
-          toolbarDivider
-          overflowMenu(fold: .layoutDataAndInsert)
-            .environment(\.toolbarCaptions, false)
-            .padding(.horizontal, 6)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { availableWidth = $0 }
+      .background(alignment: .topLeading) {
+        if variantWidths.count < variants.count {
+          // Measured once, hidden, then taken away.
+          ZStack(alignment: .topLeading) {
+            ForEach(variants.indices, id: \.self) { index in
+              toolbarContent(labels: variants[index].labels, fold: variants[index].fold)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) {
+                  variantWidths[index] = $0
+                }
+            }
+          }
+          .hidden()
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+        }
+      }
+      .onChange(of: showLabels) { _, _ in variantWidths = [:] }
 
       AutosaveStatusView(store: store)
         .padding(.horizontal, 6)

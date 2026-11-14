@@ -98,6 +98,7 @@ public nonisolated enum XLSXCodec {
       )
       importSparkCharts(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importSparkPivots(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
+      importRangeLocks(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importSheetImages(
         into: &sheet,
         archiveData: archiveData,
@@ -236,6 +237,7 @@ public nonisolated enum XLSXCodec {
         into: &sheet, kept: kept, package: { package.data(for: $0) }, worksheetPath: path)
       XLSXCodec.adoptSpills(arrays, into: &sheet)
       importSparkPivots(into: &sheet, archiveData: data, sheetIndex: index)
+      importRangeLocks(into: &sheet, archiveData: data, sheetIndex: index)
       return sheet
     }
 
@@ -1464,6 +1466,9 @@ public nonisolated enum XLSXCodec {
       if let pivotsData = sparkPivotsJSON(workbook.sheets[index].fileExtras.sparkPivots) {
         files["xl/sparkGrid/pivots\(index + 1).json"] = pivotsData
       }
+      if let locksData = rangeLocksJSON(workbook.sheets[index].fileExtras.rangeLocks) {
+        files["xl/sparkGrid/locks\(index + 1).json"] = locksData
+      }
     }
 
     files["xl/sharedStrings.xml"] = sharedStringsXML(sharedStrings)
@@ -1669,6 +1674,7 @@ public nonisolated enum XLSXCodec {
     if let protection = extras.protectionXML {
       xml.append(utf8: protection)
     }
+    xml.append(utf8: editableRangesXML(extras.editableRanges))
     xml.append(utf8: autoFilterXML(sheet.autoFilter))
     xml.append(utf8: mergeCellsXML(sheet.mergedRanges))
     xml.append(

@@ -118,6 +118,26 @@ struct SpreadsheetStructureCommands: Commands {
         SheetProtectionPresenter.toggle(from: viewModel)
       }
       .disabled(viewModel == nil)
+      Button("Allow Edit Ranges…") {
+        guard let viewModel else { return }
+        RangeProtectionPresenter.editableRanges(from: viewModel)
+      }
+      .disabled(viewModel == nil)
+      Button("Unlock Edit Range…") {
+        guard let viewModel else { return }
+        RangeProtectionPresenter.unlockEditRange(from: viewModel)
+      }
+      .disabled(viewModel?.closedEditableRangesAtSelection.isEmpty != false)
+      Button("Lock Range…") {
+        guard let viewModel else { return }
+        RangeProtectionPresenter.lockRange(from: viewModel)
+      }
+      .disabled(viewModel?.canLockRange != true)
+      Button("Remove Range Lock…") {
+        guard let viewModel else { return }
+        RangeProtectionPresenter.removeRangeLock(from: viewModel)
+      }
+      .disabled(viewModel?.selectedRangeLocks.isEmpty != false)
 
       Button("Hide Sheet") {
         guard let viewModel else { return }

@@ -35,7 +35,8 @@ public nonisolated enum StreamingWorksheet {
 
   /// Elements kept as written. `sheetPr` holds the tab color; the rest follow `sheetData`.
   static let keptElementNames: [StaticString] = [
-    "sheetPr", "sheetProtection", "dataValidations", "hyperlinks", "printOptions", "pageMargins",
+    "sheetPr", "sheetProtection", "protectedRanges", "dataValidations", "hyperlinks",
+    "printOptions", "pageMargins",
     "pageSetup", "headerFooter", "rowBreaks", "colBreaks", "drawing", "legacyDrawing", "tableParts",
   ]
 

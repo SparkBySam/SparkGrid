@@ -115,6 +115,26 @@ public nonisolated enum FormulaRewriter {
     change: StructureChange
   ) -> String {
     guard FormulaSyntax.isFormula(raw) else { return raw }
+    if let fast = fastShiftForStructure(
+      raw, formulaSheetName: formulaSheetName, mutatedSheetName: mutatedSheetName, axis: axis,
+      change: change)
+    {
+      return fast
+    }
+    return parsedShiftForStructure(
+      raw, formulaSheetName: formulaSheetName, mutatedSheetName: mutatedSheetName, axis: axis,
+      change: change)
+  }
+
+  /// The parser's shift, writing the whole formula in standard form.
+  static func parsedShiftForStructure(
+    _ raw: String,
+    formulaSheetName: String,
+    mutatedSheetName: String,
+    axis: Axis,
+    change: StructureChange
+  ) -> String {
+    guard FormulaSyntax.isFormula(raw) else { return raw }
     do {
       let expr = try FormulaParser.parse(raw)
       let shifted = shiftExpr(
