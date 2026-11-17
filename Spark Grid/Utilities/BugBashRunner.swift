@@ -74,6 +74,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { fillSkipsFilteredRows() })
       results.append(MainActor.assumeIsolated { printWithoutHeadings() })
       results.append(MainActor.assumeIsolated { frozenTitlesRepeatForALaterRange() })
+      results.append(MainActor.assumeIsolated { startScreenOpensTemplates() })
       results.append(MainActor.assumeIsolated { undoCannotUnprotect() })
       results.append(MainActor.assumeIsolated { rangeLocksAndEditableRanges() })
       results.append(MainActor.assumeIsolated { editThenTileScrollShowsEdit() })
@@ -1751,6 +1752,43 @@ typealias Cell = SparkGridCore.Cell
         return Result(name: name, passed: false, detail: "unprotect left an Undo step")
       }
       return Result(name: name, passed: true, detail: "protect and unprotect empty Undo")
+    }
+
+    /// The start screen (1.5): a template opens as an Untitled workbook and hides it; from the
+    /// File menu over a workbook it goes back to that workbook on Cancel; every template's
+    /// preview has cells to draw.
+    @MainActor
+    private static func startScreenOpensTemplates() -> Result {
+      let name = "start screen opens templates"
+      let store = SpreadsheetDocumentStore()
+      store.showStartScreen()
+      guard store.showsStartScreen, !store.startScreenReturnsToDocument else {
+        return Result(name: name, passed: false, detail: "blank store should not return")
+      }
+      store.newDocument(from: .invoice)
+      let sheet = store.document.workbook.sheets[0]
+      guard !store.showsStartScreen, store.fileURL == nil, sheet.name == "Invoice",
+        sheet.cell(at: CellAddress(row: 0, col: 0)).raw == "Invoice"
+      else {
+        return Result(name: name, passed: false, detail: "invoice did not open: \(sheet.name)")
+      }
+      store.showStartScreen()
+      guard store.startScreenReturnsToDocument else {
+        return Result(name: name, passed: false, detail: "should return to the invoice")
+      }
+      store.dismissStartScreen()
+      guard !store.showsStartScreen, store.document.workbook.sheets[0].name == "Invoice" else {
+        return Result(name: name, passed: false, detail: "cancel lost the invoice")
+      }
+      for template in WorkbookTemplate.allCases {
+        let preview = TemplatePreview.preview(for: template)
+        let texts = preview.items.filter { !$0.text.isEmpty }
+        guard texts.count >= 10, !texts.contains(where: { $0.text.hasPrefix("#") }) else {
+          return Result(
+            name: name, passed: false, detail: "\(template.name) preview: \(texts.count) cells")
+        }
+      }
+      return Result(name: name, passed: true, detail: "template opens; Cancel keeps the workbook")
     }
 
     /// A range that starts below the frozen header (Sam, Nov 14) printed no header at all; other

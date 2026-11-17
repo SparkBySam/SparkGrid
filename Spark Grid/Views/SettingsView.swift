@@ -150,6 +150,10 @@ private struct GeneralSettingsTab: View {
         SparkDialogRow(label: "Names under toolbar buttons") {
           toggle($settings.showToolbarLabels)
         }
+        SparkDialogDivider()
+        SparkDialogRow(label: "Start screen when Spark Grid opens") {
+          toggle($settings.showStartScreen)
+        }
       }
 
       SparkDialogSection(title: "Saving")

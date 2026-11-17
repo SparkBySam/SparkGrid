@@ -13,11 +13,17 @@ struct SpreadsheetFileCommands: Commands {
         store.newDocument()
       }
       .keyboardShortcut("n", modifiers: .command)
+
+      Button("New from Template…") {
+        store.showStartScreen()
+      }
+      .keyboardShortcut("n", modifiers: [.command, .shift])
+      .disabled(store.showsStartScreen)
     }
 
     CommandGroup(after: .newItem) {
       Button("Open…") {
-        openPanel()
+        SpreadsheetOpenPanel.run(store: store)
       }
       .keyboardShortcut("o", modifiers: .command)
 
@@ -34,18 +40,6 @@ struct SpreadsheetFileCommands: Commands {
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
     }
-  }
-
-  private func openPanel() {
-    let panel = NSOpenPanel()
-    // The files Spark Grid reads, the same two it saves. Plain text let any text file be picked,
-    // and it opened as a one-column CSV.
-    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
-    panel.allowsOtherFileTypes = false
-    panel.allowsMultipleSelection = false
-    panel.canChooseDirectories = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    try? store.load(from: url)
   }
 
   private func saveAsPanel() {
@@ -105,5 +99,20 @@ struct SpreadsheetFileCommands: Commands {
     alert.addButton(withTitle: "Save")
     alert.addButton(withTitle: "Cancel")
     return alert.runModal() == .alertFirstButtonReturn
+  }
+}
+
+enum SpreadsheetOpenPanel {
+  @MainActor
+  static func run(store: SpreadsheetDocumentStore) {
+    let panel = NSOpenPanel()
+    // The files Spark Grid reads, the same two it saves. Plain text let any text file be picked,
+    // and it opened as a one-column CSV.
+    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
+    panel.allowsOtherFileTypes = false
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    try? store.load(from: url)
   }
 }

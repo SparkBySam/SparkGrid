@@ -61,7 +61,23 @@ final class SpreadsheetDocumentStore {
     }
   #endif
 
+  /// The start screen fills the window: when Spark Grid opens with no file (Settings can turn
+  /// that off), and from File > New from Template. Opening anything hides it.
+  var showsStartScreen = SpreadsheetDocumentStore.opensToStartScreen
+
+  /// Whether a new store starts on the start screen: as Settings says, except in the automated
+  /// runs (BugBash, the benchmark), which drive the grid. Opening a file at launch hides it.
+  static var opensToStartScreen: Bool {
+    let environment = ProcessInfo.processInfo.environment
+    let automated =
+      environment["SPARK_GRID_BENCHMARK"] == "1" || environment["SPARK_GRID_BUG_BASH"] == "1"
+    return AppSettings.shared.showStartScreen && !automated
+  }
+  /// Shown over a workbook from the File menu, so Escape and Cancel go back to it.
+  private(set) var startScreenReturnsToDocument = false
+
   var displayTitle: String {
+    if showsStartScreen && !startScreenReturnsToDocument { return "Spark Grid" }
     let base = fileURL?.lastPathComponent ?? "Untitled"
     return isDirty ? "\(base) — Edited" : base
   }
@@ -77,9 +93,30 @@ final class SpreadsheetDocumentStore {
     return fileURL.pathExtension.lowercased() == "xlsx"
   }
 
+  func showStartScreen() {
+    startScreenReturnsToDocument = fileURL != nil || !document.workbook.isEffectivelyEmpty
+    showsStartScreen = true
+  }
+
+  /// Escape or Cancel: back to the workbook behind it, or to the blank one Spark Grid opened with.
+  func dismissStartScreen() {
+    showsStartScreen = false
+    startScreenReturnsToDocument = false
+  }
+
+  /// A template opens as a new Untitled workbook, its dates counted from today.
+  func newDocument(from template: WorkbookTemplate) {
+    replaceWithNewDocument(SpreadsheetDocument(workbook: template.makeWorkbook()))
+  }
+
   func newDocument() {
+    replaceWithNewDocument(SpreadsheetDocument())
+  }
+
+  private func replaceWithNewDocument(_ new: SpreadsheetDocument) {
     guard confirmReplaceCurrentDocument() else { return }
-    document = SpreadsheetDocument()
+    dismissStartScreen()
+    document = new
     fileURL = nil
     externalWorkbookToken &+= 1
     markClean()
@@ -147,6 +184,7 @@ final class SpreadsheetDocumentStore {
       throw box.error ?? CocoaError(.fileReadUnknown)
     }
     isLoadingRemainder = false
+    dismissStartScreen()
     document = loaded
     fileURL = url
     externalWorkbookToken &+= 1
@@ -620,6 +658,7 @@ final class SpreadsheetDocumentStore {
 
   func restoreCrashRecovery() throws {
     let loaded = try CrashRecoveryStore.load()
+    dismissStartScreen()
     document = SpreadsheetDocument(workbook: loaded.workbook)
     if let path = loaded.documentPath {
       let url = URL(fileURLWithPath: path)

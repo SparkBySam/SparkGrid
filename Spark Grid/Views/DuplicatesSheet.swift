@@ -84,7 +84,7 @@ struct DuplicatesSheet: View {
                     .lineLimit(1)
                 }
               }
-              .toggleStyle(.checkbox)
+              .toggleStyle(SparkCheckboxToggleStyle())
             }
           }
           .padding(10)
