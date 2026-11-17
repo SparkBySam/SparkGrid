@@ -1,6 +1,12 @@
 # Status
 
-Updated: 2026-11-12. Commit this file in the same commit as the work it describes.
+Updated: 2026-11-17. Commit this file in the same commit as the work it describes.
+
+## 1.5, on `claude/1.5`
+
+- Start screen (Sam, Nov 17): Spark Grid opens to it when it opens with no file (Settings > General can turn that off, as can its own checkbox), and File > New from Template (Shift-Command-N) shows it as a sheet over an open workbook, with Cancel. Blank Workbook and ten templates in three categories (Personal: Monthly Budget, Expense Report, Loan Calculator, To-Do List; Business: Invoice, Sales Pipeline, Timesheet, Inventory; Planning: Project Tracker, Weekly Schedule), each with an info button and a preview drawn from its real cells in the window's light or dark look (`TemplatePreview`). Recent lists Open Recent's files. A template opens as a new Untitled workbook, dates counted from today. Templates are built in code with made-up data (`WorkbookTemplate`, Engine): dropdowns, highlight rules, frozen headers and formulas such as PMT/PPMT/IPMT, XLOOKUP, SUMIFS and EDATE. `WorkbookTemplateTests`: every formula calculates without an error, sample totals, and each saves and opens again; BugBash "start screen opens templates". 110/110.
+- Checkboxes (start screen, Filter, Protect Sheet, Find Duplicates) follow the accent color through `SparkCheckboxToggleStyle`; the system checkbox always took the macOS accent.
+- Found while testing: formulas from a saved file keep Excel's `_xlfn.` prefix, so the formula bar shows `=_xlfn.XLOOKUP(…)` after a reopen. Being fixed in a separate session.
 
 ## 1.4, on `claude/1.4`
 

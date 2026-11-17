@@ -54,7 +54,7 @@ struct ProtectSheetDialog: View {
             VStack(alignment: .leading, spacing: 6) {
               ForEach(column, id: \.self) { permission in
                 Toggle(permission.title, isOn: allowBinding(permission))
-                  .toggleStyle(.checkbox)
+                  .toggleStyle(SparkCheckboxToggleStyle())
                   .font(.system(size: 13))
               }
             }

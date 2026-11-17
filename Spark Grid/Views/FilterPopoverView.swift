@@ -301,7 +301,7 @@ struct FilterPopoverView: View {
       }
       .font(.system(size: 12))
     }
-    .toggleStyle(.checkbox)
+    .toggleStyle(SparkCheckboxToggleStyle())
     .padding(.horizontal, 8)
     .padding(.vertical, 3)
   }

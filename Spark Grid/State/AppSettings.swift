@@ -142,6 +142,7 @@ final class AppSettings {
   private let appearanceModeKey = "appearanceMode"
   private let autosaveEnabledKey = "autosaveEnabled"
   private let autosaveIntervalKey = "autosaveIntervalSeconds"
+  private let startScreenKey = "showStartScreen"
   private let shortcutsKey = "keyboardShortcuts"
 
   static let autosaveIntervalOptions = [10, 30, 60, 120, 300]
@@ -164,6 +165,11 @@ final class AppSettings {
 
   var autosaveIntervalSeconds: Int {
     didSet { defaults.set(autosaveIntervalSeconds, forKey: autosaveIntervalKey) }
+  }
+
+  /// On (the default): Spark Grid opens to the start screen when it opens with no file.
+  var showStartScreen: Bool {
+    didSet { defaults.set(showStartScreen, forKey: startScreenKey) }
   }
 
   /// Off (the default): selection, the fill handle and toggles use Spark amber.
@@ -193,6 +199,8 @@ final class AppSettings {
     } else {
       autosaveEnabled = true
     }
+    showStartScreen =
+      defaults.object(forKey: startScreenKey) == nil ? true : defaults.bool(forKey: startScreenKey)
     let storedInterval = defaults.integer(forKey: autosaveIntervalKey)
     autosaveIntervalSeconds =
       Self.autosaveIntervalOptions.contains(storedInterval) ? storedInterval : 30

@@ -31,8 +31,8 @@ Agreed with Sam on Nov 7, 2026, in this order:
 
 **1.5: Start faster and Mac-native**
 
-- Start screen with blank sheet, templates, and recent files
-- Template sheets, bundled in the app
+- Start screen with blank sheet, templates, and recent files. Nov 17: done: shown when Spark Grid opens with no file and from File > New from Template; ten templates in Personal, Business and Planning, with real previews and an info button
+- Template sheets, bundled in the app. Nov 17: ten, built in code (Monthly Budget, Expense Report, Loan Calculator, To-Do List, Invoice, Sales Pipeline, Timesheet, Inventory, Project Tracker, Weekly Schedule)
 - Finder Quick Look preview
 - Numbers import
 

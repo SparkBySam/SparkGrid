@@ -8,10 +8,21 @@ struct SpreadsheetRootView: View {
   @State private var showAbout = false
 
   var body: some View {
-    SpreadsheetWindowView(store: store) {
-      store.documentDidChange()
+    ZStack {
+      SpreadsheetWindowView(store: store) {
+        store.documentDidChange()
+      }
+      .id(store.fileURL?.absoluteString ?? "untitled")
+      .accessibilityHidden(store.showsStartScreen && !store.startScreenReturnsToDocument)
+      // At launch the start screen covers the blank workbook it gives way to.
+      if store.showsStartScreen && !store.startScreenReturnsToDocument {
+        StartScreenView(store: store)
+      }
     }
-    .id(store.fileURL?.absoluteString ?? "untitled")
+    .sheet(isPresented: startScreenSheet) {
+      StartScreenView(store: store, isSheet: true)
+        .frame(width: 1040, height: 700)
+    }
     .preferredColorScheme(settings.appearanceMode.colorScheme)
     .aboutPanel(isPresented: $showAbout)
     .onReceive(NotificationCenter.default.publisher(for: AppUINotifications.showAbout)) { _ in
@@ -26,6 +37,13 @@ struct SpreadsheetRootView: View {
     .onChange(of: settings.autosaveIntervalSeconds) { _, _ in
       store.restartAutosave()
     }
+  }
+
+  /// From File > New from Template over an open workbook.
+  private var startScreenSheet: Binding<Bool> {
+    Binding(
+      get: { store.showsStartScreen && store.startScreenReturnsToDocument },
+      set: { if !$0 { store.dismissStartScreen() } })
   }
 }
 
