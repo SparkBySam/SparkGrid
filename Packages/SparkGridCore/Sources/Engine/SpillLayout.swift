@@ -12,15 +12,62 @@ public nonisolated enum SpillLayout {
   public static func anchors(in sheet: Sheet) -> [CellAddress] {
     var found: [CellAddress] = []
     for (address, raw) in sheet.formulaIngestByColumn.values.joined() {
-      let upper = raw.uppercased()
-      guard
-        upper.contains("#")
-          || FormulaEvaluator.arrayFunctionNames.contains(where: { upper.contains($0 + "(") }),
-        let expr = try? FormulaParser.parse(raw), FormulaEvaluator.spills(expr)
-      else { continue }
+      guard let hint = spillHint(raw) else { continue }
+      // A range can spill (`=A1:A3`, `=LEN(D1:D8)`), except in a formula a file saved the
+      // pre-spill way.
+      if hint == .rangeOnly, sheet.cell(at: address).opensAsOneValue == true { continue }
+      guard let expr = try? FormulaParser.parse(raw), FormulaEvaluator.spills(expr) else {
+        continue
+      }
       found.append(address)
     }
     return found.sorted { ($0.row, $0.col) < ($1.row, $1.col) }
+  }
+
+  enum SpillHint { case arrayFunctionOrList, rangeOnly }
+
+  /// Whether `raw` could spill, from one pass over its bytes: a `#` or `{`, an array function
+  /// name before `(`, or a `:` range. Uppercasing every formula and searching it for each array
+  /// function name took 2.3 s for the stress workbook's 105,000-formula Orders sheet in Release,
+  /// after every edit (Nov 18).
+  static func spillHint(_ raw: String) -> SpillHint? {
+    var sawRange = false
+    var token: [UInt8] = []
+    var inQuotes = false
+    for byte in raw.utf8 {
+      if byte == 34 {  // "
+        inQuotes.toggle()
+        token.removeAll(keepingCapacity: true)
+        continue
+      }
+      if inQuotes { continue }
+      switch byte {
+      case 35, 123:  // # {
+        return .arrayFunctionOrList
+      case 58:  // :
+        sawRange = true
+        token.removeAll(keepingCapacity: true)
+      case 40:  // (
+        if !token.isEmpty, isArrayFunction(token) { return .arrayFunctionOrList }
+        token.removeAll(keepingCapacity: true)
+      case 65...90, 97...122, 48...57, 46, 95:  // letters, digits, . _
+        token.append(byte)
+      default:
+        token.removeAll(keepingCapacity: true)
+      }
+    }
+    return sawRange ? .rangeOnly : nil
+  }
+
+  private static let arrayFunctionBytes: Set<[UInt8]> = Set(
+    FormulaEvaluator.arrayFunctionNames.map { Array($0.utf8) })
+
+  private static func isArrayFunction(_ token: [UInt8]) -> Bool {
+    // `_xlfn.SORT` and `_xlfn._xlws.FILTER` as files name them.
+    var name = token
+    if let dot = name.lastIndex(of: 46) { name = Array(name[(dot + 1)...]) }
+    let upper = name.map { $0 >= 97 && $0 <= 122 ? $0 - 32 : $0 }
+    return arrayFunctionBytes.contains(upper)
   }
 
   /// Blanks in a spilled result show as 0, as other apps show them.

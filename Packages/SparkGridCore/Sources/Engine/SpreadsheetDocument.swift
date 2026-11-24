@@ -13,6 +13,29 @@ extension UTType {
   public static var spreadsheetML: UTType {
     UTType(importedAs: "org.openxmlformats.spreadsheetml.sheet")
   }
+
+  /// A Numbers document saved as one file.
+  public static var numbersDocument: UTType {
+    UTType(importedAs: "com.apple.iwork.numbers.sffnumbers")
+  }
+
+  /// A Numbers document saved as a package folder, as older Numbers versions save.
+  public static var numbersPackage: UTType {
+    UTType(importedAs: "com.apple.iwork.numbers.numbers")
+  }
+
+  /// An OpenDocument spreadsheet (.ods), as LibreOffice saves it.
+  public static var openDocumentSpreadsheet: UTType {
+    UTType(importedAs: "org.oasis-open.opendocument.spreadsheet")
+  }
+
+  /// The files Spark Grid opens: its own two, Numbers documents and OpenDocument spreadsheets.
+  public static var spreadsheetsSparkGridOpens: [UTType] {
+    [
+      .spreadsheetML, .commaSeparatedText, .numbersDocument, .numbersPackage,
+      .openDocumentSpreadsheet,
+    ]
+  }
 }
 
 /// In-memory workbook container for Spark Grid's custom window/store architecture.

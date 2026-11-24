@@ -55,9 +55,9 @@ extension FormulaEvaluator {
   }
 
   /// Functions whose result can be many cells.
-  public static let arrayFunctionNames: Set<String> = [
+  public static let arrayFunctionNames: Set<String> = Set([
     "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", FormulaExpr.anchorArrayFunction,
-  ]
+  ]).union(shapeFunctionNames)
 
   /// The name without the `_xlfn.` and `_xlws.` prefixes Excel saves newer functions with.
   public static func plainFunctionName(_ name: String) -> String {
@@ -73,14 +73,136 @@ extension FormulaEvaluator {
   /// other function, as in `=FILTER(...)` or `=SORT(UNIQUE(...))*2`.
   public static func spills(_ expr: FormulaExpr) -> Bool {
     switch expr {
-    case .call(let name, _):
-      return arrayFunctionNames.contains(plainFunctionName(name))
+    case .range:
+      // `=A1:A3` spills the cells, as in other apps.
+      return true
+    case .call(let name, let args):
+      // LET spills when what it works with or works out does.
+      if isLet(name) { return args.contains(where: spills) }
+      let plain = plainFunctionName(name)
+      if arrayFunctionNames.contains(plain) { return true }
+      // `=LEN(D1:D8)` and `=ROW(B1:B8)` give a value for each cell.
+      if plain == "ROW" || plain == "COLUMN", case .range = args.first { return true }
+      // `=B1:INDEX(B:B,5)` spills like a range.
+      if plain == FormulaExpr.rangeOperatorFunction { return true }
+      return liftedFunctionNames.contains(plain) && args.contains(where: spills)
     case .unary(_, let inner):
       return spills(inner)
     case .binary(_, let lhs, let rhs):
       return spills(lhs) || spills(rhs)
+    case .array(let rows):
+      // `={1,2,3}` spills; a one-item list is a plain value.
+      return rows.count * (rows.first?.count ?? 0) > 1
     default:
       return false
+    }
+  }
+
+  /// Functions that take one value in each argument. Given a range or a list there, they work
+  /// value by value and give an array of answers, as in other apps: SUM(LEN(A1:A8)) adds the
+  /// lengths, MAX(IF(B1:B8<50,B1:B8)) is the largest under 50, and
+  /// FILTER(A1:A8,ISNUMBER(SEARCH("x",A1:A8))) keeps the cells with an x. These were #VALUE!
+  /// (found by script against Excel 16.115, Nov 18).
+  public static let liftedFunctionNames: Set<String> = [
+    "IF", "IFERROR", "IFNA", "NOT",
+    "ISBLANK", "ISNUMBER", "ISTEXT", "ISNONTEXT", "ISLOGICAL", "ISERROR", "ISERR", "ISNA",
+    "ISEVEN", "ISODD",
+    "LEN", "LEFT", "RIGHT", "MID", "UPPER", "LOWER", "PROPER", "TRIM", "CLEAN", "VALUE",
+    "NUMBERVALUE", "TEXT", "SUBSTITUTE", "REPLACE", "FIND", "SEARCH", "EXACT", "CODE", "CHAR",
+    "UNICODE", "UNICHAR", "REPT", "CONCATENATE", "DOLLAR", "FIXED",
+    "ABS", "SIGN", "INT", "TRUNC", "ROUND", "ROUNDUP", "ROUNDDOWN", "MROUND", "CEILING",
+    "FLOOR", "MOD", "QUOTIENT", "POWER", "SQRT", "EXP", "LN", "LOG", "LOG10", "EVEN", "ODD",
+    "FACT", "DAY", "MONTH", "YEAR", "WEEKDAY", "HOUR", "MINUTE", "SECOND", "DATE", "TIME",
+    "EOMONTH", "EDATE", "WEEKNUM", "ISOWEEKNUM", "DATEVALUE", "TIMEVALUE",
+  ]
+
+  /// True when `expr` can give more than one value: a range, a list, an array function, or
+  /// arithmetic or a function above working through one. A name may be a range.
+  public static func givesArray(_ expr: FormulaExpr) -> Bool {
+    switch expr {
+    case .range, .namedRange: return true
+    case .array(let rows): return rows.count * (rows.first?.count ?? 0) > 1
+    case .unary(_, let inner): return givesArray(inner)
+    case .binary(_, let lhs, let rhs): return givesArray(lhs) || givesArray(rhs)
+    case .call(let name, let args):
+      let plain = plainFunctionName(name)
+      if arrayFunctionNames.contains(plain) { return true }
+      if isLet(name) { return args.contains(where: givesArray) }
+      if plain == "INDIRECT" || plain == "OFFSET" || plain == FormulaExpr.rangeOperatorFunction
+        || plain == FormulaExpr.intersectionFunction
+      {
+        return true
+      }
+      if plain == "ROW" || plain == "COLUMN", case .range = args.first { return true }
+      return liftedFunctionNames.contains(plain) && args.contains(where: givesArray)
+    default: return false
+    }
+  }
+
+  private func rowOrColumnNumbers(_ rawName: String, _ args: [FormulaExpr]) -> ArrayResult? {
+    guard args.count == 1, case .range(let start, let end) = resolvedExpr(args[0]) else {
+      return nil
+    }
+    let n = normalizedBounds(start: start, end: end)
+    if Self.plainFunctionName(rawName) == "ROW" {
+      guard n.maxRow > n.minRow else { return nil }
+      return ArrayResult(
+        rows: n.maxRow - n.minRow + 1, cols: 1,
+        values: (n.minRow...n.maxRow).map { .number(Double($0 + 1)) })
+    }
+    guard n.maxCol > n.minCol else { return nil }
+    return ArrayResult(
+      rows: 1, cols: n.maxCol - n.minCol + 1,
+      values: (n.minCol...n.maxCol).map { .number(Double($0 + 1)) })
+  }
+
+  /// `rawName` worked out once for each position of its array arguments. A single value
+  /// stretches to fit; an array too short for a position gives #N/A there, as in other apps.
+  func liftedCall(_ rawName: String, _ args: [FormulaExpr]) -> ArrayResult {
+    let arrays: [ArrayResult?] = args.map { arg in
+      if case .missing = arg { return nil }
+      return evaluateArray(arg)
+    }
+    let present = arrays.compactMap { $0 }
+    if present.allSatisfy(\.isSingle) { return ArrayResult(evaluate(.call(rawName, args))) }
+    let rows = present.map(\.rows).max() ?? 1
+    let cols = present.map(\.cols).max() ?? 1
+    guard InputBounds.materializedCount(rows: rows, cols: cols) != nil else {
+      return ArrayResult(.error(.value))
+    }
+    var values: [CellValue] = []
+    values.reserveCapacity(rows * cols)
+    for r in 0..<rows {
+      for c in 0..<cols {
+        var elementArgs: [FormulaExpr] = []
+        var outside = false
+        for (index, array) in arrays.enumerated() {
+          guard let array else {
+            elementArgs.append(args[index])
+            continue
+          }
+          let row = array.rows == 1 ? 0 : r
+          let col = array.cols == 1 ? 0 : c
+          guard row < array.rows, col < array.cols else {
+            outside = true
+            break
+          }
+          elementArgs.append(Self.elementLiteral(array.values[row * array.cols + col]))
+        }
+        values.append(outside ? .error(.na) : evaluate(.call(rawName, elementArgs)))
+      }
+    }
+    return ArrayResult(rows: rows, cols: cols, values: values)
+  }
+
+  private static func elementLiteral(_ value: CellValue) -> FormulaExpr {
+    switch value {
+    case .number(let n): return .number(n)
+    case .string(let s): return .string(s)
+    case .bool(let b): return .boolean(b)
+    case .error(let e): return .error(e)
+    // An empty cell reads as one: 0 to arithmetic, TRUE to ISBLANK.
+    case .blank: return .missing
     }
   }
 
@@ -98,6 +220,11 @@ extension FormulaEvaluator {
     case .namedRange(let name):
       guard let resolved = namedRangeLookup(name) else { return ArrayResult(.error(.name)) }
       return evaluateArray(resolved)
+    case .array(let rows):
+      let cols = rows.first?.count ?? 0
+      guard cols > 0 else { return ArrayResult(.error(.value)) }
+      return ArrayResult(
+        rows: rows.count, cols: cols, values: rows.flatMap { $0.map { evaluate($0) } })
     case .unary(let op, let inner):
       var array = evaluateArray(inner)
       array.values = array.values.map { applyUnary(op, to: $0) }
@@ -112,7 +239,24 @@ extension FormulaEvaluator {
       case "UNIQUE": return arrayUNIQUE(args)
       case "SEQUENCE": return arraySEQUENCE(args)
       case FormulaExpr.anchorArrayFunction: return arrayANCHORARRAY(args)
-      default: return ArrayResult(evaluate(expr))
+      case "LET": return evaluateArray(letCalculation(args))
+      case "INDIRECT", "OFFSET", FormulaExpr.rangeOperatorFunction,
+        FormulaExpr.intersectionFunction:
+        guard let target = referenceFunctionTarget(rawName, args) else {
+          let plain = Self.plainFunctionName(rawName)
+          return ArrayResult(.error(plain == FormulaExpr.intersectionFunction ? .null : .ref))
+        }
+        return evaluateArray(target)
+      case "ROW", "COLUMN":
+        // ROW(B1:B8) in an array formula is 1 to 8, as in other apps: SUM(IF(MOD(ROW(B1:B8),
+        // 2)=0,B1:B8)) adds every other row.
+        if let numbers = rowOrColumnNumbers(rawName, args) { return numbers }
+        return ArrayResult(evaluate(expr))
+      case let name:
+        if Self.liftedFunctionNames.contains(name), args.contains(where: Self.givesArray) {
+          return liftedCall(rawName, args)
+        }
+        return shapeArray(name, args) ?? ArrayResult(evaluate(expr))
       }
     default:
       return ArrayResult(evaluate(expr))

@@ -21,6 +21,7 @@ let package = Package(
   products: [
     .library(name: "SparkGridCore", targets: ["SparkGridCore"]),
     .executable(name: "spark-grid-cli", targets: ["spark-grid-cli"]),
+    .executable(name: "spark-grid-mcp", targets: ["spark-grid-mcp"]),
   ],
   dependencies: [
     .package(url: "https://github.com/CoreOffice/CoreXLSX.git", .upToNextMinor(from: "0.14.2")),
@@ -109,6 +110,12 @@ let package = Package(
         "FileFormats",
         "Engine",
       ],
+      swiftSettings: engineSettings
+    ),
+    // The MCP connector: AI assistants on this Mac read and change open workbooks through
+    // Spark Grid's AppleScript commands. Foundation only; the app stays off the network.
+    .executableTarget(
+      name: "spark-grid-mcp",
       swiftSettings: engineSettings
     ),
     .testTarget(

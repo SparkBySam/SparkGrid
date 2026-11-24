@@ -15,7 +15,8 @@ final class PreviewTableController: NSObject, NSTableViewDataSource, NSTableView
   override init() {
     super.init()
     tableView.style = .plain
-    tableView.usesAlternatingRowBackgroundColors = true
+    // Off, so the file's own fills show as the grid shows them.
+    tableView.usesAlternatingRowBackgroundColors = false
     tableView.allowsColumnReordering = false
     tableView.allowsColumnResizing = true
     tableView.allowsEmptySelection = true
@@ -52,8 +53,8 @@ final class PreviewTableController: NSObject, NSTableViewDataSource, NSTableView
       let identifier = NSUserInterfaceItemIdentifier("col-\(col)")
       let column = NSTableColumn(identifier: identifier)
       column.title = A1Notation.columnLabel(for: col)
-      column.width = 96
-      column.minWidth = 56
+      column.width = max(session?.columnWidth(col) ?? 80, 24)
+      column.minWidth = 24
       column.resizingMask = [.autoresizingMask, .userResizingMask]
       tableView.addTableColumn(column)
     }
@@ -61,6 +62,10 @@ final class PreviewTableController: NSObject, NSTableViewDataSource, NSTableView
 
   func numberOfRows(in tableView: NSTableView) -> Int {
     session?.previewRowCount ?? 0
+  }
+
+  func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+    session?.rowHeight(row) ?? 22
   }
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView?
@@ -84,14 +89,50 @@ final class PreviewTableController: NSObject, NSTableViewDataSource, NSTableView
     guard let col = columnIndex(from: tableColumn.identifier) else { return nil }
     let field = reusedField(in: tableView, identifier: cellIdentifier)
     field.stringValue = session.displayValue(row: row, column: col)
-    field.alignment = .left
-    field.textColor = .labelColor
-    field.font = .systemFont(ofSize: 12)
+    apply(session.style(row: row, column: col, darkMode: isDarkMode), to: field)
     field.isEditable = true
-    field.drawsBackground = false
     field.delegate = self
     field.tag = encode(row: row, column: col)
     return field
+  }
+
+  private var isDarkMode: Bool {
+    tableView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+  }
+
+  /// The cell as the grid draws it: its fill, bold and italic, size, color and alignment.
+  private func apply(_ style: PreviewPresentation.Style, to field: NSTextField) {
+    switch style.alignment {
+    case .right: field.alignment = .right
+    case .center: field.alignment = .center
+    default: field.alignment = .left
+    }
+    var traits: NSFontDescriptor.SymbolicTraits = []
+    if style.bold { traits.insert(.bold) }
+    if style.italic { traits.insert(.italic) }
+    let base =
+      NSFont(name: "Helvetica Neue", size: CGFloat(style.fontSize))
+      ?? .systemFont(ofSize: CGFloat(style.fontSize))
+    let descriptor = base.fontDescriptor.withSymbolicTraits(traits)
+    field.font = NSFont(descriptor: descriptor, size: CGFloat(style.fontSize)) ?? base
+    if style.isError {
+      field.textColor = .systemRed
+    } else if let color = style.textColor {
+      field.textColor = Self.nsColor(color)
+    } else {
+      field.textColor = .labelColor
+    }
+    if let fill = style.fill {
+      field.drawsBackground = true
+      field.backgroundColor = Self.nsColor(fill)
+    } else {
+      field.drawsBackground = false
+      field.backgroundColor = .clear
+    }
+  }
+
+  private static func nsColor(_ color: CodableColor) -> NSColor {
+    NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
   }
 
   private func reusedField(in tableView: NSTableView, identifier: NSUserInterfaceItemIdentifier)

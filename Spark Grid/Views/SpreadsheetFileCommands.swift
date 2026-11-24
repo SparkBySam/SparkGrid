@@ -4,62 +4,87 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SpreadsheetFileCommands: Commands {
-  @Bindable var store: SpreadsheetDocumentStore
+  /// The front workbook window's document. Nil when no workbook window is in front.
+  @FocusedValue(\.documentStore) private var store: SpreadsheetDocumentStore?
   @Bindable private var settings = AppSettings.shared
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
+      // A new workbook opens in a new window, as other Mac apps do.
       Button("New Spreadsheet") {
-        store.newDocument()
+        WorkbookWindows.shared.newWindow(.blank)
       }
       .keyboardShortcut("n", modifiers: .command)
 
       Button("New from Template…") {
-        store.showStartScreen()
+        if let store, !store.showsStartScreen, store.fileURL == nil, store.importedName == nil,
+          !store.isDirty, store.document.workbook.isEffectivelyEmpty
+        {
+          // A blank window shows the templates in place.
+          store.showStartScreen()
+        } else {
+          WorkbookWindows.shared.newWindow(.startScreen)
+        }
       }
       .keyboardShortcut("n", modifiers: [.command, .shift])
-      .disabled(store.showsStartScreen)
+      .disabled(store?.showsStartScreen == true)
     }
 
     CommandGroup(after: .newItem) {
       Button("Open…") {
-        SpreadsheetOpenPanel.run(store: store)
+        SpreadsheetOpenPanel.run(preferring: store)
       }
       .keyboardShortcut("o", modifiers: .command)
 
       Button("Save") {
-        _ = store.saveInteractively()
+        _ = store?.saveInteractively()
       }
       .keyboardShortcut(
         settings.keyEquivalent(for: .save), modifiers: settings.eventModifiers(for: .save)
       )
-      .disabled(store.fileURL == nil && store.document.workbook.isEffectivelyEmpty)
+      .disabled(
+        store == nil
+          || (store?.fileURL == nil && store?.document.workbook.isEffectivelyEmpty == true))
 
       Button("Save As…") {
-        saveAsPanel()
+        if let store { saveAsPanel(store) }
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
+      .disabled(store == nil)
+
+      Divider()
+
+      // Mail, Messages, AirDrop and the rest, with the workbook as it is now.
+      if let store, store.canShare {
+        ShareLink(
+          "Share", item: SharedWorkbook(store: store, isCSV: store.sharesAsCSV),
+          preview: SharePreview(store.shareFilename))
+      } else {
+        Button("Share") {}.disabled(true)
+      }
     }
   }
 
-  private func saveAsPanel() {
+  private func saveAsPanel(_ store: SpreadsheetDocumentStore) {
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
     let baseName =
       store.fileURL?.deletingPathExtension().lastPathComponent
       ?? store.document.workbook.activeSheet.name
-    // Default to Excel so formatting/CF/filters survive round-trip.
-    panel.nameFieldStringValue = "\(baseName).xlsx"
+    // A CSV stays a CSV unless the person picks .xlsx (a Reddit note, Nov 19); everything else
+    // defaults to .xlsx so formatting, rules and filters survive.
+    let keepsCSV = store.fileURL?.pathExtension.lowercased() == "csv"
+    panel.nameFieldStringValue = "\(baseName).\(keepsCSV ? "csv" : "xlsx")"
     panel.canCreateDirectories = true
     panel.isExtensionHidden = false
     if #available(macOS 15.0, *) {
-      panel.currentContentType = .spreadsheetML
+      panel.currentContentType = keepsCSV ? .commaSeparatedText : .spreadsheetML
     }
     guard panel.runModal() == .OK, let url = panel.url else { return }
     let destination = normalizedSaveURL(url, panel: panel)
     if destination.pathExtension.lowercased() != "xlsx",
       store.hasMultipleSheets,
-      !confirmCSVOnly()
+      !confirmCSVOnly(store)
     {
       return
     }
@@ -89,7 +114,7 @@ struct SpreadsheetFileCommands: Commands {
     return destination
   }
 
-  private func confirmCSVOnly() -> Bool {
+  private func confirmCSVOnly(_ store: SpreadsheetDocumentStore) -> Bool {
     let sheetName = store.document.workbook.activeSheet.name
     let alert = NSAlert()
     alert.messageText = "Save Active Sheet Only?"
@@ -102,17 +127,59 @@ struct SpreadsheetFileCommands: Commands {
   }
 }
 
+/// The front workbook, for File ▸ Share. The file is written only when a way to share is
+/// picked, so it has every edit up to then.
+struct SharedWorkbook: Transferable {
+  let store: SpreadsheetDocumentStore
+  /// Worked out when the menu is built: the exporting conditions can run off the main thread.
+  let isCSV: Bool
+
+  static var transferRepresentation: some TransferRepresentation {
+    FileRepresentation(exportedContentType: .spreadsheetML) { item in
+      SentTransferredFile(try await item.write())
+    }
+    .exportingCondition { !$0.isCSV }
+    FileRepresentation(exportedContentType: .commaSeparatedText) { item in
+      SentTransferredFile(try await item.write())
+    }
+    .exportingCondition { $0.isCSV }
+  }
+
+  private func write() async throws -> URL {
+    let copy = await MainActor.run { store.shareCopy() }
+    return try await Task.detached(priority: .userInitiated) {
+      try SpreadsheetDocumentStore.writeShareCopy(copy)
+    }.value
+  }
+}
+
 enum SpreadsheetOpenPanel {
   @MainActor
-  static func run(store: SpreadsheetDocumentStore) {
+  /// Opens the chosen file in `preferred` when that window is unused, else as `WorkbookWindows`
+  /// decides: the window that has it, or a new one.
+  static func run(preferring preferred: SpreadsheetDocumentStore?) {
     let panel = NSOpenPanel()
-    // The files Spark Grid reads, the same two it saves. Plain text let any text file be picked,
-    // and it opened as a one-column CSV.
-    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
+    // The files Spark Grid reads: the two it saves, and Numbers documents. Plain text let any
+    // text file be picked, and it opened as a one-column CSV.
+    panel.allowedContentTypes = UTType.spreadsheetsSparkGridOpens
     panel.allowsOtherFileTypes = false
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
+    // A Numbers package is a folder; this keeps it one item to pick.
+    panel.treatsFilePackagesAsDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    try? store.load(from: url)
+    WorkbookWindows.shared.open(url, preferring: preferred)
+  }
+}
+
+private struct DocumentStoreFocusedValueKey: FocusedValueKey {
+  typealias Value = SpreadsheetDocumentStore
+}
+
+extension FocusedValues {
+  /// The document of the workbook window in front.
+  var documentStore: SpreadsheetDocumentStore? {
+    get { self[DocumentStoreFocusedValueKey.self] }
+    set { self[DocumentStoreFocusedValueKey.self] = newValue }
   }
 }

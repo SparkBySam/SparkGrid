@@ -99,7 +99,7 @@ public final class FormulaEngine {
     if awaitingRemainder || cachedIsRef,
       let imported = storedResultForUnloadedSheet(cell, raw: raw)
     {
-      valueCache[address] = imported
+      storeValue(imported, at: address)
       return imported
     }
     if let cached = valueCache[address] {
@@ -111,12 +111,12 @@ public final class FormulaEngine {
       // Kept like a stored result below. A highlight rule reads the cell through `resolve`,
       // which only looks here: N34 showed "Large" while N2="Large" came back false.
       if !Self.isFormulaText(stored) {
-        valueCache[address] = stored
+        storeValue(stored, at: address)
       }
       return stored
     }
     if FormulaSyntax.isFormula(raw), let value = cell.cachedFormulaValue {
-      valueCache[address] = value
+      storeValue(value, at: address)
       return value
     }
     // The open grid has to accept a click before a workbook with no stored
@@ -133,8 +133,8 @@ public final class FormulaEngine {
         return cached
       }
     }
-    let value = raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
-    valueCache[address] = value
+    let value = cell.literalValue
+    storeValue(value, at: address)
     return value
   }
 
@@ -207,9 +207,10 @@ public final class FormulaEngine {
       formulaTextMatchesStoredFormula(value, sheet: sheet, address: address)
     {
       if let imported = cell.cachedFormulaValue {
-        valueCache[address] = imported
+        storeValue(imported, at: address)
         return imported
       }
+      // Not worked out yet: shown empty, not as 0.
       valueCache[address] = .blank
       return .blank
     }
@@ -222,7 +223,7 @@ public final class FormulaEngine {
   private func calculateWithPrecedents(at address: CellAddress, sheet: Sheet) -> CellValue {
     if dependencyDepth >= InputBounds.maxDependencyDepth {
       let value = CellValue.error(.value)
-      valueCache[address] = value
+      storeValue(value, at: address)
       return value
     }
     dependencyDepth += 1
@@ -236,12 +237,12 @@ public final class FormulaEngine {
     let cell = sheet.cell(at: address)
     let raw = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard FormulaSyntax.isFormula(raw) else {
-      let value = raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
-      valueCache[address] = value
+      let value = cell.literalValue
+      storeValue(value, at: address)
       return value
     }
     if let imported = storedResultWhileSheetsAreMissing(cell, raw: raw) {
-      valueCache[address] = imported
+      storeValue(imported, at: address)
       return imported
     }
     if let cached = valueCache[address], !Self.isFormulaText(cached) {
@@ -249,7 +250,7 @@ public final class FormulaEngine {
     }
     if !precedentVisiting.insert(address).inserted {
       let value = CellValue.error(.cycle)
-      valueCache[address] = value
+      storeValue(value, at: address)
       return value
     }
     defer { precedentVisiting.remove(address) }
@@ -258,7 +259,7 @@ public final class FormulaEngine {
     ensureIngested(address: address, raw: raw, sheet: sheet)
     guard let expr = formulaAST[address] else {
       let value = unresolvedValue(cell)
-      valueCache[address] = value
+      storeValue(value, at: address)
       return value
     }
     if let deps = dependencies[address] {
@@ -297,6 +298,9 @@ public final class FormulaEngine {
     evaluator.spillRange = { [weak self] name, address in
       self?.spillRange(on: name, at: address, current: sheet)
     }
+    evaluator.holdsFormula = { [weak self] name, address in
+      self?.holdsFormula(on: name, at: address, current: sheet) ?? false
+    }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -304,7 +308,7 @@ public final class FormulaEngine {
     evaluator.aggregateRangeCache = aggregateRangeCache
     evaluator.lookupTableCache = lookupTableCache
     if let imported = storedResultWhileSheetsAreMissing(cell, raw: raw) {
-      valueCache[address] = imported
+      storeValue(imported, at: address)
       return imported
     }
     let value = evaluator.evaluate(expr)
@@ -319,7 +323,7 @@ public final class FormulaEngine {
   {
     let stored =
       storedResultWhileSheetsAreMissing(at: address, sheet: sheet, evaluated: value) ?? value
-    valueCache[address] = stored
+    storeValue(stored, at: address)
     aggregateRangeCache.invalidate(sheetName: sheet.name, address: address)
     return stored
   }
@@ -344,7 +348,7 @@ public final class FormulaEngine {
     for address in stale {
       let cell = sheet.cell(at: address)
       if let imported = cell.cachedFormulaValue, !Self.isFormulaText(imported) {
-        valueCache[address] = imported
+        storeValue(imported, at: address)
       }
     }
   }
@@ -358,8 +362,16 @@ public final class FormulaEngine {
     sheet: Sheet,
     evaluated: CellValue
   ) -> CellValue? {
+    if case .error(.name) = evaluated {
+      return savedResultForUnknownFunction(sheet.cell(at: address))
+    }
     guard Self.isRefError(evaluated) else { return nil }
     return storedResultForUnloadedSheet(sheet.cell(at: address), raw: sheet.cell(at: address).raw)
+  }
+
+  /// A formula calling a function Spark Grid does not have shows the result its file saved.
+  private func savedResultForUnknownFunction(_ cell: Cell) -> CellValue? {
+    UnknownFunctions.savedResult(for: cell, evaluated: .error(.name), expr: nil)
   }
 
   /// Stored result for a formula that still names a sheet this workbook does not
@@ -546,6 +558,9 @@ public final class FormulaEngine {
     evaluator.spillRange = { [weak self] name, address in
       self?.spillRange(on: name, at: address, current: sheet)
     }
+    evaluator.holdsFormula = { [weak self] name, address in
+      self?.holdsFormula(on: name, at: address, current: sheet) ?? false
+    }
     evaluator.pivotLookup = { [weak self] name, address in
       self?.sparkPivot(on: name, containing: address, current: sheet)
     }
@@ -555,7 +570,10 @@ public final class FormulaEngine {
     }
     evaluator.aggregateRangeCache = aggregateRangeCache
     evaluator.lookupTableCache = lookupTableCache
-    return evaluator.evaluateArray(expr)
+    // An empty cell spilled shows 0, as in other apps: FILTER and SORT over a range with gaps.
+    var result = evaluator.evaluateArray(expr)
+    result.values = result.values.map(FormulaEvaluator.cellResult)
+    return result
   }
 
   public func evaluateConditionalFormula(
@@ -596,6 +614,9 @@ public final class FormulaEngine {
     evaluator.spillRange = { [weak self] name, address in
       self?.spillRange(on: name, at: address, current: sheet)
     }
+    evaluator.holdsFormula = { [weak self] name, address in
+      self?.holdsFormula(on: name, at: address, current: sheet) ?? false
+    }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -621,7 +642,7 @@ public final class FormulaEngine {
     let key = sheetKey(activeSheetName)
     if let active = results[key] {
       for (address, value) in active where !Self.isFormulaText(value) {
-        valueCache[address] = value
+        storeValue(value, at: address)
       }
     }
     paintsStoredResultsOnly = false
@@ -817,8 +838,11 @@ public final class FormulaEngine {
       lookupTableCache.invalidate(sheetName: activeSheetName, address: address)
     }
     var dirty: Set<CellAddress> = []
+    var formulasChanged = false
     for address in addresses {
+      let formulaBefore = formulaAST[address]
       ingest(address: address, raw: sheet.cell(at: address).raw, sheet: sheet, recalculate: false)
+      if formulaAST[address] != formulaBefore { formulasChanged = true }
       dirty.insert(address)
       if let deps = dependents[address] {
         dirty.formUnion(deps)
@@ -870,6 +894,12 @@ public final class FormulaEngine {
       } else if before[address] != after {
         changed.insert(address)
       }
+    }
+    // The workbook graph lists what each formula reads, as of when it was built. A formula
+    // typed since was missing from it: 'Second Sheet'!B1 = SUM(Data!E1:E6) updated, but a
+    // Data cell reading B1 kept its old answer after Data changed (found by script, Nov 18).
+    if formulasChanged, dependencyGraph != nil {
+      scheduleWorkbookDependencyGraph()
     }
     scheduleCrossSheetUpdate(editedAddresses: addresses, recalculated: seen, sheet: sheet)
     if changed.isEmpty { return [:] }
@@ -935,10 +965,21 @@ public final class FormulaEngine {
     // reached were left with old results.
     var edited = editedAddresses
     var recalculated = recalculated
-    if let pending = pendingCrossSheet, sheetKey(pending.editedSheetName) == activeKey {
-      let carried = Set(pending.editedAddresses).subtracting(edited)
-      edited.append(contentsOf: carried.sorted { ($0.row, $0.col) < ($1.row, $1.col) })
-      recalculated.formUnion(pending.calculatedEdits.keys)
+    var earlier: [CrossSheetBackground.EarlierEdit] = []
+    if let pending = pendingCrossSheet {
+      if sheetKey(pending.editedSheetName) == activeKey {
+        let carried = Set(pending.editedAddresses).subtracting(edited)
+        edited.append(contentsOf: carried.sorted { ($0.row, $0.col) < ($1.row, $1.col) })
+        recalculated.formUnion(pending.calculatedEdits.keys)
+      } else {
+        // An edit on another sheet not yet passed on: it goes with this one. Dropped, a change
+        // to Config followed at once by an edit elsewhere never reached Orders or Dashboard.
+        earlier.append(
+          CrossSheetBackground.EarlierEdit(
+            sheetName: pending.editedSheetName, addresses: pending.editedAddresses,
+            calculated: pending.calculatedEdits))
+      }
+      earlier.append(contentsOf: pending.earlierEdits)
     }
     var calculated: [CellAddress: CellValue] = [:]
     calculated.reserveCapacity(recalculated.count)
@@ -955,7 +996,8 @@ public final class FormulaEngine {
       editedAddresses: edited,
       calculatedEdits: calculated,
       graph: dependencyGraph,
-      onlySheetName: nil
+      onlySheetName: nil,
+      earlierEdits: earlier
     )
     pendingCrossSheet = request
     DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -1021,7 +1063,7 @@ public final class FormulaEngine {
           if valueCache[address] != installed {
             changed.insert(address)
           }
-          valueCache[address] = installed
+          storeValue(installed, at: address)
         }
       } else {
         let previous = recalculatedSheetValues[key] ?? [:]
@@ -1060,7 +1102,7 @@ public final class FormulaEngine {
   private func overlayStoredCrossSheetValues(forKey key: String) {
     guard let values = recalculatedSheetValues[key] else { return }
     for (address, value) in values {
-      valueCache[address] = value
+      storeValue(value, at: address)
     }
   }
 
@@ -1095,6 +1137,17 @@ public final class FormulaEngine {
       freshFormulaValues.removeValue(forKey: key)
     } else {
       freshFormulaValues[key] = fresh
+    }
+  }
+
+  /// Every result goes into the cache through here. A formula whose answer is an empty cell
+  /// (`=A3` with A3 empty, an IF or lookup that picks one) gives 0, as in other apps; it showed
+  /// blank, and formulas reading it saw an empty cell (found by script, Nov 18).
+  private func storeValue(_ value: CellValue, at address: CellAddress) {
+    if case .blank = value, formulaAST[address] != nil {
+      valueCache[address] = .number(0)
+    } else {
+      valueCache[address] = value
     }
   }
 
@@ -1203,23 +1256,20 @@ public final class FormulaEngine {
           dependents[dep, default: []].insert(address)
         }
         if let value = sheet.cell(at: address).cachedFormulaValue {
-          valueCache[address] = value
+          storeValue(value, at: address)
         }
       } catch {
-        valueCache[address] = .error(.error)
+        storeValue(.error(.error), at: address)
       }
     } else {
-      valueCache[address] =
-        trimmed.isEmpty ? sheet.cell(at: address).literalValue : literalOrEmpty(trimmed)
+      storeValue(
+        sheet.cell(at: address).literalValue,
+        at: address)
     }
 
     if recalculate {
       cellsDidChange([address], sheet: sheet)
     }
-  }
-
-  private func literalOrEmpty(_ raw: String) -> CellValue {
-    CellValue.fromLiteralRaw(raw)
   }
 
   /// Imported cache when a formula still has one. The formula source is not a value.
@@ -1237,7 +1287,7 @@ public final class FormulaEngine {
     let cell = sheet.cell(at: address)
     let raw = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !FormulaSyntax.isFormula(raw) else { return nil }
-    return raw.isEmpty ? cell.literalValue : literalOrEmpty(raw)
+    return cell.literalValue
   }
 
   /// The pivot table drawn over `address`. The sheet being calculated is read directly: the
@@ -1263,6 +1313,15 @@ public final class FormulaEngine {
     return workbook.sheets.first {
       $0.name.caseInsensitiveCompare(name) == .orderedSame
     }?.fileExtras.spills[address]
+  }
+
+  private func holdsFormula(on name: String, at address: CellAddress, current sheet: Sheet) -> Bool
+  {
+    let owner =
+      name.caseInsensitiveCompare(sheet.name) == .orderedSame
+      ? sheet
+      : workbook.sheets.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    return owner.map { FormulaSyntax.isFormula($0.cell(at: address).raw) } ?? false
   }
 
   private func spillBlocked(on name: String, at address: CellAddress, current sheet: Sheet)
@@ -1417,7 +1476,7 @@ public final class FormulaEngine {
     let cell = sheet.cell(at: address)
     guard !FormulaSyntax.isFormula(cell.raw) else { return nil }
     let value = cell.literalValue
-    valueCache[address] = value
+    storeValue(value, at: address)
     return value
   }
 
@@ -1772,7 +1831,7 @@ public final class FormulaEngine {
     for output in columnOutputs {
       guard let output else { continue }
       for address in output.errorAddresses {
-        valueCache[address] = .error(.error)
+        storeValue(.error(.error), at: address)
       }
       for (address, template) in output.templatesByAddress {
         formulaAST[address] = template.expr
@@ -1781,7 +1840,7 @@ public final class FormulaEngine {
           sheetShapeAnchorKeys[address] = shapeKey
         }
         if let value = sheet.cell(at: address).cachedFormulaValue {
-          valueCache[address] = value
+          storeValue(value, at: address)
         }
       }
     }
@@ -1932,7 +1991,7 @@ public final class FormulaEngine {
             ensureIngested(address: dep, raw: cell.raw, sheet: sheet)
             eval(dep)
           } else {
-            valueCache[dep] = cell.literalValue
+            storeValue(cell.literalValue, at: dep)
           }
         }
       }
@@ -1953,15 +2012,16 @@ public final class FormulaEngine {
         guard let expr = formulaAST[address] else { return }
         evaluator.prepareForCellEvaluation(origin: address)
         let evaluated = evaluator.evaluate(expr)
-        valueCache[address] =
+        storeValue(
           storedResultWhileSheetsAreMissing(at: address, sheet: sheet, evaluated: evaluated)
-          ?? evaluated
+            ?? evaluated, at: address)
         visited.insert(address)
       }
 
       func stripSink(_ address: CellAddress, _ value: CellValue) {
-        valueCache[address] =
-          storedResultWhileSheetsAreMissing(at: address, sheet: sheet, evaluated: value) ?? value
+        storeValue(
+          storedResultWhileSheetsAreMissing(at: address, sheet: sheet, evaluated: value) ?? value,
+          at: address)
         visited.insert(address)
       }
 
@@ -1999,9 +2059,9 @@ public final class FormulaEngine {
           ?? FormulaRewriter.adjustExpression(masterExpr, rowDelta: rowDelta, colDelta: colDelta)
         evaluator.prepareForCellEvaluation(origin: address)
         let evaluated = evaluator.evaluate(expr)
-        valueCache[address] =
+        storeValue(
           storedResultWhileSheetsAreMissing(at: address, sheet: sheet, evaluated: evaluated)
-          ?? evaluated
+            ?? evaluated, at: address)
         visited.insert(address)
       }
     }
@@ -2023,7 +2083,7 @@ public final class FormulaEngine {
         if visited.contains(address) { return }
       }
       if visiting.contains(address) {
-        valueCache[address] = .error(.cycle)
+        storeValue(.error(.cycle), at: address)
         visited.insert(address)
         return
       }
@@ -2042,15 +2102,16 @@ public final class FormulaEngine {
       guard let expr = formulaAST[address] else {
         if valueCache[address] == nil || Self.isFormulaText(valueCache[address] ?? .blank) {
           let cell = sheet.cell(at: address)
-          valueCache[address] =
-            FormulaSyntax.isFormula(cell.raw) ? CellValue.error(.error) : cell.literalValue
+          storeValue(
+            FormulaSyntax.isFormula(cell.raw) ? CellValue.error(.error) : cell.literalValue,
+            at: address)
         }
         return
       }
 
       let pendingCell = sheet.cell(at: address)
       if let imported = storedResultWhileSheetsAreMissing(pendingCell, raw: pendingCell.raw) {
-        valueCache[address] = imported
+        storeValue(imported, at: address)
         return
       }
 
@@ -2076,6 +2137,9 @@ public final class FormulaEngine {
     }
     evaluator.spillRange = { [weak self] name, address in
       self?.spillRange(on: name, at: address, current: sheet)
+    }
+    evaluator.holdsFormula = { [weak self] name, address in
+      self?.holdsFormula(on: name, at: address, current: sheet) ?? false
     }
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
@@ -2123,8 +2187,8 @@ public final class FormulaEngine {
       if let cached = valueCache[address] {
         return cached
       }
-      let value = raw.isEmpty ? activeSheet.cell(at: address).literalValue : literalOrEmpty(raw)
-      valueCache[address] = value
+      let value = activeSheet.cell(at: address).literalValue
+      storeValue(value, at: address)
       return value
     }
 
@@ -2176,7 +2240,7 @@ public final class FormulaEngine {
         + sameSheetCells(in: rhs, sheetName: sheetName)
     case .call(_, let args):
       return args.flatMap { sameSheetCells(in: $0, sheetName: sheetName) }
-    case .number, .string, .boolean, .error, .namedRange, .range:
+    case .number, .string, .boolean, .error, .namedRange, .range, .missing, .array:
       return []
     }
   }
@@ -2229,7 +2293,7 @@ public final class FormulaEngine {
 
     let trimmed = sheet.cell(at: address).raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard FormulaSyntax.isFormula(trimmed) else {
-      let value = trimmed.isEmpty ? sheet.cell(at: address).literalValue : literalOrEmpty(trimmed)
+      let value = sheet.cell(at: address).literalValue
       foreignCache[key] = value
       return value
     }
@@ -2277,13 +2341,16 @@ public final class FormulaEngine {
       evaluator.spillRange = { [weak self] name, address in
         self?.spillRange(on: name, at: address, current: sheet)
       }
+      evaluator.holdsFormula = { [weak self] name, address in
+        self?.holdsFormula(on: name, at: address, current: sheet) ?? false
+      }
       evaluator.sheetExtent = { [weak self] sheetName in
         guard let self else { return (999, 25) }
         return self.extent(for: sheetName ?? sheet.name)
       }
       evaluator.aggregateRangeCache = aggregateRangeCache
       evaluator.lookupTableCache = lookupTableCache
-      let value = evaluator.evaluate(expr)
+      let value = FormulaEvaluator.cellResult(evaluator.evaluate(expr))
       foreignCache[key] = value
       return value
     } catch {
@@ -2348,7 +2415,10 @@ public final class FormulaEngine {
         }
       }
     }
-    for address in addresses where formulaAST[address] != nil && !order.contains(address) {
+    // Cells left over are in a loop. Looked up in a set: searching the list for each one made
+    // a long chain of formulas take time in the square of its length (10,000 cells, 11.6 s).
+    let placed = Set(order)
+    for address in addresses where formulaAST[address] != nil && !placed.contains(address) {
       order.append(address)
     }
     return order

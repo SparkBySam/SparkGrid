@@ -5,13 +5,9 @@ struct SpreadsheetPrintPagePreview: View {
   let content: SpreadsheetPrintPreviewContent
 
   @State private var currentPage = 1
-  @State private var pageImage: NSImage?
-  @State private var pageCache: [Int: NSImage] = [:]
   @State private var zoom: CGFloat = 1.0
   @State private var pinchAnchorZoom: CGFloat?
-  @State private var isGenerating = false
   @State private var scrollResetToken = 0
-  @State private var renderGeneration = 0
 
   private var pageCount: Int {
     max(1, SpreadsheetPrintSnapshotRenderer.estimatedPageCount(for: content))
@@ -31,20 +27,13 @@ struct SpreadsheetPrintPagePreview: View {
             VStack(spacing: 16) {
               Color.clear.frame(height: 0).id("preview-top")
 
-              if isGenerating && pageImage == nil {
-                VStack(spacing: 12) {
-                  ProgressView()
-                  Text("Generating preview…")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
-                .frame(width: 280, height: 360)
-              } else if let pageImage {
-                Image(nsImage: pageImage)
-                  .interpolation(.high)
-                  .resizable()
-                  .frame(width: pageWidth, height: pageHeight)
-                  .shadow(color: .black.opacity(0.20), radius: 12, x: 0, y: 4)
+              if !content.pages.isEmpty {
+                // Drawn at the size shown, so text and lines stay sharp at any zoom.
+                SpreadsheetPrintPageCanvas(
+                  content: content, page: min(max(1, currentPage), pageCount)
+                )
+                .frame(width: pageWidth, height: pageHeight)
+                .shadow(color: .black.opacity(0.20), radius: 12, x: 0, y: 4)
               }
             }
             .frame(maxWidth: .infinity)
@@ -86,14 +75,8 @@ struct SpreadsheetPrintPagePreview: View {
         .padding(.horizontal, 20)
         .padding(.top, 12)
     }
-    .task(id: content.renderToken) {
+    .onChange(of: content.renderToken) { _, _ in
       currentPage = 1
-      pageCache = [:]
-      pageImage = nil
-      await renderCurrentPage()
-    }
-    .onChange(of: currentPage) { _, _ in
-      Task { await renderCurrentPage() }
     }
   }
 
@@ -171,71 +154,6 @@ struct SpreadsheetPrintPagePreview: View {
     .background(.ultraThinMaterial, in: Capsule())
   }
 
-  @MainActor
-  private func renderCurrentPage() async {
-    let page = min(max(1, currentPage), pageCount)
-    if page != currentPage {
-      currentPage = page
-    }
-
-    if let cached = pageCache[page] {
-      pageImage = cached
-      isGenerating = false
-      return
-    }
-
-    renderGeneration &+= 1
-    let generation = renderGeneration
-    let token = content.renderToken
-    let snapshot = content
-    let pageToRender = page
-
-    isGenerating = pageImage == nil
-    let image = SpreadsheetPrintSnapshotRenderer.renderPageImage(
-      content: snapshot,
-      pageIndex: pageToRender
-    )
-    guard generation == renderGeneration, token == snapshot.renderToken else { return }
-
-    if let image {
-      trimCacheIfNeeded()
-      pageCache[pageToRender] = image
-      pageImage = image
-    }
-    isGenerating = false
-
-    // Prefetch neighbors so next/prev feels instant.
-    prefetchNeighborPages(around: pageToRender, token: token, snapshot: snapshot)
-  }
-
-  @MainActor
-  private func prefetchNeighborPages(
-    around page: Int,
-    token: String,
-    snapshot: SpreadsheetPrintPreviewContent
-  ) {
-    let neighbors = [page - 1, page + 1].filter {
-      $0 >= 1 && $0 <= pageCount && pageCache[$0] == nil
-    }
-    for neighbor in neighbors {
-      let image = SpreadsheetPrintSnapshotRenderer.renderPageImage(
-        content: snapshot,
-        pageIndex: neighbor
-      )
-      guard token == content.renderToken else { return }
-      if let image {
-        pageCache[neighbor] = image
-      }
-    }
-  }
-
-  private func trimCacheIfNeeded() {
-    // Keep a small window around the current page so flipping back feels instant.
-    let keep = Set(
-      [currentPage - 1, currentPage, currentPage + 1].filter { $0 >= 1 && $0 <= pageCount })
-    pageCache = pageCache.filter { keep.contains($0.key) }
-  }
-
   private func resetZoomAndRecenter() {
     zoom = 1.0
     pinchAnchorZoom = nil
@@ -279,5 +197,52 @@ struct SpreadsheetPrintPagePreview: View {
         }
     }
     .buttonStyle(.plain)
+  }
+}
+
+/// One page of the preview, drawn by the same view that prints it, scaled to the size it is
+/// shown. A picture of the page went soft when zoomed in.
+struct SpreadsheetPrintPageCanvas: NSViewRepresentable {
+  let content: SpreadsheetPrintPreviewContent
+  let page: Int
+
+  func makeNSView(context: Context) -> CanvasView { CanvasView() }
+
+  func updateNSView(_ view: CanvasView, context: Context) {
+    if view.token != content.renderToken || view.page != page {
+      view.content = content
+      view.token = content.renderToken
+      view.page = page
+      view.needsDisplay = true
+    }
+  }
+
+  final class CanvasView: NSView {
+    var content: SpreadsheetPrintPreviewContent?
+    var token = ""
+    var page = 1
+
+    override var isFlipped: Bool { true }
+
+    override func setFrameSize(_ newSize: NSSize) {
+      super.setFrameSize(newSize)
+      needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+      NSColor.white.setFill()
+      bounds.fill()
+      guard let content, let book = SpreadsheetPrintSnapshotRenderer.bookView(for: content),
+        book.bounds.width > 0, book.bounds.height > 0
+      else { return }
+      book.pageIndex = min(max(1, page), book.pageCount)
+      NSGraphicsContext.saveGraphicsState()
+      bounds.clip()
+      let scale = NSAffineTransform()
+      scale.scaleX(by: bounds.width / book.bounds.width, yBy: bounds.height / book.bounds.height)
+      scale.concat()
+      book.draw(book.bounds)
+      NSGraphicsContext.restoreGraphicsState()
+    }
   }
 }

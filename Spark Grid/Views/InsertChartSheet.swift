@@ -12,6 +12,8 @@ struct InsertChartSheet: View {
   @State private var valueColumn: Int = 0
   /// More value columns, each its own series.
   @State private var extraValueColumns: [Int] = []
+  /// Column of plus-or-minus amounts for error bars; nil for none.
+  @State private var errorBarColumn: Int?
   @State private var hasHeaderRow = true
   @State private var valueMode: SheetChart.ValueMode = .values
   @State private var didConfigure = false
@@ -92,7 +94,10 @@ struct InsertChartSheet: View {
       showsGridlines: showsGridlines,
       categoryAxisTitle: categoryAxisTitle,
       valueAxisTitle: valueAxisTitle,
-      frameIsCustom: frameIsCustom
+      frameIsCustom: frameIsCustom,
+      errorBarColumn: errorBarColumn.flatMap {
+        $0 == valueColumn || extraValueColumns.contains($0) ? nil : $0
+      }
     )
   }
 
@@ -309,19 +314,27 @@ struct InsertChartSheet: View {
         }
         if valueMode == .values {
           SparkDialogDivider()
-          SparkDialogRow(label: "Value column") {
-            Picker("Value column", selection: $valueColumn) {
-              ForEach(columnOptions) { option in
-                Text(option.displayName).tag(option.column)
+          if kind.allowsMoreSeries {
+            // One check per column, each a line or set of bars: what is ticked is what is drawn
+            // (a Reddit note, Nov 19: "Value column" plus "More series" read as one line).
+            SparkDialogRow(label: "Series") {
+              seriesChecks
+            }
+            if kind == .bar || kind == .line {
+              SparkDialogDivider()
+              SparkDialogRow(label: "Error bars") {
+                errorBarPicker
               }
             }
-            .labelsHidden()
-            .fixedSize()
-          }
-          if kind.allowsMoreSeries {
-            SparkDialogDivider()
-            SparkDialogRow(label: "More series") {
-              moreSeriesMenu
+          } else {
+            SparkDialogRow(label: "Values") {
+              Picker("Value column", selection: $valueColumn) {
+                ForEach(columnOptions) { option in
+                  Text(option.displayName).tag(option.column)
+                }
+              }
+              .labelsHidden()
+              .fixedSize()
             }
           }
         }
@@ -329,29 +342,57 @@ struct InsertChartSheet: View {
     }
   }
 
-  /// Numeric columns other than the labels and the first value column, each a check.
-  private var moreSeriesMenu: some View {
+  /// None, or a column holding each value's plus-or-minus amount (a standard error column,
+  /// say). Drawn when the chart has one series.
+  private var errorBarPicker: some View {
+    let ticked = Set([valueColumn] + extraValueColumns)
     let choices = columnOptions.filter {
-      $0.column != categoryColumn && $0.column != valueColumn && $0.isMostlyNumeric
+      $0.column != categoryColumn && !ticked.contains($0.column) && $0.isMostlyNumeric
     }
-    let chosen = extraValueColumns.filter { column in choices.contains { $0.column == column } }
-    return Menu(chosen.isEmpty ? "None" : "\(chosen.count) more") {
+    return Picker("Error bars", selection: $errorBarColumn) {
+      Text("None").tag(Int?.none)
+      ForEach(choices) { option in
+        Text("± \(option.displayName)").tag(Int?.some(option.column))
+      }
+    }
+    .labelsHidden()
+    .fixedSize()
+    .disabled(choices.isEmpty || extraValueColumns.contains { $0 != valueColumn })
+    .help(
+      extraValueColumns.contains { $0 != valueColumn }
+        ? "Error bars draw on a chart with one series."
+        : "A column with each value's plus-or-minus amount, such as its standard error.")
+  }
+
+  /// Every column but the labels, each a check; the first ticked is the chart's first series.
+  /// At least one stays ticked.
+  private var seriesChecks: some View {
+    let choices = columnOptions.filter { $0.column != categoryColumn }
+    let ticked = [valueColumn] + extraValueColumns.filter { $0 != valueColumn }
+    return VStack(alignment: .trailing, spacing: 3) {
       ForEach(choices) { option in
         Toggle(
           option.displayName,
           isOn: Binding(
-            get: { extraValueColumns.contains(option.column) },
+            get: { ticked.contains(option.column) },
             set: { on in
               if on {
-                extraValueColumns.append(option.column)
+                if !ticked.contains(option.column) { extraValueColumns.append(option.column) }
+              } else if option.column == valueColumn {
+                guard let next = extraValueColumns.first(where: { $0 != valueColumn }) else {
+                  return
+                }
+                valueColumn = next
+                extraValueColumns.removeAll { $0 == next }
               } else {
                 extraValueColumns.removeAll { $0 == option.column }
               }
-            }))
+            })
+        )
+        .toggleStyle(.checkbox)
+        .disabled(ticked == [option.column])
       }
     }
-    .fixedSize()
-    .disabled(choices.isEmpty)
   }
 
   @ViewBuilder
@@ -461,6 +502,7 @@ struct InsertChartSheet: View {
     draftID = chart.id
     kind = chart.kind
     extraValueColumns = chart.extraValueColumns
+    errorBarColumn = chart.errorBarColumn
     keptAnchor = KeptAnchor(
       row: chart.anchorRow,
       col: chart.anchorCol,

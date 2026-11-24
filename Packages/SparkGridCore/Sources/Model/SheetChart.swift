@@ -80,6 +80,9 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
   public var showsGridlines: Bool
   public var categoryAxisTitle: String
   public var valueAxisTitle: String
+  /// A column of plus-or-minus amounts (standard error, say) drawn as error bars on the first
+  /// series of a bar or line chart. Nil draws none (asked for on Reddit, Nov 19).
+  public var errorBarColumn: Int?
   /// Set once the user moves or resizes the chart. Import then keeps that
   /// frame, including when the frame covers the data range.
   public var frameIsCustom: Bool
@@ -118,7 +121,8 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     showsGridlines: Bool = true,
     categoryAxisTitle: String = "",
     valueAxisTitle: String = "",
-    frameIsCustom: Bool = false
+    frameIsCustom: Bool = false,
+    errorBarColumn: Int? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -144,6 +148,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     self.categoryAxisTitle = categoryAxisTitle
     self.valueAxisTitle = valueAxisTitle
     self.frameIsCustom = frameIsCustom
+    self.errorBarColumn = errorBarColumn
   }
 
   public enum CodingKeys: String, CodingKey {
@@ -152,7 +157,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     case anchorRow, anchorCol, rowSpan, colSpan
     case originXOffset, originYOffset, endXOffset, endYOffset
     case seriesColor, pointColors, showsLegend, showsGridlines
-    case categoryAxisTitle, valueAxisTitle, frameIsCustom
+    case categoryAxisTitle, valueAxisTitle, frameIsCustom, errorBarColumn
   }
 
   public init(from decoder: Decoder) throws {
@@ -185,6 +190,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     categoryAxisTitle = try c.decodeIfPresent(String.self, forKey: .categoryAxisTitle) ?? ""
     valueAxisTitle = try c.decodeIfPresent(String.self, forKey: .valueAxisTitle) ?? ""
     frameIsCustom = try c.decodeIfPresent(Bool.self, forKey: .frameIsCustom) ?? false
+    errorBarColumn = try c.decodeIfPresent(Int.self, forKey: .errorBarColumn)
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -209,6 +215,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     try c.encode(endXOffset, forKey: .endXOffset)
     try c.encode(endYOffset, forKey: .endYOffset)
     try c.encodeIfPresent(seriesColor, forKey: .seriesColor)
+    try c.encodeIfPresent(errorBarColumn, forKey: .errorBarColumn)
     try c.encode(pointColors, forKey: .pointColors)
     try c.encode(showsLegend, forKey: .showsLegend)
     try c.encode(showsGridlines, forKey: .showsGridlines)
@@ -230,6 +237,12 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
 
   /// Pie, scatter, and charts with more than one series are drawn by the series plot, the
   /// same one that draws charts from other apps.
+  /// Error bars draw on bar and line charts with one series of values.
+  public var drawsErrorBars: Bool {
+    errorBarColumn != nil && valueMode == .values && extraValueColumns.isEmpty
+      && (kind == .bar || kind == .line)
+  }
+
   public var usesSeriesPlot: Bool {
     kind == .pie || kind == .scatter || (valueMode == .values && !extraValueColumns.isEmpty)
   }

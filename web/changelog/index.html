@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Spark Grid changelog — 1.3 is out</title>
-  <meta name="description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
+  <title>Spark Grid changelog — 1.5 is out</title>
+  <meta name="description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
   <link rel="canonical" href="https://sparkgridapp.com/changelog" />
-  <meta property="og:title" content="Spark Grid changelog — 1.3 is out" />
-  <meta property="og:description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
+  <meta property="og:title" content="Spark Grid changelog — 1.5 is out" />
+  <meta property="og:description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Spark Grid" />
   <meta property="og:locale" content="en_US" />
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Spark Grid changelog — 1.3 is out" />
-  <meta name="twitter:description" content="Spark Grid 1.3 is out on the Mac App Store. Charts from your files right on the sheet, where you can move, resize, and edit them, plus Find Duplicates, tables, and tab colors." />
+  <meta name="twitter:title" content="Spark Grid changelog — 1.5 is out" />
+  <meta name="twitter:description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
   <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
   <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <link rel="icon" type="image/png" href="/favicon.png" />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/changelog">What’s in 1.3</a>
+      <a href="/changelog">What’s in 1.5</a>
       <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Legal</a>
@@ -44,10 +44,87 @@
   <article class="page">
     <h1>Changelog</h1>
     <p class="pitch">Spreadsheets. No account.</p>
-    <p>Spark Grid 1.3 is out on the Mac App Store. November 6, 2026.</p>
-    <p>Charts from your files now show on the sheet, and you can move, resize, and edit them. Plus duplicates, tables, tab colors, and a new Settings window.</p>
+    <p>Spark Grid 1.5 is out on the Mac App Store. November 19, 2026.</p>
+    <p>A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript, and answers that match Excel in hundreds more cases.</p>
 
-    <h2>What’s new in 1.3</h2>
+    <h2>What’s new in 1.5</h2>
+    <ul>
+      <li>A start screen with ten templates (budget, invoice, loan calculator, timesheet and more) and your recent files. File &gt; New from Template (⇧⌘N) shows it over an open workbook.</li>
+      <li>Open Numbers documents, with their formulas, formats, merged cells, borders, and frozen headers. Saving writes a new .xlsx and leaves the Numbers file alone.</li>
+      <li>Each workbook opens in its own window.</li>
+      <li>File &gt; Share sends the workbook to Mail, Messages, AirDrop and more, unsaved changes included.</li>
+      <li>Shortcuts actions: open a workbook, read or set a cell, and export a PDF or CSV. AppleScript can open workbooks, read and write cells, save, and export.</li>
+      <li>Quick Look (Space in Finder) shows a workbook as it looks in the grid, with its results worked out.</li>
+      <li>Scroll bars you can drag, with settings for when they show.</li>
+      <li>98 more functions, including LET, TEXTSPLIT, VSTACK, HSTACK, TAKE, DROP, TRANSPOSE, RANDARRAY, INDIRECT, OFFSET, ADDRESS, LOOKUP, and YEARFRAC, plus trigonometry, statistics, and finance.</li>
+      <li>Lists typed in formulas, such as {1,2,3}. A range, or a function given a range, typed on its own fills the cells below: =A1:A10, =B1:B8*10, =LEN(D1:D8).</li>
+      <li>Formulas such as =SUM(LEN(A1:A8)) and =MAX(IF(B1:B8&lt;50,B1:B8)) work through the range, as in Excel.</li>
+    </ul>
+
+    <h2>Improved in 1.5</h2>
+    <ul>
+      <li>Typing 10:30, $1,234.50, 1,234, or (5) stores a time, money, a grouped number, or a negative number, as Excel does.</li>
+      <li>TEXT and number formats match Excel in every case checked, 480 of them, including dates before March 1900.</li>
+      <li>Lookups follow Excel’s rules: MATCH(9.99E+307,B:B) finds the last number, and exact lookups accept * and ? wildcards.</li>
+      <li>Answers checked against Excel by typing the same formulas into both: more than 500 formulas, from blanks and text to dates and lookups.</li>
+      <li>Long chains of formulas calculate in a fraction of the time, and editing a big workbook is quicker.</li>
+      <li>Print preview stays sharp when zoomed, and sharing a saved workbook is faster.</li>
+      <li>When Excel or another app removes something Spark Grid keeps in a file, Spark Grid says what was removed.</li>
+    </ul>
+
+    <h2>Fixed in 1.5</h2>
+    <ul>
+      <li>A window made narrower no longer pushes the grid off to the right.</li>
+      <li>A change on one sheet followed at once by a change on another no longer loses the first.</li>
+      <li>Totals of a range ignore TRUE, FALSE, and text, and comparisons such as 1=TRUE give Excel’s answers.</li>
+      <li>A formula that points at an empty cell shows 0.</li>
+      <li>Formulas typed after a workbook opens update when the sheets they read change, and =SUM(C1#) updates when C1’s results change.</li>
+    </ul>
+
+    <h2>1.4</h2>
+    <p>November 18, 2026. Pivot tables, links, printing and PDFs, grouping, sheet protection, and 70 more functions, plus a toolbar that fits on one row.</p>
+
+    <h3>What’s new in 1.4</h3>
+    <ul>
+      <li>Data &gt; PivotTable summarizes a range on a new sheet with rows, columns, values, and filters. Dates group by year, quarter, month, or day. PivotChart charts it, and GETPIVOTDATA reads from it. Pivot tables save as real pivot tables that Excel refreshes when it opens the file.</li>
+      <li>FILTER, SORT, SORTBY, UNIQUE, and SEQUENCE fill the cells below and beside the formula, and show #SPILL! when something is in the way. =SUM(C1#) uses all of C1’s results. They open and save as Excel’s spilling formulas.</li>
+      <li>66 more functions, including PMT, FV, NPV, IRR, XIRR, NETWORKDAYS, WORKDAY, DATEDIF, STDEV, PERCENTILE, FORECAST, SWITCH, TEXTBEFORE, and TEXTAFTER.</li>
+      <li>Paste Special: values only, formats only, or transposed (Paste Values is ⌥⇧⌘V).</li>
+      <li>Format Painter, Fill Down (⌘D), Fill Right (⌘R), and Edit &gt; Clear for contents, formats, or both.</li>
+      <li>Data &gt; Text to Columns splits text at commas, tabs, or any character, or at fixed widths, with a preview.</li>
+      <li>Group rows or columns (⇧⌘K) and fold them with + and −. Groups in your files fold too.</li>
+      <li>Sheet &gt; Protect Sheet, with an optional password, choosing which cells stay open and what is still allowed. Allow Edit Ranges keeps chosen ranges editable, and Lock Range locks a range on its own.</li>
+      <li>Print areas and page breaks, saved with the workbook. File &gt; Export as PDF makes the same pages as printing, with text you can search.</li>
+      <li>Insert &gt; Link (⌘K) links a cell to a web page, an email address, or a place in the workbook. ⌘-click to follow it.</li>
+      <li>Sort, AutoSum, Highlight, Chart, and Table are in the toolbar, and in a narrow window it folds into a » menu instead of wrapping.</li>
+    </ul>
+
+    <h3>Improved in 1.4</h3>
+    <ul>
+      <li>Deleting rows and columns on a large workbook is faster.</li>
+      <li>Arrow keys, Return, and Tab stay quick in a half-width window.</li>
+      <li>Option-drag the fill handle to count up from one number.</li>
+      <li>Print setup can leave out the column letters and row numbers.</li>
+      <li>A damaged or oversized file stops with a message instead of filling memory.</li>
+    </ul>
+
+    <h3>Fixed in 1.4</h3>
+    <ul>
+      <li>Typing over a cell no longer shows a suggested word over your letters.</li>
+      <li>Coloring cells while a filter is on leaves the hidden rows alone.</li>
+      <li>Undo can no longer undo a sheet’s protection.</li>
+      <li>Printed pages end between rows, and frozen rows repeat on every page, including when the print area starts further down.</li>
+      <li>Cells you had just typed no longer go blank when you scroll with the trackpad.</li>
+      <li>Workbooks with XLOOKUP, IFS, or TEXTJOIN open in Excel without #NAME?.</li>
+      <li>Grouped columns, clipped text, and print areas open correctly in Excel.</li>
+      <li>Comparing text in a formula ignores upper and lower case, as Excel does.</li>
+      <li>Undoing a sort puts every formula back as it was, and sorting leaves a total row where it is.</li>
+    </ul>
+
+    <h2>1.3</h2>
+    <p>November 6, 2026. Charts from your files now show on the sheet, and you can move, resize, and edit them. Plus duplicates, tables, tab colors, and a new Settings window.</p>
+
+    <h3>What’s new in 1.3</h3>
     <ul>
       <li>Charts saved in your workbooks appear on the sheet and update as you edit the cells they read. Rest the pointer on a chart to see its values.</li>
       <li>Move and resize any chart, or right-click it to edit, duplicate, bring to front, or delete. Edit Chart changes the type, titles, legend, and each series’ cells and color.</li>
@@ -60,7 +137,7 @@
       <li>Sheet tabs show their color, and you can set one from the tab’s menu.</li>
     </ul>
 
-    <h2>Improved in 1.3</h2>
+    <h3>Improved in 1.3</h3>
     <ul>
       <li>Settings has tabs for General, Shortcuts, and About. Change any shortcut, search them, and see when one is already in use. Autosave can be turned off or set to save less often.</li>
       <li>Inserting a row or column on a large workbook is much faster.</li>
@@ -68,7 +145,7 @@
       <li>The arrows that mark hidden rows and columns are easier to see.</li>
     </ul>
 
-    <h2>Fixed in 1.3</h2>
+    <h3>Fixed in 1.3</h3>
     <ul>
       <li>Workbooks saved with a chart open cleanly in Excel and Numbers.</li>
       <li>Highlighting rules show in Google Sheets after you save.</li>
@@ -197,7 +274,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/changelog">What’s in 1.3</a>
+      <a href="/changelog">What’s in 1.5</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Terms &amp; licenses</a>
       <a href="/support">Support</a>

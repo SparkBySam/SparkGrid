@@ -8,11 +8,31 @@ import Model
 /// in `xl/metadata.xml`, and save each result as a plain value in its own cell.
 extension XLSXCodec {
   /// Functions whose results spill, as saved formulas name them (with or without a prefix).
-  static let spillingFunctionNames = ["FILTER(", "SORT(", "SORTBY(", "UNIQUE(", "SEQUENCE("]
+  static let spillingFunctionNames = [
+    "FILTER(", "SORT(", "SORTBY(", "UNIQUE(", "SEQUENCE(", "VSTACK(", "HSTACK(", "TAKE(",
+    "DROP(", "CHOOSECOLS(", "CHOOSEROWS(", "WRAPROWS(", "WRAPCOLS(", "TOCOL(", "TOROW(",
+    "TEXTSPLIT(", "RANDARRAY(", "TRANSPOSE(",
+  ]
 
   static func spills(_ raw: String) -> Bool {
     let upper = raw.uppercased()
-    return spillingFunctionNames.contains { upper.contains($0) }
+    // A typed list such as {1,2,3} spills too.
+    return upper.contains("{") || spillingFunctionNames.contains { upper.contains($0) }
+  }
+
+  /// Formulas a file saved the pre-spill way (not as array formulas) that read a range: other
+  /// apps read them as one value, so they open marked not to spill (`Cell.opensAsOneValue`).
+  /// A range is what could make one spill now (`=B1:B8*2`, `=LEN(D1:D8)`).
+  static func markFormulasThatOpenAsOneValue(in sheet: inout Sheet, arrayFormulas: Set<CellAddress>)
+  {
+    let marked = sheet.cells.filter { address, cell in
+      !arrayFormulas.contains(address) && cell.raw.hasPrefix("=") && cell.raw.contains(":")
+    }
+    for (address, cell) in marked {
+      var flagged = cell
+      flagged.opensAsOneValue = true
+      sheet.setCell(flagged, at: address)
+    }
   }
 
   /// Turns the saved values inside each spilling formula's range into spilled results: shown,
@@ -21,7 +41,7 @@ extension XLSXCodec {
     guard !arrays.isEmpty else { return }
     for (anchor, range) in arrays.sorted(by: { ($0.key.row, $0.key.col) < ($1.key.row, $1.key.col) }
     )
-    where spills(sheet.cell(at: anchor).raw) {
+    where spills(sheet.cell(at: anchor).raw) || sheet.cell(at: anchor).raw.contains(":") {
       let r = range.normalized
       // The formula is the range's top-left cell; anything else is not a spill.
       guard r.minRow == anchor.row, r.minCol == anchor.col else { continue }

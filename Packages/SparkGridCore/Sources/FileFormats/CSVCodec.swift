@@ -71,6 +71,11 @@ public nonisolated enum CSVCodec {
     return lines.joined(separator: "\n")
   }
 
+  /// CSV text from rows of text as given, such as each cell as it is shown.
+  public static func exportCSV(rows: [[String]]) -> String {
+    rows.map { $0.map(escapeField).joined(separator: ",") }.joined(separator: "\n")
+  }
+
   // MARK: - Parsing
 
   private static func stripBOM(_ text: String) -> String {

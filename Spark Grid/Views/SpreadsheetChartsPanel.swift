@@ -333,6 +333,7 @@ struct SheetChartView: View {
     let id: Int
     let label: String
     let value: Double
+    var error: Double?
   }
 
   @State private var cachedPoints: [Point] = []
@@ -447,7 +448,10 @@ struct SheetChartView: View {
         .position(x: size.width / 2, y: size.height / 2)
       }
     } else if let chrome = chartChrome(in: size),
-      let yDomain = Self.plotValueDomain(values: renderPoints.map(\.value)),
+      let yDomain = Self.plotValueDomain(
+        values: renderPoints.flatMap { point in
+          [point.value] + (point.error.map { [point.value - $0, point.value + $0] } ?? [])
+        }),
       let xDomain = Self.plotCategoryDomain(count: renderPoints.count)
     {
       VStack(alignment: .leading, spacing: Self.chromeSpacing) {
@@ -639,6 +643,9 @@ struct SheetChartView: View {
           y: .value("Value", point.value)
         )
         .foregroundStyle(pointPaint(point))
+        if let error = point.error, error > 0 {
+          errorBar(at: point, error: error)
+        }
       case .line:
         LineMark(
           x: .value("Category", Double(point.id)),
@@ -646,12 +653,21 @@ struct SheetChartView: View {
         )
         .foregroundStyle(series)
         .interpolationMethod(.catmullRom)
+        // An open dot on a light middle stands apart from the line (a Reddit note, Nov 19).
         PointMark(
           x: .value("Category", Double(point.id)),
           y: .value("Value", point.value)
         )
-        .foregroundStyle(pointPaint(point))
-        .symbolSize(points.count > 20 ? 28 : 46)
+        .symbol {
+          let side: CGFloat = points.count > 20 ? 5 : 7
+          Circle()
+            .fill(SparkStyle.canvas)
+            .overlay(Circle().strokeBorder(pointPaint(point), lineWidth: 1.6))
+            .frame(width: side, height: side)
+        }
+        if let error = point.error, error > 0 {
+          errorBar(at: point, error: error)
+        }
       case .area:
         AreaMark(
           x: .value("Category", Double(point.id)),
@@ -756,6 +772,25 @@ struct SheetChartView: View {
     )
   }
 
+  /// A plus-or-minus line through the value with a cap at each end.
+  @ChartContentBuilder
+  private func errorBar(at point: Point, error: Double) -> some ChartContent {
+    let x = PlottableValue.value("Category", Double(point.id))
+    RuleMark(
+      x: x,
+      yStart: .value("Low", point.value - error),
+      yEnd: .value("High", point.value + error)
+    )
+    .lineStyle(StrokeStyle(lineWidth: 1.1))
+    .foregroundStyle(Color.primary.opacity(0.75))
+    ForEach([point.value - error, point.value + error], id: \.self) { end in
+      PointMark(x: x, y: .value("End", end))
+        .symbol {
+          Rectangle().fill(Color.primary.opacity(0.75)).frame(width: 7, height: 1.1)
+        }
+    }
+  }
+
   private func seriesPaint() -> Color {
     ChartColorPaint.color(chart.resolvedSeriesColor)
   }
@@ -821,7 +856,9 @@ struct SheetChartView: View {
       labelFor: { viewModel.displayString(at: $0) },
       numberFor: { viewModel.displayValue(at: $0).asChartNumber }
     )
-    let points = all.points.map { Point(id: $0.id, label: $0.label, value: $0.value) }
+    let points = all.points.map {
+      Point(id: $0.id, label: $0.label, value: $0.value, error: $0.error)
+    }
     return (points, all.totalCount)
   }
 
@@ -856,9 +893,11 @@ struct OnSheetChartCard: View {
   let chart: SheetChart
   var viewModel: SpreadsheetViewModel
   var hover: ChartHover?
+  /// Drawn for Copy or Save Chart as Image: no selection frame or handles.
+  var exporting = false
 
   var body: some View {
-    let selected = viewModel.selectedChartID == chart.id
+    let selected = !exporting && viewModel.selectedChartID == chart.id
     GeometryReader { geo in
       cardContent(in: geo.size)
     }

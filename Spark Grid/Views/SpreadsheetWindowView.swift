@@ -156,6 +156,10 @@ struct SpreadsheetWindowView: View {
               .overlay(alignment: .bottom) {
                 ProtectionNoticeBanner(viewModel: viewModel)
               }
+              .overlay(alignment: .top) {
+                // The banner reads the workbook itself, so an edit redraws only the banner.
+                RemovedExtrasBanner(viewModel: viewModel)
+              }
             if hasCharts {
               Rectangle()
                 .fill(SpreadsheetChrome.chromeDividerColor)
@@ -287,6 +291,57 @@ struct SpreadsheetWindowView: View {
 
 #Preview {
   SpreadsheetWindowView(store: SpreadsheetDocumentStore())
+}
+
+/// Says what another app removed when it saved a file Spark Grid had saved: pivot table
+/// settings, range locks, chart settings. It stays until closed; the data itself is all there.
+private struct RemovedExtrasBanner: View {
+  var viewModel: SpreadsheetViewModel
+  @State private var closed = false
+
+  private var removed: [SparkGridExtra] { viewModel.workbook.removedSparkGridExtras }
+
+  static func message(_ removed: [SparkGridExtra]) -> String {
+    let names = removed.map(\.title)
+    let list: String
+    switch names.count {
+    case 1: list = names[0]
+    case 2: list = "\(names[0]) and \(names[1])"
+    default: list = names.dropLast().joined(separator: ", ") + ", and " + (names.last ?? "")
+    }
+    var text =
+      "Another app saved this file after Spark Grid did and removed its \(list). Your data is all still here."
+    if removed.contains(.locks) { text += " Ranges that were locked are unlocked now." }
+    return text
+  }
+
+  var body: some View {
+    if !removed.isEmpty, !closed {
+      HStack(alignment: .top, spacing: 8) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundStyle(SparkStyle.accent)
+        Text(Self.message(removed))
+          .font(.callout)
+          .fixedSize(horizontal: false, vertical: true)
+        Button {
+          closed = true
+        } label: {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.borderless)
+        .help("Close")
+        .accessibilityLabel("Close")
+      }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 9)
+      .frame(maxWidth: 560)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+      .shadow(radius: 6, y: 2)
+      .padding(16)
+      .accessibilityElement(children: .combine)
+    }
+  }
 }
 
 /// Says why protection refused a change, over the bottom of the grid, and goes away by itself.

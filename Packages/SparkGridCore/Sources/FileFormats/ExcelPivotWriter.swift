@@ -288,7 +288,7 @@ public nonisolated enum ExcelPivotWriter {
   private static func value(_ cell: Cell) -> CellValue {
     if FormulaSyntax.isFormula(cell.raw) { return cell.cachedFormulaValue ?? .blank }
     if cell.raw.isEmpty, let spilled = cell.cachedFormulaValue { return spilled }
-    return CellValue.fromLiteralRaw(cell.raw)
+    return cell.literalValue
   }
 
   private static func numberText(_ n: Double) -> String {

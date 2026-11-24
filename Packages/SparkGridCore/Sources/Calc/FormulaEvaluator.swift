@@ -46,6 +46,8 @@ public nonisolated struct FormulaEvaluator {
   /// The cells a formula's results spill into, by sheet name and the formula's cell, for `G1#`.
   /// Nil when nothing spills from that cell, or its spill is blocked.
   public var spillRange: (String, CellAddress) -> CellRange? = { _, _ in nil }
+  /// Whether a cell holds a formula, by sheet name and address, for ISFORMULA.
+  public var holdsFormula: (String, CellAddress) -> Bool = { _, _ in false }
   /// Defaults to a modest grid so open ranges don't explode when extent isn't wired.
   public var sheetExtent: SheetExtentLookup = { _ in (maxRow: 999, maxCol: 25) }
   /// Cell being evaluated (`COLUMN()` / `ROW()` with no argument). Held in a class cell so batch strip eval can set origin without mutating the evaluator struct.
@@ -95,13 +97,24 @@ public nonisolated struct FormulaEvaluator {
     public var values: [FormulaExpr: [CellValue]] = [:]
   }
 
+  /// A branch IF, CHOOSE, SWITCH or IFERROR picks. One left out gives 0, as in other apps:
+  /// `=IF(A2>1,,2)` is 0 when A2 is over 1.
+  func evaluateChosen(_ expr: FormulaExpr) -> CellValue {
+    if case .missing = expr { return .number(0) }
+    return evaluate(expr)
+  }
+
   public func evaluate(_ expr: FormulaExpr) -> CellValue {
     if budget.depth >= budget.maxDepth {
       return .error(.value)
     }
     budget.depth += 1
     defer { budget.depth -= 1 }
+    if budget.depth == 1, let first = firstValueOfLaidOutSpill(expr) { return first }
     switch expr {
+    case .missing:
+      // An argument left out reads as a blank: 0 to arithmetic, FALSE to a test.
+      return .blank
     case .number(let n):
       return .number(n)
     case .string(let s):
@@ -129,7 +142,32 @@ public nonisolated struct FormulaEvaluator {
       return evalBinary(op, lhs, rhs)
     case .call(let name, let args):
       return evalCall(name, args)
+    case .array(let rows):
+      // A list in a cell shows its first item; the rest spill, as other apps show it.
+      guard let first = rows.first?.first else { return .error(.value) }
+      if rows.count * (rows.first?.count ?? 0) > 1, spillIsBlocked { return .error(.spill) }
+      return evaluate(first)
     }
+  }
+
+  /// The value a range or a one-value function given a range shows in its own cell when it
+  /// spills (`=A1:A3`, `=LEN(D1:D8)`, `=ROW(B1:B8)`): the first of its values, or #SPILL! when
+  /// something is in the way. Nil otherwise, including for a file's pre-spill formula, which
+  /// is not laid out as a spill.
+  private func firstValueOfLaidOutSpill(_ expr: FormulaExpr) -> CellValue? {
+    switch expr {
+    case .range: break
+    case .call(let name, _):
+      let plain = Self.plainFunctionName(name)
+      guard Self.liftedFunctionNames.contains(plain) || plain == "ROW" || plain == "COLUMN",
+        Self.spills(expr)
+      else { return nil }
+    default: return nil
+    }
+    guard let origin = evaluationOrigin, let sheet = formulaSheetName else { return nil }
+    if spillBlocked(sheet, origin) { return .error(.spill) }
+    guard spillRange(sheet, origin) != nil else { return nil }
+    return evaluateArray(expr).values.first.map(Self.cellResult)
   }
 
   private func evalUnary(_ op: UnaryOp, _ expr: FormulaExpr) -> CellValue {
@@ -164,7 +202,24 @@ public nonisolated struct FormulaEvaluator {
     switch op {
     case .negate: return .number(-number)
     case .plus: return .number(number)
+    case .percent: return .number(number / 100)
     }
+  }
+
+  /// `^` and POWER as other apps work them out: an odd root of a negative number is negative
+  /// (`(-8)^(1/3)` is -2), other fractional powers of one are #NUM!, as is 0^0 and anything
+  /// past the largest number. They showed as "nan" and "inf" (found by script, Nov 18).
+  static func power(_ base: Double, _ exponent: Double) -> CellValue {
+    if base == 0, exponent == 0 { return .error(.num) }
+    if base == 0, exponent < 0 { return .error(.divZero) }
+    var result = pow(base, exponent)
+    if base < 0, exponent != exponent.rounded() {
+      let root = 1 / exponent
+      let whole = root.rounded()
+      guard abs(root - whole) < 1e-9, Int(whole) % 2 != 0 else { return .error(.num) }
+      result = -pow(-base, exponent)
+    }
+    return result.isFinite ? .number(result) : .error(.num)
   }
 
   public func applyBinary(_ op: BinaryOp, lhs: CellValue, rhs: CellValue) -> CellValue {
@@ -176,16 +231,19 @@ public nonisolated struct FormulaEvaluator {
       return .string(lhs.asString + rhs.asString)
     case .add, .subtract, .multiply, .divide, .power:
       guard let a = lhs.asNumber, let b = rhs.asNumber else { return .error(.value) }
+      let result: Double
       switch op {
-      case .add: return .number(a + b)
-      case .subtract: return .number(a - b)
-      case .multiply: return .number(a * b)
+      case .add: result = a + b
+      case .subtract: result = a - b
+      case .multiply: result = a * b
       case .divide:
         guard b != 0 else { return .error(.divZero) }
-        return .number(a / b)
-      case .power: return .number(pow(a, b))
+        result = a / b
+      case .power: return Self.power(a, b)
       default: return .error(.value)
       }
+      // Past the largest number, #NUM! as in other apps; it showed as "inf".
+      return result.isFinite ? .number(result) : .error(.num)
     case .eq, .ne, .lt, .gt, .le, .ge:
       return compare(op, lhs, rhs)
     }
@@ -203,8 +261,11 @@ public nonisolated struct FormulaEvaluator {
 
   private func arrayEvaluateImpl(_ expr: FormulaExpr, cache: ArrayEvalCacheBox?) -> [CellValue] {
     switch expr {
-    case .number, .string, .boolean, .error, .cellRef:
+    case .number, .string, .boolean, .error, .cellRef, .missing:
       return [evaluate(expr)]
+    case .array(let rows):
+      // SUM({1,2,3}) adds every item.
+      return rows.flatMap { $0.map { evaluate($0) } }
     case .namedRange(let name):
       guard let resolved = namedRangeLookup(name) else { return [.error(.name)] }
       return arrayEvaluate(resolved, cache: cache)
@@ -214,9 +275,14 @@ public nonisolated struct FormulaEvaluator {
       return arrayEvaluate(inner, cache: cache).map { applyUnary(op, to: $0) }
     case .binary(let op, let lhs, let rhs):
       return arrayBinary(op, lhs, rhs, cache: cache)
-    case .call(let name, _):
+    case .call(let name, let args):
+      if Self.isLet(name) { return arrayEvaluate(letCalculation(args), cache: cache) }
       // SUM(FILTER(...)) adds every value the array function gives.
       if Self.arrayFunctionNames.contains(Self.plainFunctionName(name)) {
+        return evaluateArray(expr).values
+      }
+      // LEN(A1:A8) inside SUM: one length for each cell.
+      if Self.givesArray(expr) {
         return evaluateArray(expr).values
       }
       return [evaluate(expr)]
@@ -286,29 +352,73 @@ public nonisolated struct FormulaEvaluator {
   }
 
   private func compare(_ op: BinaryOp, _ lhs: CellValue, _ rhs: CellValue) -> CellValue {
-    if let a = lhs.asNumber, let b = rhs.asNumber {
-      switch op {
-      case .eq: return .bool(a == b)
-      case .ne: return .bool(a != b)
-      case .lt: return .bool(a < b)
-      case .gt: return .bool(a > b)
-      case .le: return .bool(a <= b)
-      case .ge: return .bool(a >= b)
-      default: return .error(.value)
-      }
-    }
-    // Text compares without regard to case, as other spreadsheet apps compare it:
-    // "east" = "East" is TRUE.
-    let order = lhs.asString.compare(rhs.asString, options: [.caseInsensitive])
+    if lhs.isError { return lhs }
+    if rhs.isError { return rhs }
+    let order = Self.comparisonOrder(lhs, rhs)
     switch op {
-    case .eq: return .bool(order == .orderedSame)
-    case .ne: return .bool(order != .orderedSame)
-    case .lt: return .bool(order == .orderedAscending)
-    case .gt: return .bool(order == .orderedDescending)
-    case .le: return .bool(order != .orderedDescending)
-    case .ge: return .bool(order != .orderedAscending)
+    case .eq: return .bool(order == 0)
+    case .ne: return .bool(order != 0)
+    case .lt: return .bool(order < 0)
+    case .gt: return .bool(order > 0)
+    case .le: return .bool(order <= 0)
+    case .ge: return .bool(order >= 0)
     default: return .error(.value)
     }
+  }
+
+  /// How `=`, `<` and the rest order two values, as other spreadsheet apps do (checked against
+  /// Excel 16.115, Nov 18). Numbers come before text and text before TRUE and FALSE, so
+  /// `1=TRUE` is FALSE and `TRUE>1` is TRUE. Text compares as text without regard to case,
+  /// even when it looks like a number: `"10"<"9"` is TRUE. An empty cell takes the other
+  /// side's kind (0, "" or FALSE). Numbers equal to 15 significant digits are equal, so
+  /// `0.1+0.2=0.3` is TRUE.
+  static func comparisonOrder(_ lhs: CellValue, _ rhs: CellValue) -> Int {
+    func asOther(_ other: CellValue) -> CellValue {
+      switch other {
+      case .string: return .string("")
+      case .bool: return .bool(false)
+      default: return .number(0)
+      }
+    }
+    var a = lhs
+    var b = rhs
+    if case .blank = a { a = asOther(b) }
+    if case .blank = b { b = asOther(a) }
+
+    func rank(_ value: CellValue) -> Int {
+      switch value {
+      case .string: return 1
+      case .bool: return 2
+      default: return 0
+      }
+    }
+    let ra = rank(a)
+    let rb = rank(b)
+    if ra != rb { return ra < rb ? -1 : 1 }
+    switch (a, b) {
+    case (.string(let x), .string(let y)):
+      // In the order other apps use: punctuation, then digits, then letters, accents beside
+      // their letters ("~"<"a", "co-op"<"coop", "é"<"f"; 16 cases checked with Excel 16.115).
+      switch x.compare(y, options: [.caseInsensitive], range: nil, locale: Self.textOrderLocale) {
+      case .orderedAscending: return -1
+      case .orderedDescending: return 1
+      case .orderedSame: return 0
+      }
+    case (.bool(let x), .bool(let y)):
+      return x == y ? 0 : (x ? 1 : -1)
+    default:
+      guard let x = a.asNumber, let y = b.asNumber else { return 0 }
+      if x == y || Self.equalTo15Digits(x, y) { return 0 }
+      return x < y ? -1 : 1
+    }
+  }
+
+  static let textOrderLocale = Locale(identifier: "en_US")
+
+  static func equalTo15Digits(_ x: Double, _ y: Double) -> Bool {
+    guard x.isFinite, y.isFinite else { return false }
+    let posix = Locale(identifier: "en_US_POSIX")
+    return String(format: "%.15g", locale: posix, x) == String(format: "%.15g", locale: posix, y)
   }
 
   /// `IF(Cn="","",…)` — skip heavy false-branch work on blank rows.
@@ -401,27 +511,19 @@ public nonisolated struct FormulaEvaluator {
 
   private func evalCallBody(_ name: String, _ args: [FormulaExpr]) -> CellValue {
     switch name {
-    case "SUM": return aggregate(args, skipNonNumeric: true) { $0 + $1 }
+    case "SUM":
+      let read = statNumbers(args, textIsError: true)
+      if let error = read.error { return error }
+      return .number(read.numbers.reduce(0, +))
     case "AVERAGE":
       if let fast = fastAverageIfPossible(args) { return fast }
-      var sum = 0.0
-      var count = 0
-      for value in flatten(args) {
-        if case .error = value { return value }
-        if let n = numericForStats(value) {
-          sum += n
-          count += 1
-        }
-      }
-      guard count > 0 else { return .error(.divZero) }
-      return .number(sum / Double(count))
+      let read = statNumbers(args, textIsError: true)
+      if let error = read.error { return error }
+      guard !read.numbers.isEmpty else { return .error(.divZero) }
+      return .number(read.numbers.reduce(0, +) / Double(read.numbers.count))
     case "COUNT":
-      var count = 0
-      for value in flatten(args) {
-        if case .error = value { return value }
-        if numericForStats(value) != nil { count += 1 }
-      }
-      return .number(Double(count))
+      // Errors and text are not counted, and stop nothing.
+      return .number(Double(statNumbers(args, textIsError: false, countOnly: true).numbers.count))
     case "COUNTA":
       var count = 0
       for value in flatten(args) {
@@ -441,10 +543,10 @@ public nonisolated struct FormulaEvaluator {
       if case .error = condition { return condition }
       guard let flag = condition.asBool else { return .error(.value) }
       if flag {
-        return evaluate(args[1])
+        return evaluateChosen(args[1])
       }
       if args.count == 3 {
-        return evaluate(args[2])
+        return evaluateChosen(args[2])
       }
       return .bool(false)
     case "IFERROR":
@@ -454,7 +556,7 @@ public nonisolated struct FormulaEvaluator {
       }
       let value = evaluate(args[0])
       if case .error = value {
-        return evaluate(args[1])
+        return evaluateChosen(args[1])
       }
       return value
     case "AND":
@@ -498,8 +600,9 @@ public nonisolated struct FormulaEvaluator {
       guard args.count == 1 else { return .error(.value) }
       let value = evaluate(args[0])
       if case .error = value { return value }
+      // Only the ordinary space, as in other apps: a non-breaking space or tab stays.
       let collapsed = value.asString
-        .split(whereSeparator: { $0.isWhitespace })
+        .split(separator: " ")
         .joined(separator: " ")
       return .string(collapsed)
     case "CONCAT", "CONCATENATE":
@@ -513,6 +616,28 @@ public nonisolated struct FormulaEvaluator {
       return evalTEXT(args)
     case "XLOOKUP":
       return evalXLOOKUP(args)
+    case "INDIRECT":
+      return evalINDIRECT(args)
+    case "OFFSET":
+      return evalOFFSET(args)
+    case FormulaExpr.rangeOperatorFunction, FormulaExpr.intersectionFunction:
+      return evalReferenceOperator(name, args)
+    case "ISREF":
+      return evalISREF(args)
+    case "ISFORMULA":
+      return evalISFORMULA(args)
+    case "CELL":
+      return evalCELL(args)
+    case "PERCENTILE.EXC":
+      return evalPercentileExc(args, quartile: false)
+    case "QUARTILE.EXC":
+      return evalPercentileExc(args, quartile: true)
+    case "LOOKUP":
+      return evalLOOKUP(args)
+    case "YEARFRAC":
+      return evalYEARFRAC(args)
+    case "ADDRESS":
+      return evalADDRESS(args)
     case "VLOOKUP":
       return evalVLOOKUP(args)
     case "HLOOKUP":
@@ -530,11 +655,11 @@ public nonisolated struct FormulaEvaluator {
     case "DATE":
       return evalDATE(args)
     case "YEAR":
-      return evalDatePart(args) { ExcelDate.utcComponent(.year, from: $0) }
+      return evalDatePart(args) { $0.year }
     case "MONTH":
-      return evalDatePart(args) { ExcelDate.utcComponent(.month, from: $0) }
+      return evalDatePart(args) { $0.month }
     case "DAY":
-      return evalDatePart(args) { ExcelDate.utcComponent(.day, from: $0) }
+      return evalDatePart(args) { $0.day }
     case "SUMIF":
       return evalSUMIF(args)
     case "AVERAGEIF":
@@ -581,7 +706,10 @@ public nonisolated struct FormulaEvaluator {
       return evalCHAR(args)
     case "REPT":
       return evalREPT(args)
-    case "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE", FormulaExpr.anchorArrayFunction:
+    case "LET":
+      return evaluate(letCalculation(args))
+    case _ where Self.shapeFunctionNames.contains(name),
+      "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE", FormulaExpr.anchorArrayFunction:
       // The cell shows the first value; the rest spill into the cells below and beside it.
       if spillIsBlocked { return .error(.spill) }
       // A blank in an array result shows as 0, as other apps show it.
@@ -592,7 +720,11 @@ public nonisolated struct FormulaEvaluator {
       guard args.isEmpty else { return .error(.value) }
       return .bool(true)
     default:
-      return evalBatch1(name, args) ?? evalBatch2(name, args) ?? .error(.name)
+      if let value = evalBatch1(name, args) ?? evalBatch2(name, args) ?? evalBatch3(name, args) {
+        return value
+      }
+      UnknownFunctions.note(name)
+      return .error(.name)
     }
   }
 
@@ -667,10 +799,12 @@ public nonisolated struct FormulaEvaluator {
     if case .error = formatValue { return formatValue }
     let pattern = formatValue.asString
     if let number = value.asNumber {
-      if let rendered = ExcelFormatCode.formatted(number, code: pattern, fractionDigits: nil) {
-        return .string(rendered)
+      switch ExcelFormatCode.render(number, code: pattern, fractionDigits: nil) {
+      case .text(let rendered): return .string(rendered)
+      case .general: return .string(value.displayString)
+      // A date before 1900 or after 9999, as other apps give it.
+      case .invalid: return .error(.value)
       }
-      return .string(value.displayString)
     }
     if let rendered = ExcelFormatCode.formattedText(value.asString, code: pattern) {
       return .string(rendered)
@@ -774,6 +908,15 @@ public nonisolated struct FormulaEvaluator {
     }
 
     if matchType == 0 {
+      // `"b?"` and `"app*"` match text as wildcards, as in other apps (found by script).
+      if case .string(let pattern) = needle, excelHasWildcard(pattern) {
+        for (index, value) in values.enumerated() {
+          if case .string(let text) = value, excelWildcardMatch(text, pattern: pattern) {
+            return .number(Double(index + 1))
+          }
+        }
+        return .error(.na)
+      }
       for (index, value) in values.enumerated() {
         if case .error = value { return value }
         if valuesEqual(needle, value) {
@@ -783,22 +926,24 @@ public nonisolated struct FormulaEvaluator {
       return .error(.na)
     }
 
-    // Approximate: largest value ≤ needle (match_type 1) or smallest ≥ needle (-1)
-    guard let needleNum = needle.asNumber else { return .error(.na) }
-    var best: (index: Int, key: Double)?
-    for (index, value) in values.enumerated() {
-      if case .error = value { return value }
-      guard let key = value.asNumber else { continue }
-      if matchType > 0 {
-        if key <= needleNum, best == nil || key >= (best?.key ?? key) {
-          best = (index, key)
-        }
-      } else if key >= needleNum, best == nil || key <= (best?.key ?? key) {
-        best = (index, key)
+    // Approximate: Excel's sorted search for 1. For -1 Excel reads from the top: the first
+    // value equal to the needle, or the last one before a value below it (Excel 16.115).
+    if matchType < 0 {
+      var last: Int?
+      for (index, value) in values.enumerated() {
+        guard case .some = Self.lookupKind(value), Self.lookupKind(value) == Self.lookupKind(needle)
+        else { continue }
+        let order = Self.comparisonOrder(value, needle)
+        if order == 0 { return .number(Double(index + 1)) }
+        if order < 0 { break }
+        last = index
       }
+      return last.map { .number(Double($0 + 1)) } ?? .error(.na)
     }
-    guard let best else { return .error(.na) }
-    return .number(Double(best.index + 1))
+    guard let index = Self.sortedSearch(needle, in: values, descending: false) else {
+      return .error(.na)
+    }
+    return .number(Double(index + 1))
   }
 
   private func evalDATE(_ args: [FormulaExpr]) -> CellValue {
@@ -820,14 +965,17 @@ public nonisolated struct FormulaEvaluator {
     return .number(ExcelDate.serial(from: date))
   }
 
-  private func evalDatePart(_ args: [FormulaExpr], _ part: (Date) -> Int) -> CellValue {
+  /// YEAR, MONTH and DAY in Excel's 1900 calendar: 0 is 0 Jan 1900, 1 is 1 Jan 1900 and 60 the
+  /// 29 Feb 1900 other apps keep. Days up to 60 read one day early before (found by script).
+  private func evalDatePart(
+    _ args: [FormulaExpr], _ part: ((year: Int, month: Int, day: Int)) -> Int
+  ) -> CellValue {
     guard args.count == 1 else { return .error(.value) }
     let value = evaluate(args[0])
     if case .error = value { return value }
-    guard let serial = value.asNumber, let date = ExcelDate.date(from: serial) else {
-      return .error(.value)
-    }
-    return .number(Double(part(date)))
+    guard let serial = value.asNumber else { return .error(.value) }
+    guard serial >= 0, serial < 2_958_466 else { return .error(.num) }
+    return .number(Double(part(ExcelFormatCode.excelDate(Int(serial.rounded(.down))))))
   }
 
   private func resolveToRange(_ expr: FormulaExpr) -> FormulaExpr? {
@@ -838,6 +986,12 @@ public nonisolated struct FormulaEvaluator {
       return namedRangeLookup(name)
     case .call(let name, let args) where Self.isSpillReference(name):
       return spillReferenceRange(args)
+    case .call(let name, let args) where Self.isReferenceFunction(name):
+      switch referenceFunctionTarget(name, args) {
+      case .range(let start, let end): return .range(start, end)
+      case .cellRef(let ref): return .range(ref, ref)
+      default: return nil
+      }
     default:
       return nil
     }
@@ -849,19 +1003,32 @@ public nonisolated struct FormulaEvaluator {
 
   private func evalXLOOKUP(_ args: [FormulaExpr]) -> CellValue {
     // 4-argument calls stay exact: the fourth value is if_not_found, not a match mode.
-    guard args.count >= 3, args.count <= 5 else { return .error(.value) }
+    guard args.count >= 3, args.count <= 6 else { return .error(.value) }
     let needle = evaluate(args[0])
     if case .error = needle { return needle }
 
     let lookupValues = rangeValues(args[1])
     let returnValues = rangeValues(args[2])
-    guard let lookupValues, let returnValues else { return .error(.value) }
+    guard var lookupValues, var returnValues else { return .error(.value) }
     guard lookupValues.count == returnValues.count, !lookupValues.isEmpty else {
       return .error(.value)
     }
+    // Search mode: 1 first to last, -1 last to first; 2 and -2 (a sorted search) give the
+    // same answers on sorted data. It was not read, so a sixth argument was #VALUE!.
+    if args.count == 6, !Self.isMissing(args[5]) {
+      let searchValue = evaluate(args[5])
+      if case .error = searchValue { return searchValue }
+      guard let search = searchValue.asNumber, [1, -1, 2, -2].contains(Int(search)) else {
+        return .error(.value)
+      }
+      if search < 0 {
+        lookupValues.reverse()
+        returnValues.reverse()
+      }
+    }
 
     let mode: XLookupMatchMode
-    if args.count == 5 {
+    if args.count >= 5, !Self.isMissing(args[4]) {
       let modeValue = evaluate(args[4])
       if case .error = modeValue { return modeValue }
       guard let parsed = xLookupMatchMode(from: modeValue) else { return .error(.value) }
@@ -878,11 +1045,23 @@ public nonisolated struct FormulaEvaluator {
     case .failed(let error):
       return error
     case .notFound:
-      if args.count >= 4 {
+      // Left out (`XLOOKUP(x,A:A,B:B,,0)`), not found is #N/A.
+      if args.count >= 4, !Self.isMissing(args[3]) {
         return evaluate(args[3])
       }
       return .error(.na)
     }
+  }
+
+  /// A formula's answer as its cell holds it: an empty cell picked as the answer is 0.
+  public static func cellResult(_ value: CellValue) -> CellValue {
+    if case .blank = value { return .number(0) }
+    return value
+  }
+
+  static func isMissing(_ expr: FormulaExpr) -> Bool {
+    if case .missing = expr { return true }
+    return false
   }
 
   private func evalXMATCH(_ args: [FormulaExpr]) -> CellValue {
@@ -1032,6 +1211,13 @@ public nonisolated struct FormulaEvaluator {
     guard index >= 1, index <= span else { return .error(.ref) }
 
     let resultOffset = (horizontal ? n.minRow : n.minCol) + index - 1
+    // An exact lookup of `"app*"` or `"b?"` matches text as a wildcard, as in other apps; it
+    // looked for those characters (found by script, Nov 18).
+    if exact, case .string(let pattern) = needle, excelHasWildcard(pattern) {
+      return wildcardTableLookup(
+        pattern: pattern, horizontal: horizontal, bounds: n, start: start,
+        resultOffset: resultOffset)
+    }
     if exact, let cache = lookupTableCache {
       let tableKey = LookupTableKey(
         sheet: (start.sheet ?? end.sheet ?? formulaSheetName ?? "").lowercased(),
@@ -1058,44 +1244,98 @@ public nonisolated struct FormulaEvaluator {
       return .error(.na)
     }
 
-    var approximate: (key: Double, value: CellValue)?
     let outerStart = horizontal ? n.minCol : n.minRow
     let outerEnd = horizontal ? n.maxCol : n.maxRow
-
+    func resultRef(_ position: Int) -> FormulaRef {
+      FormulaRef(
+        sheet: start.sheet, row: horizontal ? resultOffset : position,
+        col: horizontal ? position : resultOffset, absRow: false, absCol: false)
+    }
+    var keys: [CellValue] = []
+    keys.reserveCapacity(outerEnd - outerStart + 1)
     for position in outerStart...outerEnd {
-      let keyRef = FormulaRef(
-        sheet: start.sheet,
-        row: horizontal ? n.minRow : position,
-        col: horizontal ? position : n.minCol,
-        absRow: false,
-        absCol: false
-      )
-      let key = lookup(keyRef)
-      if case .error = key { return key }
-
-      let result = lookup(
+      let key = lookup(
         FormulaRef(
-          sheet: start.sheet,
-          row: horizontal ? resultOffset : position,
-          col: horizontal ? position : resultOffset,
-          absRow: false,
-          absCol: false
-        ))
-
+          sheet: start.sheet, row: horizontal ? n.minRow : position,
+          col: horizontal ? position : n.minCol, absRow: false, absCol: false))
       if exact {
-        if valuesEqual(needle, key) { return result }
+        if case .error = key { return key }
+        if valuesEqual(needle, key) { return lookup(resultRef(position)) }
       } else {
-        guard let needleNum = needle.asNumber, let keyNum = key.asNumber else { continue }
-        if keyNum <= needleNum {
-          if approximate == nil || keyNum >= (approximate?.key ?? keyNum) {
-            approximate = (keyNum, result)
-          }
-        }
+        keys.append(key)
       }
     }
-
     if exact { return .error(.na) }
-    return approximate?.value ?? .error(.na)
+    guard let index = Self.sortedSearch(needle, in: keys, descending: false) else {
+      return .error(.na)
+    }
+    return lookup(resultRef(outerStart + index))
+  }
+
+  /// Excel's approximate match: a binary search over the values of the needle's kind (numbers,
+  /// text or TRUE/FALSE; blanks and errors are passed over) for the last one not past it, in
+  /// ascending order, or not below it in descending order. On sorted data that is the largest
+  /// value up to the needle. On anything else it gives what other apps give, which some
+  /// workbooks rely on: MATCH(9.99E+307,B:B) finds the last number, MATCH("zzz",D:D) the last
+  /// text. Spark Grid took the largest value up to the needle, and text needles found nothing
+  /// (found by script against Excel 16.115, Nov 18).
+  /// Numbers, text and TRUE/FALSE are searched apart; blanks and errors are passed over.
+  static func lookupKind(_ value: CellValue) -> Int? {
+    switch value {
+    case .number: return 0
+    case .string: return 1
+    case .bool: return 2
+    case .blank, .error: return nil
+    }
+  }
+
+  static func sortedSearch(_ needle: CellValue, in values: [CellValue], descending: Bool) -> Int? {
+    guard let needleKind = lookupKind(needle) else { return nil }
+    var candidates: [Int] = []
+    candidates.reserveCapacity(values.count)
+    for (index, value) in values.enumerated() where lookupKind(value) == needleKind {
+      candidates.append(index)
+    }
+    var lo = 0
+    var hi = candidates.count - 1
+    var found: Int?
+    while lo <= hi {
+      let mid = (lo + hi) / 2
+      let order = comparisonOrder(values[candidates[mid]], needle)
+      if descending ? order >= 0 : order <= 0 {
+        found = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    return found.map { candidates[$0] }
+  }
+
+  /// The first text key in the table's first column (or row) that `pattern` matches.
+  func wildcardTableLookup(
+    pattern: String,
+    horizontal: Bool,
+    bounds n: (minRow: Int, minCol: Int, maxRow: Int, maxCol: Int),
+    start: FormulaRef,
+    resultOffset: Int
+  ) -> CellValue {
+    let first = horizontal ? n.minCol : n.minRow
+    let last = horizontal ? n.maxCol : n.maxRow
+    for position in first...last {
+      let key = lookup(
+        FormulaRef(
+          sheet: start.sheet, row: horizontal ? n.minRow : position,
+          col: horizontal ? position : n.minCol, absRow: false, absCol: false))
+      guard case .string(let text) = key, excelWildcardMatch(text, pattern: pattern) else {
+        continue
+      }
+      return lookup(
+        FormulaRef(
+          sheet: start.sheet, row: horizontal ? resultOffset : position,
+          col: horizontal ? position : resultOffset, absRow: false, absCol: false))
+    }
+    return .error(.na)
   }
 
   public func buildExactLookupMap(
@@ -1132,7 +1372,11 @@ public nonisolated struct FormulaEvaluator {
     return map
   }
 
+  /// Exact lookup equality. An empty cell matches nothing, as in other apps: MATCH(0,…,0) and
+  /// XLOOKUP(0,…) found the first blank as if it were 0 (found by script, Nov 18).
   private func valuesEqual(_ lhs: CellValue, _ rhs: CellValue) -> Bool {
+    if case .blank = rhs { return false }
+    if case .blank = lhs { return false }
     if let a = lhs.asNumber, let b = rhs.asNumber {
       return a == b
     }
@@ -1143,6 +1387,9 @@ public nonisolated struct FormulaEvaluator {
     let resolved: FormulaExpr
     if case .namedRange(let name) = expr, let rangeExpr = namedRangeLookup(name) {
       resolved = rangeExpr
+    } else if case .call(let name, let args) = expr, Self.isReferenceFunction(name) {
+      guard let target = referenceFunctionTarget(name, args) else { return nil }
+      resolved = target
     } else {
       resolved = expr
     }
@@ -1164,7 +1411,15 @@ public nonisolated struct FormulaEvaluator {
         }
       }
       return values
+    case .array:
+      // MATCH("c", {"a","b","c"}, 0) looks through a typed list.
+      return arrayEvaluate(resolved, cache: nil)
     default:
+      // And through what a spilling formula gives, as in MATCH(x, UNIQUE(...), 0), or worked
+      // out from a range, as in MATCH(2, 1/(B1:B8>40)), which finds the last row that holds.
+      if Self.spills(resolved) || Self.givesArray(resolved) {
+        return evaluateArray(resolved).values
+      }
       return [evaluate(resolved)]
     }
   }
@@ -1193,7 +1448,8 @@ public nonisolated struct FormulaEvaluator {
       guard let cn = c.asNumber else { return .error(.value) }
       count = cn
     }
-    let n = max(0, Int(count.rounded(.down)))
+    guard count >= 0 else { return .error(.value) }
+    let n = Int(count.rounded(.down))
     let chars = Array(value.asString)
     if fromStart {
       return .string(String(chars.prefix(n)))
@@ -1202,18 +1458,71 @@ public nonisolated struct FormulaEvaluator {
   }
 
   private func extreme(_ args: [FormulaExpr], pickMin: Bool) -> CellValue {
-    var current: Double?
-    for value in flatten(args) {
-      if case .error = value { return value }
-      guard let n = numericForStats(value) else { continue }
-      if let c = current {
-        current = pickMin ? min(c, n) : max(c, n)
+    let read = statNumbers(args, textIsError: true)
+    if let error = read.error { return error }
+    // No numbers at all gives 0, as in other apps.
+    return .number((pickMin ? read.numbers.min() : read.numbers.max()) ?? 0)
+  }
+
+  /// The numbers SUM, AVERAGE, COUNT, MIN and MAX read, as other spreadsheet apps read them
+  /// (checked against Excel 16.115, Nov 18). From a cell, a range or a list, only numbers
+  /// count: TRUE, FALSE and text there are skipped, so a TRUE in A1:A8 is not 1. Typed
+  /// straight into the call, or worked out there (`SUM(--A4)`), TRUE is 1, FALSE 0 and text
+  /// that reads as a number counts; other text is #VALUE! (COUNT skips it).
+  func statNumbers(_ args: [FormulaExpr], textIsError: Bool, countOnly: Bool = false)
+    -> (numbers: [Double], error: CellValue?)
+  {
+    var numbers: [Double] = []
+    for arg in args {
+      let resolved: FormulaExpr
+      if case .namedRange(let name) = arg, let rangeExpr = namedRangeLookup(name) {
+        resolved = rangeExpr
       } else {
-        current = n
+        resolved = arg
+      }
+      if case .missing = resolved { continue }
+      let values = arrayEvaluate(resolved, cache: nil)
+      if values.count == 1, Self.readsAsTypedValue(resolved) {
+        switch values[0] {
+        case .number(let n): numbers.append(n)
+        case .bool(let b): numbers.append(b ? 1 : 0)
+        case .string(let text):
+          if let n = CellValue.numberReadingGroupCommas(
+            text.trimmingCharacters(in: .whitespaces))
+          {
+            numbers.append(n)
+          } else if textIsError {
+            return (numbers, .error(.value))
+          }
+        case .error:
+          if !countOnly { return (numbers, values[0]) }
+        case .blank:
+          continue
+        }
+        continue
+      }
+      for value in values {
+        switch value {
+        case .number(let n): numbers.append(n)
+        case .error: if !countOnly { return (numbers, value) }
+        default: continue
+        }
       }
     }
-    guard let current else { return .error(.value) }
-    return .number(current)
+    return (numbers, nil)
+  }
+
+  /// An argument whose value counts as typed into the call: not a cell, range, name, list or
+  /// spill reference.
+  static func readsAsTypedValue(_ expr: FormulaExpr) -> Bool {
+    switch expr {
+    case .cellRef, .range, .namedRange, .array: return false
+    case .call(let name, _):
+      let plain = plainFunctionName(name)
+      return !arrayFunctionNames.contains(plain) && plain != "INDEX" && plain != "OFFSET"
+        && plain != "INDIRECT"
+    default: return true
+    }
   }
 
   private func aggregate(
@@ -1295,7 +1604,7 @@ public enum FormulaDependencies {
     intoRanges: inout [CellRange]
   ) {
     switch expr {
-    case .number, .string, .boolean, .error:
+    case .number, .string, .boolean, .error, .missing, .array:
       break
     case .namedRange(let name):
       if let resolved = namedRangeLookup(name) {
@@ -1372,6 +1681,15 @@ public enum FormulaDependencies {
       // update recalculates it from the workbook graph, where it reads C1; recalculated here, it
       // read C1's old results and the background update kept that.
       guard !FormulaEvaluator.isSpillReference(name) else { break }
+      // INDIRECT's and OFFSET's targets are known only when they run: they watch the whole sheet, as other
+      // apps recalculate it on every change. The workbook graph watches the other sheets.
+      if FormulaEvaluator.isVolatileReference(name), collectWatchedRanges {
+        intoRanges.append(
+          CellRange(
+            start: CellAddress(row: 0, col: 0),
+            end: CellAddress(
+              row: InputBounds.maxStructureCount - 1, col: 16_383)))
+      }
       for arg in args {
         collectForIngest(
           arg,
@@ -1416,7 +1734,7 @@ public enum FormulaDependencies {
     into ranges: inout [CellRange]
   ) {
     switch expr {
-    case .number, .string, .boolean, .error:
+    case .number, .string, .boolean, .error, .missing, .array:
       break
     case .namedRange(let name):
       if let resolved = namedRangeLookup(name) {
@@ -1519,7 +1837,7 @@ public enum FormulaDependencies {
     into deps: inout Set<CellAddress>
   ) {
     switch expr {
-    case .number, .string, .boolean, .error:
+    case .number, .string, .boolean, .error, .missing, .array:
       break
     case .namedRange(let name):
       if let resolved = namedRangeLookup(name) {

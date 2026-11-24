@@ -301,10 +301,24 @@ public final class WorkbookSession {
     var sheet = workbook.sheets[index]
     var cell = sheet.cell(at: address)
     cell.raw = raw
+    cell.opensAsOneValue = nil
+    cell.isText = nil
     cell.importedFormulaResult = nil
     cell.importedFormulaValueType = nil
+    // '007 keeps 007 as text, as in other apps; the apostrophe is not part of it.
+    if raw.hasPrefix("'") {
+      cell.raw = String(raw.dropFirst())
+      cell.markTextIfNeeded()
+      sheet.setCell(cell, at: address)
+      workbook.sheets[index] = sheet
+      return Applied(
+        ok: true, message: "",
+        change: WorkbookChange(structural: false, addresses: [address], sheetName: sheet.name))
+    }
     applyPercentLiteralIfNeeded(to: &cell)
     applyDateLiteralIfNeeded(to: &cell)
+    applyTypedNumberOrTimeIfNeeded(to: &cell)
+    applyFormulaFormatIfNeeded(to: &cell, on: sheet, in: workbook)
     sheet.setCell(cell, at: address)
     workbook.sheets[index] = sheet
     return Applied(
@@ -360,6 +374,7 @@ public final class WorkbookSession {
           : FormulaRewriter.adjust(field, rowDelta: rowDelta, colDelta: colDelta)
         var cell = sheet.cell(at: address)
         cell.raw = raw
+        cell.opensAsOneValue = nil
         cell.importedFormulaResult = nil
         cell.importedFormulaValueType = nil
         applyPercentLiteralIfNeeded(to: &cell)
@@ -456,6 +471,7 @@ public final class WorkbookSession {
         }
         var cell = sheet.cell(at: destAddress)
         cell.raw = value
+        cell.opensAsOneValue = nil
         cell.importedFormulaResult = nil
         cell.importedFormulaValueType = nil
         if sourceCell.format == nil {
@@ -883,6 +899,43 @@ public final class WorkbookSession {
     format.numberFormat = .date
     cell.raw = String(Int(serial))
     cell.format = format
+  }
+
+  /// `1,234`, `$1,234.50`, `(5)`, `10:30` and `9:05 am` typed into a General cell are stored
+  /// as numbers with the format other apps give them, so they add up and sort as numbers. A
+  /// typed time was text, so SUM of hours was 0 (found by script, Nov 18).
+  private func applyTypedNumberOrTimeIfNeeded(to cell: inout Cell) {
+    guard let reading = TypedEntry.read(cell.raw) else { return }
+    var format = cell.format ?? CellFormat()
+    guard format.numberFormat == .general, format.formatCode == nil else { return }
+    cell.raw = Self.storedNumber(reading.value)
+    if let code = reading.formatCode {
+      format.numberFormat = reading.isTime ? .time : code.hasPrefix("$") ? .currency : .number
+      format.formatCode = code
+      cell.format = format
+    }
+  }
+
+  /// A formula typed into a General cell takes the format other apps give it: =DATE(...) a
+  /// date, =PMT(...) money, =A1+1 A1's format (`FormulaAutoFormat`). A cell with a format of
+  /// its own keeps it.
+  private func applyFormulaFormatIfNeeded(
+    to cell: inout Cell, on sheet: Sheet, in workbook: Workbook
+  ) {
+    guard FormulaSyntax.isFormula(cell.raw) else { return }
+    var format = cell.format ?? CellFormat()
+    guard format.numberFormat == .general, format.formatCode == nil,
+      let choice = FormulaAutoFormat.choice(for: cell.raw, on: sheet, in: workbook)
+    else { return }
+    format.numberFormat = choice.kind
+    format.formatCode = choice.code
+    cell.format = format
+  }
+
+  static func storedNumber(_ value: Double) -> String {
+    value == value.rounded() && abs(value) < 1e15
+      ? String(Int(value))
+      : String(format: "%.15g", locale: Locale(identifier: "en_US_POSIX"), value)
   }
 
   private func intArgument(_ arguments: [String: String], _ key: String) -> Int? {

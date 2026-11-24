@@ -165,7 +165,13 @@ extension XLSXCodec {
     // as both cats and a placeholder val ref so the part remains valid.
     let exportValRef = chart.valueMode == .count ? catRef : valRef
 
-    var seriesBody = seriesXML(chart, catRef: catRef, valRef: exportValRef)
+    // Error bars read their plus-or-minus amounts from the same rows of their own column.
+    let errorRef =
+      chart.drawsErrorBars
+      ? chart.errorBarColumn.map { column in
+        "'\(safeSheet)'!\(CellAddress(row: dataStartRow, col: column).a1):\(CellAddress(row: n.maxRow, col: column).a1)"
+      } : nil
+    var seriesBody = seriesXML(chart, catRef: catRef, valRef: exportValRef, errorRef: errorRef)
     // More series read the same rows from their own columns and take their header as a name.
     if chart.valueMode == .values, chart.kind.allowsMoreSeries {
       for (offset, column) in chart.extraValueColumns.enumerated() {
@@ -248,7 +254,9 @@ extension XLSXCodec {
       """
   }
 
-  private static func seriesXML(_ chart: SheetChart, catRef: String, valRef: String) -> String {
+  private static func seriesXML(
+    _ chart: SheetChart, catRef: String, valRef: String, errorRef: String? = nil
+  ) -> String {
     let seriesName = chart.title.trimmingCharacters(in: .whitespacesAndNewlines)
     let name = seriesName.isEmpty ? chart.kind.title : seriesName
     let color = chart.seriesColor ?? SheetChart.defaultSeriesColor(for: chart.kind)
@@ -278,8 +286,21 @@ extension XLSXCodec {
         <c:tx><c:v>\(escapeXML(name))</c:v></c:tx>
         \(shape)
         \(points)
+        \(errorRef.map(errorBarsXML) ?? "")
         \(pointsXML(chart.kind, catRef: catRef, valRef: valRef))
       </c:ser>
+      """
+  }
+
+  /// Custom plus-and-minus error bars from a range, with end caps; they come before the
+  /// series' categories and values, as the chart schema orders them.
+  static func errorBarsXML(_ ref: String) -> String {
+    let source = "<c:numRef><c:f>\(escapeXML(ref))</c:f></c:numRef>"
+    return """
+      <c:errBars><c:errBarType val="both"/><c:errValType val="cust"/><c:noEndCap val="0"/>\
+      <c:plus>\(source)</c:plus><c:minus>\(source)</c:minus>\
+      <c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:ln></c:spPr>\
+      </c:errBars>
       """
   }
 

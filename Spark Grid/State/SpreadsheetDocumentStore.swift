@@ -46,6 +46,9 @@ final class SpreadsheetDocumentStore {
   private var queuedSaveReportsErrors = false
   /// Quit asked to terminate while a save was still writing.
   private var waitingToTerminate = false
+  /// Set while quitting waits on this window's save: called when it is written, with whether it
+  /// was. Quitting waits for every window, so the app replies once all have finished.
+  var onTerminationSaveFinished: ((Bool) -> Void)?
   /// Close asked to dismiss this window once the save in flight finishes.
   private weak var windowWaitingForSave: NSWindow?
   /// Quit delivers `applicationShouldTerminate` and `windowShouldClose` for the same close.
@@ -78,11 +81,28 @@ final class SpreadsheetDocumentStore {
 
   var displayTitle: String {
     if showsStartScreen && !startScreenReturnsToDocument { return "Spark Grid" }
-    let base = fileURL?.lastPathComponent ?? "Untitled"
+    let base = fileURL?.lastPathComponent ?? importedName ?? "Untitled"
     return isDirty ? "\(base) — Edited" : base
   }
 
   var hasOpenFile: Bool { fileURL != nil }
+
+  /// The name of a file opened from another format (a Numbers document): the workbook has no
+  /// file of its own until it is saved, so saving never writes over the original.
+  private(set) var importedName: String?
+
+  nonisolated static func isNumbersFile(_ url: URL) -> Bool {
+    url.pathExtension.lowercased() == "numbers"
+  }
+
+  nonisolated static func isODSFile(_ url: URL) -> Bool {
+    url.pathExtension.lowercased() == "ods"
+  }
+
+  /// A file from another format: it opens as a new workbook, so saving never writes over it.
+  nonisolated static func isImportedFile(_ url: URL) -> Bool {
+    isNumbersFile(url) || isODSFile(url)
+  }
 
   var hasMultipleSheets: Bool {
     document.workbook.sheets.count > 1
@@ -118,6 +138,7 @@ final class SpreadsheetDocumentStore {
     dismissStartScreen()
     document = new
     fileURL = nil
+    importedName = nil
     externalWorkbookToken &+= 1
     markClean()
     isAutosaving = false
@@ -162,12 +183,7 @@ final class SpreadsheetDocumentStore {
     DispatchQueue.global(qos: .userInitiated).async {
       defer { group.leave() }
       do {
-        let data = try Data(contentsOf: url)
-        if Self.opensAsWorkbook(data, url: url) {
-          box.document = SpreadsheetDocument(workbook: try XLSXCodec.importWorkbook(from: data))
-        } else {
-          box.document = try SpreadsheetDocument.load(from: url)
-        }
+        box.document = try Self.readDocument(at: url)
       } catch {
         box.error = error
       }
@@ -186,20 +202,39 @@ final class SpreadsheetDocumentStore {
     isLoadingRemainder = false
     dismissStartScreen()
     document = loaded
-    fileURL = url
+    let imported = Self.isImportedFile(url)
+    fileURL = imported ? nil : url
+    importedName = imported ? url.deletingPathExtension().lastPathComponent : nil
     externalWorkbookToken &+= 1
     markClean()
     isAutosaving = false
     noteRecent(url)
     onActiveSheetReady?(loaded.workbook)
-    let loadedURL = url
+    let loadedURL: URL? = imported ? nil : url
     DispatchQueue.main.async { [weak self] in
       guard let self, self.fileURL == loadedURL else { return }
       self.markClean()
     }
   }
 
-  private static func opensAsWorkbook(_ data: Data, url: URL) -> Bool {
+  /// The workbook in a file Spark Grid opens: a workbook, a CSV, a Numbers document or an
+  /// OpenDocument spreadsheet. Off
+  /// the main thread, as opening and Shortcuts read files.
+  nonisolated static func readDocument(at url: URL) throws -> SpreadsheetDocument {
+    if isNumbersFile(url) {
+      return SpreadsheetDocument(workbook: try NumbersImporter.importWorkbook(from: url))
+    }
+    if isODSFile(url) {
+      return SpreadsheetDocument(workbook: try ODSImporter.importWorkbook(from: url))
+    }
+    let data = try Data(contentsOf: url)
+    if opensAsWorkbook(data, url: url) {
+      return SpreadsheetDocument(workbook: try XLSXCodec.importWorkbook(from: data))
+    }
+    return try SpreadsheetDocument.load(from: url)
+  }
+
+  nonisolated private static func opensAsWorkbook(_ data: Data, url: URL) -> Bool {
     let ext = url.pathExtension.lowercased()
     if ext == "xlsx" || ext == "xlsm" { return true }
     return data.starts(with: [0x50, 0x4B, 0x03, 0x04])
@@ -286,7 +321,8 @@ final class SpreadsheetDocumentStore {
 
   @discardableResult
   func saveInteractively() -> Bool {
-    SpreadsheetEditorFlush.commitForSave()
+    SpreadsheetEditorFlush.commitForSave(
+      in: WorkbookWindows.shared.window(of: self), viewModel: activeViewModel)
     if fileURL == nil && document.workbook.isEffectivelyEmpty {
       return true
     }
@@ -359,7 +395,8 @@ final class SpreadsheetDocumentStore {
   /// Same dialog quit uses. Nil when there is nothing unsaved.
   /// An in-progress cell edit is committed first so it counts as a change.
   private func askToSaveUnsavedChanges() -> UnsavedChangesChoice? {
-    SpreadsheetEditorFlush.commitForSave()
+    SpreadsheetEditorFlush.commitForSave(
+      in: WorkbookWindows.shared.window(of: self), viewModel: activeViewModel)
     if let viewModel = activeViewModel {
       viewModel.syncAutoFilterToActiveSheet()
       document.workbook = viewModel.workbook
@@ -417,6 +454,90 @@ final class SpreadsheetDocumentStore {
     guard !saveInFlight, queuedSave == nil else { return }
     guard let snapshot = makeSaveSnapshot(to: nil) else { return }
     enqueueBackgroundWrite(snapshot, reportErrors: false)
+  }
+
+  // MARK: Share
+
+  /// What File ▸ Share sends: the workbook as it is now, unsaved edits included, under the
+  /// document's name. A CSV document is shared as CSV; anything else, a Numbers document
+  /// included, as .xlsx.
+  struct ShareCopy: Sendable {
+    var workbook: Workbook
+    var formulaStamp: FormulaSaveStamp
+    var filename: String
+    var csv: Bool
+    /// The saved file, when it already holds everything: copied rather than written again,
+    /// which for a large workbook is the difference between a moment and many seconds.
+    var savedFile: URL?
+  }
+
+  /// Nothing to share: a new window with nothing typed in it.
+  var canShare: Bool {
+    !showsStartScreen
+      && (fileURL != nil || importedName != nil || !document.workbook.isEffectivelyEmpty)
+  }
+
+  /// A CSV document is shared as CSV.
+  var sharesAsCSV: Bool { fileURL != nil && !isXLSXFile }
+
+  /// The name the shared file gets, shown in the share preview.
+  var shareFilename: String {
+    let csv = sharesAsCSV
+    let base =
+      fileURL?.deletingPathExtension().lastPathComponent ?? importedName
+      ?? document.workbook.activeSheet.name
+    return base + (csv ? ".csv" : ".xlsx")
+  }
+
+  func shareCopy() -> ShareCopy {
+    SpreadsheetEditorFlush.commitForSave(
+      in: WorkbookWindows.shared.window(of: self), viewModel: activeViewModel)
+    if let viewModel = activeViewModel {
+      viewModel.syncAutoFilterToActiveSheet()
+      document.workbook = viewModel.workbook
+    }
+    documentDidChange()
+    let unchanged = !isDirty && !saveInFlight && queuedSave == nil
+    return ShareCopy(
+      workbook: document.workbook,
+      formulaStamp: activeViewModel?.formulaEngine.formulaSaveStamp() ?? .empty,
+      filename: shareFilename,
+      csv: sharesAsCSV,
+      savedFile: unchanged ? fileURL : nil)
+  }
+
+  /// Writes the copy in a folder of its own in the app's temporary folder. Copies from earlier
+  /// shares are removed after a day, once whatever they were sent with has long finished.
+  nonisolated static func writeShareCopy(_ copy: ShareCopy) throws -> URL {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent("Shared", isDirectory: true)
+    if let old = try? fileManager.contentsOfDirectory(
+      at: root, includingPropertiesForKeys: [.creationDateKey])
+    {
+      for folder in old {
+        let created = (try? folder.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        if let created, created < Date().addingTimeInterval(-86_400) {
+          try? fileManager.removeItem(at: folder)
+        }
+      }
+    }
+    let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+    let url = folder.appendingPathComponent(copy.filename)
+    if let saved = copy.savedFile {
+      let accessing = saved.startAccessingSecurityScopedResource()
+      defer { if accessing { saved.stopAccessingSecurityScopedResource() } }
+      if (try? fileManager.copyItem(at: saved, to: url)) != nil { return url }
+    }
+    if copy.csv {
+      try CSVCodec.exportCSV(from: copy.workbook.activeSheet)
+        .write(to: url, atomically: true, encoding: .utf8)
+    } else {
+      let workbook = FormulaCacheWriter.prepare(copy.workbook, stamp: copy.formulaStamp)
+      try XLSXCodec.exportWorkbook(workbook, includeFormulaCaches: true)
+        .write(to: url, options: .atomic)
+    }
+    return url
   }
 
   /// Workbook copy taken on the main thread. Export and the file write run elsewhere.
@@ -526,6 +647,7 @@ final class SpreadsheetDocumentStore {
       }
     } else if stillThisDocument, !superseded {
       fileURL = destination
+      importedName = nil
       if changeCount == generation {
         markClean()
       }
@@ -545,7 +667,12 @@ final class SpreadsheetDocumentStore {
     if waitingToTerminate {
       waitingToTerminate = false
       windowWaitingForSave = nil
-      NSApp.reply(toApplicationShouldTerminate: savedCurrentDocument)
+      if let finished = onTerminationSaveFinished {
+        onTerminationSaveFinished = nil
+        finished(savedCurrentDocument)
+      } else {
+        NSApp.reply(toApplicationShouldTerminate: savedCurrentDocument)
+      }
       return
     }
     if let window = windowWaitingForSave {
@@ -664,6 +791,7 @@ final class SpreadsheetDocumentStore {
       let url = URL(fileURLWithPath: path)
       if FileManager.default.fileExists(atPath: url.path) {
         fileURL = url
+        importedName = nil
       }
     }
     externalWorkbookToken &+= 1
@@ -678,6 +806,7 @@ final class SpreadsheetDocumentStore {
     if let fileURL {
       return fileURL.lastPathComponent
     }
+    if let importedName { return "\(importedName).xlsx" }
     let sheetName = document.workbook.activeSheet.name
     return "\(sheetName).xlsx"
   }

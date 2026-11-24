@@ -10,9 +10,11 @@ import SwiftUI
 @main
 struct Spark_GridApp: App {
   @NSApplicationDelegateAdaptor(SparkGridAppDelegate.self) private var appDelegate
-  @State private var store = SpreadsheetDocumentStore()
 
   init() {
+    // Windows are not restored at launch: a restored window could not reopen its file, which the
+    // sandbox lets Spark Grid open only when it is chosen again, so it would come back empty.
+    UserDefaults.standard.register(defaults: ["NSQuitAlwaysKeepsWindows": false])
     if ProcessInfo.processInfo.environment["SPARK_GRID_BENCHMARK"] == "1" {
       PerformanceBenchmark.run()
     }
@@ -24,17 +26,13 @@ struct Spark_GridApp: App {
   }
 
   var body: some Scene {
-    // Single window avoids a blank "Untitled" WindowGroup instance racing file-open.
-    Window("Spark Grid", id: "main") {
-      SpreadsheetRootView(store: store)
+    // One window per workbook, each named by its own id. Files go to windows through
+    // `WorkbookWindows`, so opening one never closes another.
+    WindowGroup(id: "workbook", for: UUID.self) { $windowID in
+      WorkbookWindowRoot(windowID: windowID)
         .environment(\.sparkGridAppDelegate, appDelegate)
-        .task {
-          bindOpenHandling()
-          store.restartAutosave()
-        }
-        .onOpenURL { url in
-          openFile(url)
-        }
+    } defaultValue: {
+      UUID()
     }
     .defaultSize(width: 1280, height: 800)
     .commands {
@@ -43,36 +41,45 @@ struct Spark_GridApp: App {
       SpreadsheetStructureCommands()
       SpreadsheetDataCommands()
       SpreadsheetViewCommands()
-      SpreadsheetFileCommands(store: store)
+      SpreadsheetFileCommands()
+      SpreadsheetHelpCommands()
     }
+
+    Window("Spark Grid Help", id: "help") {
+      HelpView()
+    }
+    .defaultSize(width: 820, height: 560)
 
     Settings {
       SettingsView()
     }
   }
+}
 
-  @MainActor
-  private func bindOpenHandling() {
-    appDelegate.documentStore = store
-    appDelegate.offerCrashRecoveryIfNeeded()
-    appDelegate.onOpenFile = { url in
-      Task { @MainActor in
-        openFile(url)
+/// One workbook window: its document, from `WorkbookWindows`, and the hooks that tie the window
+/// to it.
+private struct WorkbookWindowRoot: View {
+  let windowID: UUID
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.sparkGridAppDelegate) private var appDelegate
+
+  var body: some View {
+    let store = WorkbookWindows.shared.store(for: windowID)
+    SpreadsheetRootView(store: store)
+      .background(WorkbookWindowBinder(id: windowID))
+      .focusedSceneValue(\.documentStore, store)
+      .task {
+        WorkbookWindows.shared.openWindow = openWindow
+        appDelegate?.workbookWindowIsReady()
+        store.restartAutosave()
       }
-    }
-  }
-
-  @MainActor
-  private func openFile(_ url: URL) {
-    do {
-      try store.load(from: url)
-    } catch {
-      let alert = NSAlert()
-      alert.messageText = "Couldn't Open File"
-      alert.informativeText = error.localizedDescription
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "OK")
-      alert.runModal()
-    }
+      .onDisappear {
+        WorkbookWindows.shared.closed(windowID)
+      }
+      .onOpenURL { url in
+        WorkbookWindows.shared.open(url, preferring: store)
+      }
+      // A file opened from Finder goes to an existing window rather than making one.
+      .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
   }
 }

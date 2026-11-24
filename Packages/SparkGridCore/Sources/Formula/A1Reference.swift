@@ -239,7 +239,8 @@ public nonisolated enum A1Reference {
     return trimmed
   }
 
-  private static func encodeSheetName(_ name: String) -> String {
+  /// A sheet name as a formula writes it: in quotes when it has spaces or other characters.
+  public static func encodeSheetName(_ name: String) -> String {
     let needsQuotes =
       name.contains(" ")
       || name.contains("'")

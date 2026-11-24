@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Spark Grid Terminology">
+  <suite name="Standard Suite" code="????" description="Opening workbooks. Quit works as for every app.">
+    <command name="open" code="aevtodoc" description="Open a workbook: a spreadsheet, CSV or Numbers document.">
+      <cocoa class="SGOpenCommand"/>
+      <direct-parameter description="The file or files to open.">
+        <type type="file"/>
+        <type type="file" list="yes"/>
+      </direct-parameter>
+    </command>
+  </suite>
+
+  <suite name="Spark Grid Suite" code="SGrd" description="Read and change cells in open workbooks, save them, and export them. Without &quot;in workbook&quot;, a command works on the front window.">
+    <enumeration name="cell reading" code="SGcr">
+      <enumerator name="shown" code="SGsh" description="As the cell shows it, with its format, such as $1,200.50."/>
+      <enumerator name="plain" code="SGpl" description="Without its format, such as 1200.5; a date as its serial number."/>
+    </enumeration>
+    <enumeration name="export format" code="SGef">
+      <enumerator name="PDF" code="SGpd" description="The pages printing makes."/>
+      <enumerator name="CSV" code="SGcv" description="One sheet's cells as they are shown."/>
+    </enumeration>
+
+    <command name="workbook names" code="SGrdWbNm" description="The names of the open workbooks, front first.">
+      <cocoa class="SGWorkbookNamesCommand"/>
+      <result description="Each workbook's name, as its window shows it.">
+        <type type="text" list="yes"/>
+      </result>
+    </command>
+
+    <command name="cell value" code="SGrdCelV" description="A cell's value, with formulas calculated.">
+      <cocoa class="SGCellValueCommand"/>
+      <direct-parameter type="text" description="The cell, such as B2, or Sales!B2 for another sheet."/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name, such as Budget.xlsx.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <parameter name="reading" code="SGrc" type="cell reading" optional="yes" description="shown (the default) or plain.">
+        <cocoa key="reading"/>
+      </parameter>
+      <result type="text" description="The value, as text."/>
+    </command>
+
+    <command name="put value" code="SGrdPutV" description="Put a value or formula in a cell, as typing it would. Undo takes it back.">
+      <cocoa class="SGPutValueCommand"/>
+      <direct-parameter type="text" description="What to put, such as 1200 or =SUM(B2:B9)."/>
+      <parameter name="into cell" code="SGcl" type="text" description="The cell, such as B2, or Sales!B2 for another sheet.">
+        <cocoa key="cell"/>
+      </parameter>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+    </command>
+
+    <command name="sheet names" code="SGrdShNm" description="The names of a workbook's sheets, in tab order.">
+      <cocoa class="SGSheetNamesCommand"/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <result description="Each sheet's name.">
+        <type type="text" list="yes"/>
+      </result>
+    </command>
+
+    <command name="range values" code="SGrdRngV" description="A range's values, row by row, with formulas calculated.">
+      <cocoa class="SGRangeValuesCommand"/>
+      <direct-parameter type="text" description="The range, such as A1:C9, or Sales!A1:C9 for another sheet."/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <parameter name="reading" code="SGrc" type="cell reading" optional="yes" description="shown (the default) or plain.">
+        <cocoa key="reading"/>
+      </parameter>
+      <result type="any" description="A list of rows, each a list of values as text."/>
+    </command>
+
+    <command name="range formulas" code="SGrdRngF" description="What is typed in each cell of a range, row by row: a formula such as =SUM(B2:B9), or the value.">
+      <cocoa class="SGRangeFormulasCommand"/>
+      <direct-parameter type="text" description="The range, such as A1:C9, or Sales!A1:C9 for another sheet."/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <result type="any" description="A list of rows, each a list of what is typed."/>
+    </command>
+
+    <command name="put values" code="SGrdPutR" description="Put rows of values or formulas into cells, starting at a cell, as typing them would. Undo takes them all back.">
+      <cocoa class="SGPutValuesCommand"/>
+      <direct-parameter description="A list of rows, each a list of values or formulas, such as {{&quot;Name&quot;, &quot;Total&quot;}, {&quot;Ann&quot;, &quot;=SUM(B2:B9)&quot;}}.">
+        <type type="any" list="yes"/>
+      </direct-parameter>
+      <parameter name="into cell" code="SGcl" type="text" description="The top-left cell, such as A1, or Sales!A1 for another sheet.">
+        <cocoa key="cell"/>
+      </parameter>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+    </command>
+
+    <command name="used range" code="SGrdUsed" description="The smallest range holding everything on a sheet, such as A1:F200; empty text for an empty sheet.">
+      <cocoa class="SGUsedRangeCommand"/>
+      <parameter name="sheet" code="SGsn" type="text" optional="yes" description="The sheet; the one showing when left out.">
+        <cocoa key="sheet"/>
+      </parameter>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <result type="text" description="The range."/>
+    </command>
+
+    <command name="add sheet" code="SGrdAddS" description="Add a sheet at the end and show it.">
+      <cocoa class="SGAddSheetCommand"/>
+      <direct-parameter type="text" optional="yes" description="The new sheet's name; Sheet2 and so on when left out."/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+      <result type="text" description="The new sheet's name."/>
+    </command>
+
+    <command name="save workbook" code="SGrdSave" description="Save a workbook that has a file of its own.">
+      <cocoa class="SGSaveWorkbookCommand"/>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+    </command>
+
+    <command name="export workbook" code="SGrdExpt" description="Save a PDF or CSV of a workbook to a file.">
+      <cocoa class="SGExportWorkbookCommand"/>
+      <parameter name="to" code="SGto" type="file" description="The file to write.">
+        <cocoa key="destination"/>
+      </parameter>
+      <parameter name="format" code="SGfm" type="export format" description="PDF or CSV.">
+        <cocoa key="format"/>
+      </parameter>
+      <parameter name="sheet" code="SGsn" type="text" optional="yes" description="The sheet to export; the one showing when left out.">
+        <cocoa key="sheet"/>
+      </parameter>
+      <parameter name="every sheet" code="SGev" type="boolean" optional="yes" description="For a PDF: every sheet, one after another.">
+        <cocoa key="everySheet"/>
+      </parameter>
+      <parameter name="in workbook" code="SGwb" type="text" optional="yes" description="The workbook's name.">
+        <cocoa key="workbook"/>
+      </parameter>
+    </command>
+  </suite>
+</dictionary>

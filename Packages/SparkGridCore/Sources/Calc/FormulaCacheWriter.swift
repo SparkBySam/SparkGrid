@@ -31,11 +31,21 @@ public nonisolated struct FormulaSaveStamp: Sendable {
 public nonisolated enum FormulaCacheWriter {
   public static func prepare(_ workbook: Workbook, stamp: FormulaSaveStamp = .empty) -> Workbook {
     if stamp.recalculateAllFormulas {
-      // A sort or other structural edit made every stored result stale. Recalculating the whole
-      // workbook here took 17 s in Release and over 20 min in Debug on a 114k-formula file, and
-      // Quit waited on it. The stale results are dropped instead: Excel recalculates a file
-      // with no results when it opens it, and so does Spark Grid.
-      return withoutFormulaResults(workbook)
+      // A sort, a moved block, or an Undo that put a whole earlier workbook back made every
+      // stored result stale. Up to `recalculateOnSaveLimit` formulas (about 3 s in Release) the
+      // whole workbook is calculated, so the file keeps its results for Quick Look and apps that
+      // only read them (found in the 1.6 bug test: an Undo after a paste saved none). Above it,
+      // the 114k-formula stress workbook took 8.7 s and Quit waits on a save, so the stale
+      // results are dropped instead: Excel recalculates a file with no results when it opens
+      // it, and so does Spark Grid.
+      var book = withoutFormulaResults(workbook)
+      guard formulaCount(book) <= recalculateOnSaveLimit else {
+        keepSavedResultsOfUnknownFunctions(from: workbook, in: &book)
+        return book
+      }
+      write(CrossSheetBackground.calculateAllFormulas(in: book).valuesBySheet, into: &book)
+      keepSavedResultsOfUnknownFunctions(from: workbook, in: &book)
+      return book
     }
     if stamp.freshValues.isEmpty, stamp.pendingCrossSheet == nil,
       !hasMissingFormulaCache(workbook)
@@ -78,6 +88,38 @@ public nonisolated enum FormulaCacheWriter {
     var book = workbook
     clearFormulaCaches(&book)
     return book
+  }
+
+  /// A formula that calls a function Spark Grid does not have keeps the result its file saved,
+  /// on every save: Spark Grid cannot calculate a better one, and the app that wrote it will.
+  static func keepSavedResultsOfUnknownFunctions(from original: Workbook, in book: inout Workbook) {
+    for index in book.sheets.indices where index < original.sheets.count {
+      var sheet = book.sheets[index]
+      var changed = false
+      for (address, cell) in original.sheets[index].cells
+      where FormulaSyntax.isFormula(cell.raw) && cell.importedFormulaResult != nil {
+        guard
+          let saved = UnknownFunctions.savedResult(
+            for: cell, evaluated: .error(.name), expr: nil)
+        else { continue }
+        var next = sheet.cell(at: address)
+        guard next.raw == cell.raw, next.cachedFormulaValue != saved else { continue }
+        next.importedFormulaResult = cell.importedFormulaResult
+        next.importedFormulaValueType = cell.importedFormulaValueType
+        sheet.setCell(next, at: address)
+        changed = true
+      }
+      if changed { book.sheets[index] = sheet }
+    }
+  }
+
+  /// Most formulas a save calculates afresh after every result went stale.
+  public static let recalculateOnSaveLimit = 40_000
+
+  static func formulaCount(_ workbook: Workbook) -> Int {
+    workbook.sheets.reduce(0) { total, sheet in
+      total + sheet.cells.values.reduce(0) { $0 + (FormulaSyntax.isFormula($1.raw) ? 1 : 0) }
+    }
   }
 
   private static func hasMissingFormulaCache(_ workbook: Workbook) -> Bool {

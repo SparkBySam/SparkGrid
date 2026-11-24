@@ -20,6 +20,15 @@ public nonisolated enum CrossSheetBackground {
     /// Nil updates every affected formula. A name updates that sheet and the
     /// precedents required to do it.
     public var onlySheetName: String?
+    /// Edits on other sheets from updates this one replaced before they finished. Each is
+    /// already in `workbook`; what reads it is updated too.
+    public var earlierEdits: [EarlierEdit] = []
+  }
+
+  public struct EarlierEdit: Sendable {
+    public var sheetName: String
+    public var addresses: [CellAddress]
+    public var calculated: [CellAddress: CellValue]
   }
 
   public struct Outcome: Sendable {
@@ -119,6 +128,17 @@ public nonisolated enum CrossSheetBackground {
     }
     for address in request.calculatedEdits.keys {
       enqueue(FormulaCoord(sheetID: editedSheetID, row: address.row, col: address.col))
+    }
+    for earlier in request.earlierEdits {
+      guard let sheetID = graph.sheetID(for: earlier.sheetName) else { continue }
+      for (address, value) in earlier.calculated {
+        let coord = FormulaCoord(sheetID: sheetID, row: address.row, col: address.col)
+        if overrides[coord] == nil { overrides[coord] = value }
+        enqueue(coord)
+      }
+      for address in earlier.addresses {
+        enqueue(FormulaCoord(sheetID: sheetID, row: address.row, col: address.col))
+      }
     }
 
     var head = 0
@@ -359,7 +379,7 @@ private nonisolated final class EvaluationContext {
       memo[coord] = value
       return value
     } else {
-      let unresolved = cell.cachedFormulaValue ?? CellValue.fromLiteralRaw(cell.raw)
+      let unresolved = cell.cachedFormulaValue ?? cell.literalValue
       memo[coord] = unresolved
       return unresolved
     }
@@ -385,10 +405,18 @@ private nonisolated final class EvaluationContext {
       self.workbook.sheets.first { $0.name.caseInsensitiveCompare(sheet) == .orderedSame }?
         .fileExtras.spills[address]
     }
+    evaluator.holdsFormula = { [self] sheet, address in
+      let owner = self.workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheet) == .orderedSame
+      })
+      return owner.map { FormulaSyntax.isFormula($0.cell(at: address).raw) } ?? false
+    }
     evaluator.sheetExtent = { [self] sheetName in
       self.extent(for: sheetName)
     }
-    let value = evaluator.evaluate(expr)
+    let evaluated = FormulaEvaluator.cellResult(evaluator.evaluate(expr))
+    let value =
+      UnknownFunctions.savedResult(for: cell, evaluated: evaluated, expr: expr) ?? evaluated
     memo[coord] = value
     return value
   }

@@ -251,10 +251,10 @@ extension FormulaEvaluator {
       while index + 1 < args.count {
         let candidate = evaluate(args[index])
         if case .error = candidate { return candidate }
-        if Self.sameValue(subject, candidate) { return evaluate(args[index + 1]) }
+        if Self.sameValue(subject, candidate) { return evaluateChosen(args[index + 1]) }
         index += 2
       }
-      return index < args.count ? evaluate(args[index]) : .error(.na)
+      return index < args.count ? evaluateChosen(args[index]) : .error(.na)
     case "CHOOSE":
       guard args.count >= 2 else { return .error(.value) }
       let pick = evaluate(args[0])
@@ -262,7 +262,7 @@ extension FormulaEvaluator {
       guard let n = pick.asNumber else { return .error(.value) }
       let index = Int(n.rounded(.down))
       guard index >= 1, index < args.count else { return .error(.value) }
-      return evaluate(args[index])
+      return evaluateChosen(args[index])
     case "XOR":
       guard !args.isEmpty else { return .error(.value) }
       var trueCount = 0
@@ -344,7 +344,7 @@ extension FormulaEvaluator {
 
   // MARK: - Argument helpers
 
-  private func oneNumber(_ args: [FormulaExpr], _ body: (Double) -> CellValue) -> CellValue {
+  func oneNumber(_ args: [FormulaExpr], _ body: (Double) -> CellValue) -> CellValue {
     guard args.count == 1 else { return .error(.value) }
     let value = evaluate(args[0])
     if case .error = value { return value }
@@ -352,7 +352,7 @@ extension FormulaEvaluator {
     return body(number)
   }
 
-  private func twoNumbers(_ args: [FormulaExpr], _ body: (Double, Double) -> CellValue)
+  func twoNumbers(_ args: [FormulaExpr], _ body: (Double, Double) -> CellValue)
     -> CellValue
   {
     guard args.count == 2 else { return .error(.value) }
@@ -365,7 +365,7 @@ extension FormulaEvaluator {
   }
 
   /// Numbers in the arguments, skipping text and blanks in ranges. The first error stops it.
-  private func numbersIn(_ args: [FormulaExpr]) -> (values: [Double], error: CellValue?) {
+  func numbersIn(_ args: [FormulaExpr]) -> (values: [Double], error: CellValue?) {
     var values: [Double] = []
     for value in flatten(args) {
       switch value {
@@ -377,10 +377,10 @@ extension FormulaEvaluator {
     return (values, nil)
   }
 
-  private struct ErrorBox: Error { var value: CellValue }
+  struct ErrorBox: Error { var value: CellValue }
 
   /// (x, y) pairs from two ranges of the same size, keeping pairs where both are numbers.
-  private func numberPairs(_ xs: FormulaExpr, _ ys: FormulaExpr) -> Result<
+  func numberPairs(_ xs: FormulaExpr, _ ys: FormulaExpr) -> Result<
     [(x: Double, y: Double)], ErrorBox
   > {
     let xValues = flatten([xs])
@@ -641,7 +641,7 @@ extension FormulaEvaluator {
     return calendar
   }
 
-  private static func ymd(_ serial: Int) -> (year: Int, month: Int, day: Int)? {
+  static func ymd(_ serial: Int) -> (year: Int, month: Int, day: Int)? {
     guard let date = ExcelDate.date(from: Double(serial)) else { return nil }
     let parts = utcCalendar.dateComponents([.year, .month, .day], from: date)
     guard let y = parts.year, let m = parts.month, let d = parts.day else { return nil }

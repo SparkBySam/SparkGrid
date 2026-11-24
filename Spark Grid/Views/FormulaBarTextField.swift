@@ -346,8 +346,10 @@ struct FormulaBarTextField: NSViewRepresentable {
 
     private func maybeOfferCompletions() {
       guard let textView else { return }
+      textView.namedRangesForCompletion = parent.namedRanges
       let cursor = textView.selectedRange.location
       guard
+        !textView.lastEditWasDeletion,
         FormulaAutocomplete.shouldOfferPopup(
           in: textView.string,
           utf16Cursor: cursor,
@@ -475,6 +477,10 @@ final class FormulaBarContainerView: NSView {
 }
 
 final class FormulaBarNSTextView: NSTextView {
+  /// Backspace and Delete do not bring the completion list back; it put the name straight back
+  /// in as it was being deleted (a Reddit note, Nov 19).
+  var lastEditWasDeletion = false
+  var namedRangesForCompletion: [String] = []
   private var isReplacingString = false
   private var isApplyingSpellPolicy = false
   private var isClaimingFocus = false
@@ -615,8 +621,24 @@ final class FormulaBarNSTextView: NSTextView {
       _ = SparkGridSaveShortcut.perform()
       return
     }
+    lastEditWasDeletion = false
     super.insertText(insertString, replacementRange: replacementRange)
     applySpellPolicy()
+  }
+
+  override func deleteBackward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteBackward(sender)
+  }
+
+  override func deleteForward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteForward(sender)
+  }
+
+  override func deleteWordBackward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteWordBackward(sender)
   }
 
   override func insertCompletion(
@@ -632,14 +654,20 @@ final class FormulaBarNSTextView: NSTextView {
     } else {
       partial = ""
     }
-    let before = string
     super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
     let commitOnReturn =
       flag
       && movement == NSTextMovement.`return`.rawValue
-      && (before == string
-        || FormulaAutocomplete.isExactCompletion(partial: partial, completion: word))
-    guard commitOnReturn else { return }
+      // Only a name typed in full (`=SUM`) commits. macOS fills in the rest of the name before
+      // Return, so an unchanged text is not enough: Return on `=AVER` picks AVERAGE and adds
+      // its "(" (found in the 1.6 bug test).
+      && FormulaAutocomplete.isExactCompletion(partial: partial, completion: word)
+    guard commitOnReturn else {
+      FormulaCompletionParen.addIfChosen(
+        word, range: charRange, movement: movement, isFinal: flag, in: self,
+        namedRanges: namedRangesForCompletion)
+      return
+    }
     let editor = self
     DispatchQueue.main.async {
       guard editor.window?.firstResponder === editor else { return }
@@ -656,5 +684,31 @@ enum SparkGridSaveShortcut {
     guard let store = delegate?.documentStore else { return false }
     _ = store.saveInteractively()
     return true
+  }
+}
+
+/// The completion list's choice of a function gets its `(`, as Tab already gave it. Return, Tab
+/// and a click choose; typing past the list does not (the typed character follows instead).
+@MainActor
+enum FormulaCompletionParen {
+  static func addIfChosen(
+    _ word: String, range: NSRange, movement: Int, isFinal: Bool, in textView: NSTextView,
+    namedRanges: [String]
+  ) {
+    guard isFinal, range.location != NSNotFound else { return }
+    let clicked =
+      movement == NSTextMovement.other.rawValue
+      && [.leftMouseDown, .leftMouseUp].contains(NSApp.currentEvent?.type)
+    guard
+      movement == NSTextMovement.`return`.rawValue || movement == NSTextMovement.tab.rawValue
+        || clicked
+    else { return }
+    guard
+      FormulaAutocomplete.needsOpenParen(
+        after: word, insertedAt: range.location, in: textView.string, namedRanges: namedRanges)
+    else { return }
+    let end = range.location + (word as NSString).length
+    textView.setSelectedRange(NSRange(location: end, length: 0))
+    textView.insertText("(", replacementRange: NSRange(location: end, length: 0))
   }
 }

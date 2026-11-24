@@ -70,7 +70,12 @@ struct FormattingToolbar: View {
           }
         }
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
+      // `minWidth: 0` makes this the width the window gives, not the shown variant's: a wide
+      // variant chosen in a full-screen window kept its width when the window was made half as
+      // wide, so it still "fit", and pushed the grid off to the right (Sam, Nov 18; in 1.4).
+      // Clipped for the moment before the narrower variant takes over.
+      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+      .clipped()
       .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { availableWidth = $0 }
       .background(alignment: .topLeading) {
         if variantWidths.count < variants.count {
@@ -213,7 +218,25 @@ struct FormattingToolbar: View {
   private var fontGroup: some View {
     HStack(spacing: 8) {
       Picker("Font", selection: fontFamilyBinding) {
+        // Read so that fonts added from the Format menu show here at once.
+        let _ = viewModel.fontListRevision
         ForEach(CellFormatRenderer.fontFamilies, id: \.self) { family in
+          Text(family).tag(family)
+        }
+        // A file's font that this Mac does not have still shows as chosen.
+        let current = fontFamilyBinding.wrappedValue
+        if !CellFormatRenderer.fontFamilies.contains(current),
+          !CellFormatRenderer.installedFontFamilies.contains(current)
+        {
+          Divider()
+          Text(current).tag(current)
+        }
+        Divider()
+        ForEach(
+          CellFormatRenderer.installedFontFamilies.filter {
+            !CellFormatRenderer.fontFamilies.contains($0)
+          }, id: \.self
+        ) { family in
           Text(family).tag(family)
         }
       }

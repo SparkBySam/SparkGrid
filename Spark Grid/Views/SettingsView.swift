@@ -10,12 +10,13 @@ struct SettingsView: View {
   /// The tabs are drawn here rather than by a system tab view: its toolbar marks the selected
   /// tab in the macOS accent, so with Spark amber chosen it stayed blue.
   enum SettingsTab: CaseIterable {
-    case general, shortcuts, about
+    case general, shortcuts, assistants, about
 
     var title: String {
       switch self {
       case .general: "General"
       case .shortcuts: "Shortcuts"
+      case .assistants: "AI"
       case .about: "About"
       }
     }
@@ -24,6 +25,7 @@ struct SettingsView: View {
       switch self {
       case .general: "gearshape"
       case .shortcuts: "keyboard"
+      case .assistants: "sparkles"
       case .about: "info.circle"
       }
     }
@@ -36,6 +38,7 @@ struct SettingsView: View {
       switch tab {
       case .general: GeneralSettingsTab(settings: settings)
       case .shortcuts: ShortcutSettingsTab(settings: settings)
+      case .assistants: AssistantSettingsTab()
       case .about: aboutTab
       }
     }
@@ -126,6 +129,78 @@ struct SettingsView: View {
   }
 }
 
+// MARK: - AI assistants
+
+/// How to connect an AI assistant on this Mac (Claude, Cursor and others) through the MCP helper
+/// inside the app. The helper drives Spark Grid with AppleScript; nothing goes over the network.
+private struct AssistantSettingsTab: View {
+  @State private var copied: String?
+
+  private static var helperPath: String {
+    Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/spark-grid-mcp").path
+  }
+
+  private static var desktopConfig: String {
+    """
+    "spark-grid": { "command": "\(helperPath)" }
+    """
+  }
+
+  private static var claudeCodeLine: String {
+    "claude mcp add spark-grid \"\(helperPath)\""
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text(
+        "AI assistants on this Mac can read and change your open workbooks: list sheets, read "
+          + "values and formulas, write cells, add sheets, save and export. Everything stays on "
+          + "this Mac. One Undo takes back each change an assistant makes."
+      )
+      .font(.system(size: 12))
+      .foregroundStyle(SparkStyle.label)
+      .fixedSize(horizontal: false, vertical: true)
+
+      SparkDialogSection(title: "Connect")
+      SparkDialogGroup {
+        copyRow(
+          "Claude Desktop, Cursor and others", detail: "Server entry for mcpServers",
+          text: Self.desktopConfig)
+        SparkDialogDivider()
+        copyRow("Claude Code", detail: "Terminal command", text: Self.claudeCodeLine)
+        SparkDialogDivider()
+        copyRow("Helper path", detail: "For any other assistant", text: Self.helperPath)
+      }
+      Text(
+        "The first time an assistant uses Spark Grid, macOS asks whether it may. To change that "
+          + "later, open System Settings › Privacy & Security › Automation."
+      )
+      .font(.system(size: 11))
+      .foregroundStyle(SparkStyle.secondaryLabel)
+      .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 0)
+    }
+    .padding(20)
+    .frame(height: 320, alignment: .top)
+  }
+
+  private func copyRow(_ title: String, detail: String, text: String) -> some View {
+    SparkDialogRow(label: title) {
+      HStack(spacing: 8) {
+        Text(copied == text ? "Copied" : detail)
+          .font(.system(size: 11))
+          .foregroundStyle(SparkStyle.secondaryLabel)
+        Button("Copy") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(text, forType: .string)
+          copied = text
+        }
+        .controlSize(.small)
+      }
+    }
+  }
+}
+
 // MARK: - General
 
 private struct GeneralSettingsTab: View {
@@ -156,6 +231,27 @@ private struct GeneralSettingsTab: View {
         }
       }
 
+      SparkDialogSection(title: "Scrolling")
+      SparkDialogGroup {
+        SparkDialogRow(label: "Scroll bars") {
+          SparkSegmentedPicker(
+            selection: $settings.scrollBarVisibility,
+            options: ScrollBarVisibility.allCases.map { ($0, $0.title) }, equalWidths: true)
+        }
+        SparkDialogDivider()
+        SparkDialogRow(label: "Bar length") {
+          SparkSegmentedPicker(
+            selection: $settings.scrollBarLength,
+            options: ScrollBarLength.allCases.map { ($0, $0.title) }, equalWidths: true)
+        }
+        SparkDialogDivider()
+        // Spark Grid scrolls the way System Settings › Trackpad and Mouse say; this turns it
+        // around for the grid only.
+        SparkDialogRow(label: "Reverse scroll direction") {
+          toggle($settings.invertScrollDirection)
+        }
+      }
+
       SparkDialogSection(title: "Saving")
       SparkDialogGroup {
         SparkDialogRow(label: "Save changes automatically") {
@@ -183,7 +279,7 @@ private struct GeneralSettingsTab: View {
       Spacer(minLength: 0)
     }
     .padding(20)
-    .frame(height: 320, alignment: .top)
+    .frame(height: 502, alignment: .top)
   }
 
   private func toggle(_ binding: Binding<Bool>) -> some View {
