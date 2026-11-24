@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import SparkGridCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// AppKit spreadsheet grid with sticky row/column headers, selection, editing, and keyboard navigation.
 final class SpreadsheetGridNSView: NSView {
@@ -70,9 +71,12 @@ final class SpreadsheetGridNSView: NSView {
 
   private var scrollOrigin = CGPoint.zero {
     didSet {
-      if scrollOrigin != oldValue { flashScrollIndicators() }
+      if scrollOrigin != oldValue { scheduleIndicatorFlash() }
     }
   }
+  /// The scroll the bars were last placed for.
+  private var indicatorOrigin = CGPoint.zero
+  private var indicatorFlashPending = false
   /// Fading scroll bars drawn over the cells.
   private let scrollIndicators = GridScrollIndicatorView(frame: .zero)
   private let commentCard = CommentHoverCard(frame: .zero)
@@ -595,6 +599,8 @@ final class SpreadsheetGridNSView: NSView {
   private var scrollVelocity = CGPoint.zero
   private var scrollTiles: [ScrollTileRecord] = []
   private var scrollTilesPresented = false
+  /// How long a drawn tile takes to fade in over its placeholder.
+  private static let tileFadeInSeconds: CFTimeInterval = 0.15
   /// The open paint and a sheet switch fill the on-screen tiles before the user scrolls.
   private var needsViewportTileWarm = true
   private var isAdjustingScrollTiles = false
@@ -847,7 +853,16 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   override var isFlipped: Bool { true }
-  override var acceptsFirstResponder: Bool { true }
+  /// A click that will put a cell's address in a formula being typed leaves the keyboard with
+  /// the formula: taking it here would end the edit before `mouseDown` sees the click.
+  override var acceptsFirstResponder: Bool {
+    if let event = NSApp.currentEvent, event.type == .leftMouseDown, event.window === window,
+      formulaPointingTarget(at: convert(event.locationInWindow, from: nil)) != nil
+    {
+      return false
+    }
+    return true
+  }
 
   override func setNeedsDisplay(_ invalidRect: NSRect) {
     if isAdjustingScrollTiles {
@@ -998,6 +1013,13 @@ final class SpreadsheetGridNSView: NSView {
     selectionChromeOverlay.grid = self
     addSubview(selectionChromeOverlay, positioned: .below, relativeTo: editorClip)
     addSubview(scrollIndicators)
+    scrollIndicators.alwaysShown = AppSettings.shared.scrollBarsAlwaysShown
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(scrollBarSettingsChanged), name: AppSettings.scrollBarsChanged,
+      object: nil)
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(scrollBarSettingsChanged),
+      name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
     addSubview(commentCard)
     pinnedHeaderMergeOverlay.grid = self
     pinnedBodyMergeOverlay.grid = self
@@ -1017,8 +1039,31 @@ final class SpreadsheetGridNSView: NSView {
     // The view only redraws when asked. Without this, a wider window showed the old
     // drawing stretched to the new width until something else asked for a draw.
     if frame.size != oldSize {
-      needsDisplay = true
+      keepScrollTilesThroughResize()
     }
+  }
+
+  /// A new size keeps the pre-drawn tiles: they are laid out for the size, the newly shown
+  /// part gets placeholders drawn in the background, and only the headers and dividers are
+  /// painted here. Dropping them made every frame after a resize paint the cells on the main
+  /// thread until the next scroll.
+  private func keepScrollTilesThroughResize() {
+    guard window != nil, viewModel != nil, tileCapture == nil, rasterTarget == nil else {
+      needsDisplay = true
+      return
+    }
+    if !scrollTilesPresented {
+      // Idle: show tiles already drawn for this spot, when every one is cached.
+      _ = presentCachedViewportTiles()
+    }
+    guard scrollTilesPresented else {
+      needsDisplay = true
+      return
+    }
+    updatingScrollTiles {
+      self.syncScrollTiles()
+    }
+    super.setNeedsDisplay(bounds)
   }
 
   /// A bounds rectangle that is not the frame stretches this view on the way to
@@ -1055,6 +1100,8 @@ final class SpreadsheetGridNSView: NSView {
     }
     if scrollIndicators.frame != bounds {
       scrollIndicators.frame = bounds
+      // Bars that stay on screen are placed without waiting for a scroll.
+      if scrollIndicators.alwaysShown { flashScrollIndicators() }
     }
     if pinnedHeaderMergeOverlay.frame != bounds {
       pinnedHeaderMergeOverlay.frame = bounds
@@ -1846,6 +1893,39 @@ final class SpreadsheetGridNSView: NSView {
     )
   }
 
+  // MARK: Moving cells by their border
+
+  /// A drag that started on the selection's border: the cells, the cell grabbed, and the
+  /// top-left cell they would land on.
+  private struct CellMoveDrag {
+    var source: CellRange
+    var grab: CellAddress
+    var target: CellAddress
+  }
+
+  private var cellMoveDrag: CellMoveDrag?
+
+  /// The selection when `point` is on its border (not the fill handle), where a drag moves the
+  /// cells, as in other spreadsheet apps (asked for by Sam, Nov 19).
+  private func selectionBorderHit(at point: NSPoint) -> CellRange? {
+    guard let viewModel, !viewModel.isEditing, !isEditorActive,
+      !viewModel.hasMultipleSelectionRanges, viewModel.selectionAxis == .cells,
+      !isPointInFillHandle(point), contentRect.contains(point)
+    else { return nil }
+    let range = (viewModel.selectionRanges.last ?? viewModel.selectionRange)
+    let n = range.normalized
+    let rect = cellBorderRect(
+      minRow: n.minRow, minCol: n.minCol, maxRow: n.maxRow, maxCol: n.maxCol)
+    guard isCellRectInContentArea(rect) else { return nil }
+    let band: CGFloat = 4
+    guard rect.insetBy(dx: -band, dy: -band).contains(point),
+      !rect.insetBy(dx: band, dy: band).contains(point)
+    else { return nil }
+    return CellRange(
+      start: CellAddress(row: n.minRow, col: n.minCol),
+      end: CellAddress(row: n.maxRow, col: n.maxCol))
+  }
+
   private func isPointInFillHandle(_ point: NSPoint) -> Bool {
     guard let rect = fillHandleRect() else { return false }
     return rect.insetBy(dx: -2, dy: -2).contains(point)
@@ -2055,22 +2135,57 @@ final class SpreadsheetGridNSView: NSView {
     )
   }
 
+  /// Drawing a tile or a scroll picture moves the grid to it and back, with the drawing area
+  /// set to the tile's. The bars wait until that is over, and come up only for a real move:
+  /// placed mid-draw, they showed against a tile's edges, in the middle of the window.
+  private func scheduleIndicatorFlash() {
+    guard !indicatorFlashPending else { return }
+    indicatorFlashPending = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.indicatorFlashPending = false
+      if self.scrollOrigin != self.indicatorOrigin { self.flashScrollIndicators() }
+    }
+  }
+
+  /// Settings › General › Scroll bars, or the system's Show scroll bars, changed.
+  @objc private func scrollBarSettingsChanged() {
+    scrollIndicators.alwaysShown = AppSettings.shared.scrollBarsAlwaysShown
+    flashScrollIndicators()
+  }
+
   /// Shows the scroll bars at the current position. They fade on their own.
   private func flashScrollIndicators() {
-    guard window != nil, tileCapture == nil else { return }
-    let frozenWidth = widthOfColumns(from: 0, to: frozenColumnCount())
-    let frozenHeight = heightOfRows(from: 0, to: frozenRowCount())
+    guard window != nil, tileCapture == nil, contentRectOverride == nil, rasterTarget == nil
+    else { return }
+    indicatorOrigin = scrollOrigin
+    let frozenCols = frozenColumnCount()
+    let frozenRows = frozenRowCount()
+    let frozenWidth = widthOfColumns(from: 0, to: frozenCols)
+    let frozenHeight = heightOfRows(from: 0, to: frozenRows)
     let area = NSRect(
       x: contentRect.minX + frozenWidth, y: contentRect.minY + frozenHeight,
       width: max(0, contentRect.width - frozenWidth),
       height: max(0, contentRect.height - frozenHeight))
-    scrollIndicators.show(
-      area: area,
-      visible: area.size,
-      total: CGSize(
-        width: widthOfColumns(from: frozenColumnCount(), to: columnCount()),
-        height: heightOfRows(from: frozenRowCount(), to: rowCount())),
-      offset: scrollOrigin)
+    // As other spreadsheet apps size them: the rows and columns in use and a bit more, or
+    // as far as the sheet has been scrolled. The whole 1,000-row grid made the thumb tiny on a
+    // short sheet, and it hardly moved.
+    let sheet = sheetForLayout()
+    let usedRows = min(rowCount(), max(frozenRows, (sheet?.maxPopulatedRow ?? -1) + 1))
+    let usedColumns = min(
+      columnCount(), max(frozenCols, (sheet?.maxPopulatedColumn ?? -1) + 1))
+    // Half a screen past the last row or column in use, so the end shows the data's end.
+    let usedHeight = heightOfRows(from: frozenRows, to: usedRows) + area.height * 0.5
+    let usedWidth = widthOfColumns(from: frozenCols, to: usedColumns) + area.width * 0.5
+    let wholeWidth = widthOfColumns(from: frozenCols, to: columnCount())
+    let wholeHeight = heightOfRows(from: frozenRows, to: rowCount())
+    let total =
+      AppSettings.shared.scrollBarLength == .wholeGrid
+      ? CGSize(width: wholeWidth, height: wholeHeight)
+      : CGSize(
+        width: min(wholeWidth, max(usedWidth, scrollOrigin.x + area.width)),
+        height: min(wholeHeight, max(usedHeight, scrollOrigin.y + area.height)))
+    scrollIndicators.show(area: area, visible: area.size, total: total, offset: scrollOrigin)
   }
 
   private func clampScrollOrigin() {
@@ -2240,6 +2355,117 @@ final class SpreadsheetGridNSView: NSView {
     return .content
   }
 
+  // MARK: Pointing at cells in a formula
+
+  /// The reference a click put in the formula being typed, so a drag or the next click replaces
+  /// it instead of adding another.
+  private struct FormulaPointing {
+    weak var textView: NSTextView?
+    var range: NSRange
+    var anchor: CellAddress
+    var inserted = ""
+  }
+
+  private var formulaPointing: FormulaPointing?
+  private var formulaPointingDrag = false
+
+  /// While a formula is being typed, in the cell or the formula bar, a click on a cell puts its
+  /// address in the formula where the cursor is (after `=`, `(`, a comma or an operator), and a
+  /// drag a range, instead of finishing the formula. Asked for on Reddit (Nov 19): selecting
+  /// cells after `=AVERAGE(` replaced the formula.
+  /// The formula's text view when a click at `point` would point at a cell: a formula being
+  /// typed, the click on a cell, and the cursor where a reference can go or just after the one
+  /// the last click put in.
+  private func formulaPointingTarget(at point: NSPoint) -> NSTextView? {
+    guard let textView = window?.firstResponder as? NSTextView,
+      textView is CellFieldEditor || textView is FormulaBarNSTextView,
+      textView.string.hasPrefix("="),
+      case .content = headerHit(at: point), contentRect.contains(point),
+      !isPointInFillHandle(point)
+    else { return nil }
+    let caret = textView.selectedRange()
+    let ns = textView.string as NSString
+    if continuesPointing(in: textView, caret: caret, text: ns) { return textView }
+    return Self.acceptsReference(in: ns, at: caret.location) && caret.length == 0 ? textView : nil
+  }
+
+  private func continuesPointing(in textView: NSTextView, caret: NSRange, text ns: NSString)
+    -> Bool
+  {
+    guard let current = formulaPointing, current.textView === textView,
+      NSMaxRange(current.range) <= ns.length, caret.length == 0,
+      caret.location == NSMaxRange(current.range)
+    else { return false }
+    return ns.substring(with: current.range) == current.inserted
+  }
+
+  private func beginFormulaPointing(at point: NSPoint, extending: Bool) -> Bool {
+    guard let textView = formulaPointingTarget(at: point) else { return false }
+    let address = addressAtContent(point: point)
+    let caret = textView.selectedRange()
+    let ns = textView.string as NSString
+    // The reference this pointing put in last, while the cursor still sits at its end.
+    if var current = formulaPointing, continuesPointing(in: textView, caret: caret, text: ns) {
+      if extending {
+        replacePointedReference(&current, with: CellRange(start: current.anchor, end: address))
+      } else {
+        current.anchor = address
+        replacePointedReference(&current, with: CellRange(start: address, end: address))
+      }
+      formulaPointing = current
+      formulaPointingDrag = true
+      return true
+    }
+    var pointing = FormulaPointing(textView: textView, range: caret, anchor: address)
+    replacePointedReference(&pointing, with: CellRange(start: address, end: address))
+    formulaPointing = pointing
+    formulaPointingDrag = true
+    return true
+  }
+
+  private func continueFormulaPointing(at point: NSPoint) -> Bool {
+    guard formulaPointingDrag, var pointing = formulaPointing, pointing.textView != nil else {
+      return false
+    }
+    let address = addressAtContent(point: point)
+    replacePointedReference(&pointing, with: CellRange(start: pointing.anchor, end: address))
+    formulaPointing = pointing
+    return true
+  }
+
+  private func replacePointedReference(_ pointing: inout FormulaPointing, with range: CellRange) {
+    guard let textView = pointing.textView else { return }
+    let n = range.normalized
+    let start = CellAddress(row: n.minRow, col: n.minCol)
+    let end = CellAddress(row: n.maxRow, col: n.maxCol)
+    let text = start == end ? start.a1 : "\(start.a1):\(end.a1)"
+    let length = (textView.string as NSString).length
+    let target = NSRange(
+      location: min(pointing.range.location, length),
+      length: min(pointing.range.length, length - min(pointing.range.location, length)))
+    guard textView.shouldChangeText(in: target, replacementString: text) else { return }
+    textView.replaceCharacters(in: target, with: text)
+    textView.didChangeText()
+    pointing.range = NSRange(location: target.location, length: (text as NSString).length)
+    pointing.inserted = text
+    textView.setSelectedRange(NSRange(location: NSMaxRange(pointing.range), length: 0))
+    if textView.window?.firstResponder !== textView {
+      textView.window?.makeFirstResponder(textView)
+    }
+  }
+
+  /// True when the character before `location` (spaces aside) starts a place for a reference.
+  static func acceptsReference(in text: NSString, at location: Int) -> Bool {
+    var index = min(location, text.length) - 1
+    while index >= 0, let scalar = UnicodeScalar(text.character(at: index)),
+      scalar == " "
+    {
+      index -= 1
+    }
+    guard index >= 0, let scalar = UnicodeScalar(text.character(at: index)) else { return false }
+    return "=(,+-*/^&<>:;".unicodeScalars.contains(scalar)
+  }
+
   private func addressAtContent(point: NSPoint) -> CellAddress {
     CellAddress(
       row: rowAtContent(y: point.y),
@@ -2334,6 +2560,10 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   private func updateCursor(for point: NSPoint) {
+    if scrollBarDrag != nil || scrollIndicators.hit(at: point) != nil {
+      NSCursor.arrow.set()
+      return
+    }
     if let drag = activeChartDrag {
       if drag.handle == .body {
         NSCursor.closedHand.set()
@@ -2385,6 +2615,14 @@ final class SpreadsheetGridNSView: NSView {
     }
     if isPointInFillHandle(point) {
       NSCursor.crosshair.set()
+      return
+    }
+    if cellMoveDrag != nil {
+      NSCursor.closedHand.set()
+      return
+    }
+    if selectionBorderHit(at: point) != nil {
+      NSCursor.openHand.set()
       return
     }
     switch resizeTarget(at: point) {
@@ -2900,14 +3138,15 @@ final class SpreadsheetGridNSView: NSView {
           let rect = rowHeaderRect(for: row)
           guard dirtyRect.intersects(rect), rect.height > 0.5 else { continue }
           let label = "\(row + 1)" as NSString
-          let size = label.size(withAttributes: attrs)
+          let fitted = Self.fittedHeaderAttributes(label, width: rect.width, attrs)
+          let size = label.size(withAttributes: fitted)
           let point = NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
           let band = rect.intersection(dirtyRect)
           recordHeaderCell(
             band: band,
             label: label,
             point: point,
-            attributes: attrs,
+            attributes: fitted,
             fill: headerFill,
             line: gridLine,
             from: NSPoint(x: rect.minX, y: rect.maxY),
@@ -3484,10 +3723,18 @@ final class SpreadsheetGridNSView: NSView {
             $0.pane == item.pane && $0.indexX == item.x && $0.indexY == item.y
           })
         else { continue }
+        let wasPlaceholder = self.scrollTiles[index].placeholder
         self.scrollTiles[index].image = item.image
         self.scrollTiles[index].placeholder = false
         self.finishTileFillIfVisible(index)
         let view = self.scrollTiles[index].view
+        // The cells fade in over the empty grid rather than popping in a frame.
+        if wasPlaceholder, let layer = view.layer {
+          let fade = CATransition()
+          fade.type = .fade
+          fade.duration = Self.tileFadeInSeconds
+          layer.add(fade, forKey: "tileFadeIn")
+        }
         view.image = item.image
         view.needsDisplay = true
         view.display()
@@ -5372,16 +5619,30 @@ final class SpreadsheetGridNSView: NSView {
   /// Header titles use the 11 pt medium system font. The glyph is that font's
   /// size, centered in the header cell. A non-uniform context scale must not
   /// stretch it to the cell bounds.
+  /// Row numbers past 9,999 are wider than the column of row numbers: the font shrinks until
+  /// the number fits, instead of the first digit being cut off (found in the 1.6 bug test).
+  static func fittedHeaderAttributes(
+    _ label: NSString, width: CGFloat, _ attrs: [NSAttributedString.Key: Any]
+  ) -> [NSAttributedString.Key: Any] {
+    guard let font = attrs[.font] as? NSFont else { return attrs }
+    let needed = label.size(withAttributes: attrs).width
+    let room = width - 3
+    guard room > 0, needed > room else { return attrs }
+    var fitted = attrs
+    fitted[.font] = NSFont.systemFont(
+      ofSize: max(6, font.pointSize * room / needed), weight: .medium)
+    return fitted
+  }
+
   private func drawHeaderLabel(
     _ label: NSString,
     centeredIn rect: NSRect,
     clip: NSRect,
     color: NSColor
   ) {
-    let attrs: [NSAttributedString.Key: Any] = [
-      .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-      .foregroundColor: color,
-    ]
+    let attrs = Self.fittedHeaderAttributes(
+      label, width: rect.width,
+      [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: color])
     let size = label.size(withAttributes: attrs)
     let point = NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
     NSGraphicsContext.saveGraphicsState()
@@ -8748,6 +9009,29 @@ final class SpreadsheetGridNSView: NSView {
       }
     }
 
+    // Where cells dragged by their border would land.
+    if let drag = cellMoveDrag {
+      let n = drag.source.normalized
+      let target = CellRange(
+        start: drag.target,
+        end: CellAddress(
+          row: drag.target.row + n.maxRow - n.minRow, col: drag.target.col + n.maxCol - n.minCol))
+      let t = target.normalized
+      let rect = cellBorderRect(
+        minRow: t.minRow, minCol: t.minCol, maxRow: t.maxRow, maxCol: t.maxCol)
+      let clip = paneClipRect(for: target)
+      if clip.width > 0.5, clip.height > 0.5, isCellRectInContentArea(rect) {
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: clip).addClip()
+        theme.accent.setStroke()
+        let outline = NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1))
+        outline.lineWidth = 2
+        outline.setLineDash([5, 3], count: 2, phase: 0)
+        outline.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+      }
+    }
+
     if !isMulti, let range = ranges.last {
       let clip = paneClipRect(for: range)
       guard clip.width > 0.5, clip.height > 0.5 else { return }
@@ -9675,6 +9959,7 @@ final class SpreadsheetGridNSView: NSView {
 
   override func mouseMoved(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
+    updateScrollBarHover(at: point)
     updateCursor(for: point)
     updateErrorToolTip(at: point)
     updateCommentCard(at: point)
@@ -9683,6 +9968,7 @@ final class SpreadsheetGridNSView: NSView {
 
   override func mouseExited(with event: NSEvent) {
     super.mouseExited(with: event)
+    if scrollBarDrag == nil { scrollIndicators.hold(nil) }
     hideCommentCard()
     updateChartHover(at: nil)
   }
@@ -9744,14 +10030,32 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   override func mouseDown(with event: NSEvent) {
-    window?.makeFirstResponder(self)
     let point = convert(event.locationInWindow, from: nil)
+    // The scroll bars sit over the cells; a click on one scrolls and leaves typing alone.
+    // System Settings › Appearance › "Click in the scroll bar to"; Option does the other.
+    let jumpsToSpot =
+      UserDefaults.standard.bool(forKey: "AppleScrollerPagingBehavior")
+      != event.modifierFlags.contains(.option)
+    if scrollBarMouseDown(at: point, jumpsToSpot: jumpsToSpot) { return }
+    if beginFormulaPointing(at: point, extending: event.modifierFlags.contains(.shift)) { return }
+    window?.makeFirstResponder(self)
 
     if isEditorActive { hideEditor(commit: true) }
 
     if isPointInFillHandle(point) {
       fillSourceRange = viewModel?.selectionRange
       isDraggingFill = true
+      return
+    }
+
+    if let source = selectionBorderHit(at: point) {
+      let n = source.normalized
+      let at = addressAtContent(point: point)
+      let grab = CellAddress(
+        row: min(max(at.row, n.minRow), n.maxRow), col: min(max(at.col, n.minCol), n.maxCol))
+      cellMoveDrag = CellMoveDrag(
+        source: source, grab: grab, target: CellAddress(row: n.minRow, col: n.minCol))
+      NSCursor.closedHand.set()
       return
     }
 
@@ -9988,6 +10292,8 @@ final class SpreadsheetGridNSView: NSView {
 
   override func mouseDragged(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
+    if scrollBarMouseDragged(to: point) { return }
+    if continueFormulaPointing(at: point) { return }
 
     if let resize = activeResize {
       switch resize {
@@ -10058,6 +10364,17 @@ final class SpreadsheetGridNSView: NSView {
       }
     }
 
+    if var drag = cellMoveDrag {
+      let at = addressAtDragPoint(point)
+      let n = drag.source.normalized
+      drag.target = CellAddress(
+        row: max(0, n.minRow + at.row - drag.grab.row),
+        col: max(0, n.minCol + at.col - drag.grab.col))
+      cellMoveDrag = drag
+      needsDisplay = true
+      return
+    }
+
     if isDraggingFill, let viewModel, let source = fillSourceRange {
       let end = addressAtDragPoint(point)
       let normalized = source.normalized
@@ -10087,6 +10404,11 @@ final class SpreadsheetGridNSView: NSView {
   }
 
   override func mouseUp(with event: NSEvent) {
+    if scrollBarMouseUp(at: convert(event.locationInWindow, from: nil)) { return }
+    if formulaPointingDrag {
+      formulaPointingDrag = false
+      return
+    }
     stopAutoscrollTimer()
 
     if let drag = activeImportedChartDrag {
@@ -10116,6 +10438,17 @@ final class SpreadsheetGridNSView: NSView {
     if activeImageDrag != nil {
       finishImageDragIfNeeded()
       needsDisplay = true
+    }
+
+    if let drag = cellMoveDrag {
+      cellMoveDrag = nil
+      let n = drag.source.normalized
+      if drag.target != CellAddress(row: n.minRow, col: n.minCol) {
+        viewModel?.moveCells(drag.source, to: drag.target)
+      }
+      updateCursor(for: convert(event.locationInWindow, from: nil))
+      syncDisplay()
+      return
     }
 
     if isDraggingFill, let viewModel, let source = fillSourceRange {
@@ -10159,12 +10492,25 @@ final class SpreadsheetGridNSView: NSView {
   override func scrollWheel(with event: NSEvent) {
     hideCommentCard()
     updateChartHover(at: nil)
-    let invert = AppSettings.shared.invertScrollDirection
+    // The way macOS scrolls, natural or not, as its scroll amounts already say: a positive
+    // amount shows what is above or to the left. The grid added them, so it scrolled the
+    // opposite way to the Mac's setting (a Reddit review, Nov 18). Settings can reverse it.
+    var sign: CGFloat = AppSettings.shared.invertScrollDirection ? -1 : 1
+    // A mouse wheel counts lines, not points (about one a notch, more when spun fast): each
+    // line moves two rows' height, so a notch is not a pixel or two.
+    if !event.hasPreciseScrollingDeltas { sign *= Self.defaultRowHeight * zoomScale * 2 }
     let previousOrigin = scrollOrigin
-    scrollOrigin.x += event.scrollingDeltaX
-    scrollOrigin.y += event.scrollingDeltaY * (invert ? -1 : 1)
+    scrollOrigin.x -= event.scrollingDeltaX * sign
+    scrollOrigin.y -= event.scrollingDeltaY * sign
     clampScrollOrigin()
+    finishScroll(from: previousOrigin)
+  }
+
+  /// Shows the sheet at the new `scrollOrigin`, as a trackpad tick or a scroll bar drag moves it.
+  private func finishScroll(from previousOrigin: CGPoint) {
     guard scrollOrigin != previousOrigin else { return }
+    // A scroll the person made: the bars follow it now, not after the frame.
+    flashScrollIndicators()
     noteScrollVelocity(
       CGPoint(x: scrollOrigin.x - previousOrigin.x, y: scrollOrigin.y - previousOrigin.y))
     if useWarmTilesForScroll() {
@@ -10177,6 +10523,112 @@ final class SpreadsheetGridNSView: NSView {
       hideScrollSurfaces()
     }
     needsDisplay = true
+  }
+
+  // MARK: Scroll bars
+
+  /// A thumb being dragged: which bar, where the pointer and the thumb started.
+  private struct ScrollBarDrag {
+    var axis: GridScrollIndicatorView.Axis
+    var pointerStart: CGFloat
+    var thumbStart: CGFloat
+  }
+
+  private var scrollBarDrag: ScrollBarDrag?
+
+  /// Moving to the edge brings that bar back, wide, until the pointer leaves it.
+  private func updateScrollBarHover(at point: NSPoint) {
+    guard scrollBarDrag == nil else { return }
+    let axis = contentRect.contains(point) ? scrollIndicators.edgeAxis(at: point) : nil
+    if axis != nil, scrollIndicators.heldAxis == nil { flashScrollIndicators() }
+    scrollIndicators.hold(axis)
+  }
+
+  /// A click on a showing bar: the thumb starts a drag; the track moves a page toward the
+  /// click, or jumps there when the system setting says to. True when the bar took the click.
+  private func scrollBarMouseDown(at point: NSPoint, jumpsToSpot: Bool) -> Bool {
+    guard let hit = scrollIndicators.hit(at: point) else { return false }
+    let axis = hit.axis
+    scrollIndicators.hold(axis)
+    let along = axis == .vertical ? point.y : point.x
+    switch hit {
+    case .thumb:
+      break
+    case .trackBefore, .trackAfter:
+      let previousOrigin = scrollOrigin
+      let page = axis == .vertical ? scrollablePageHeight() : scrollablePageWidth()
+      let target: CGFloat
+      if jumpsToSpot {
+        target = scrollIndicators.offset(centeringThumbOn: point, axis)
+      } else {
+        let now = axis == .vertical ? scrollOrigin.y : scrollOrigin.x
+        target = hit == .trackBefore(axis) ? now - page : now + page
+      }
+      if axis == .vertical { scrollOrigin.y = target } else { scrollOrigin.x = target }
+      clampScrollOrigin()
+      finishScroll(from: previousOrigin)
+      // A jump leaves the thumb under the pointer, ready to drag on.
+      guard jumpsToSpot else { return true }
+    }
+    scrollBarDrag = ScrollBarDrag(
+      axis: axis, pointerStart: along, thumbStart: scrollIndicators.thumbStart(axis))
+    NSCursor.arrow.set()
+    return true
+  }
+
+  private func scrollBarMouseDragged(to point: NSPoint) -> Bool {
+    guard let drag = scrollBarDrag else { return false }
+    let along = drag.axis == .vertical ? point.y : point.x
+    let target = scrollIndicators.offset(
+      forThumbStart: drag.thumbStart + along - drag.pointerStart, drag.axis)
+    let previousOrigin = scrollOrigin
+    if drag.axis == .vertical { scrollOrigin.y = target } else { scrollOrigin.x = target }
+    clampScrollOrigin()
+    finishScroll(from: previousOrigin)
+    return true
+  }
+
+  private func scrollBarMouseUp(at point: NSPoint) -> Bool {
+    guard scrollBarDrag != nil else { return false }
+    scrollBarDrag = nil
+    updateScrollBarHover(at: point)
+    return true
+  }
+
+  var testingScrollOrigin: CGPoint { scrollOrigin }
+
+  /// Where the thumb is drawn now, without showing the bars again.
+  func testingDrawnThumb(_ axis: GridScrollIndicatorView.Axis) -> NSRect? {
+    scrollIndicators.drawnThumbFrame(axis)
+  }
+
+  /// Where `axis`'s thumb is, with the bars just shown as a scroll shows them.
+  func testingScrollBarThumb(_ axis: GridScrollIndicatorView.Axis) -> NSRect? {
+    flashScrollIndicators()
+    return scrollIndicators.thumbRect(axis)
+  }
+
+  @discardableResult
+  func testingScrollBarPress(at point: NSPoint, jumpsToSpot: Bool = false) -> Bool {
+    scrollBarMouseDown(at: point, jumpsToSpot: jumpsToSpot)
+  }
+
+  func testingScrollBarDrag(to point: NSPoint) { _ = scrollBarMouseDragged(to: point) }
+
+  func testingScrollBarRelease(at point: NSPoint) { _ = scrollBarMouseUp(at: point) }
+
+  func testingScrollablePageHeight() -> CGFloat { scrollablePageHeight() }
+
+  /// Where `row` starts, measured from the first scrolling row.
+  func testingRowTop(_ row: Int) -> CGFloat { heightOfRows(from: frozenRowCount(), to: row) }
+
+  /// The scrollable part of the view, one screen's worth, for paging.
+  private func scrollablePageHeight() -> CGFloat {
+    max(0, contentRect.height - heightOfRows(from: 0, to: frozenRowCount())) * 0.9
+  }
+
+  private func scrollablePageWidth() -> CGFloat {
+    max(0, contentRect.width - widthOfColumns(from: 0, to: frozenColumnCount())) * 0.9
   }
 
   func testingResetScrollCounters() {
@@ -10323,6 +10775,10 @@ final class SpreadsheetGridNSView: NSView {
   private func chartContextMenu() -> NSMenu {
     let menu = NSMenu()
     addMenuItem(menu, "Edit Chart…", #selector(handleMenuEditChart(_:)))
+    menu.addItem(.separator())
+    addMenuItem(menu, "Copy Chart as Image", #selector(handleMenuCopyChartImage(_:)))
+    addMenuItem(menu, "Save Chart as Image…", #selector(handleMenuSaveChartImage(_:)))
+    menu.addItem(.separator())
     addMenuItem(menu, "Delete Chart", #selector(handleMenuDeleteChart(_:)))
     return menu
   }
@@ -10331,6 +10787,9 @@ final class SpreadsheetGridNSView: NSView {
     let menu = NSMenu()
     addMenuItem(menu, "Edit Chart…", #selector(handleMenuEditImportedChart(_:)))
     addMenuItem(menu, "Duplicate Chart", #selector(handleMenuDuplicateImportedChart(_:)))
+    menu.addItem(.separator())
+    addMenuItem(menu, "Copy Chart as Image", #selector(handleMenuCopyChartImage(_:)))
+    addMenuItem(menu, "Save Chart as Image…", #selector(handleMenuSaveChartImage(_:)))
     menu.addItem(.separator())
     addMenuItem(menu, "Bring to Front", #selector(handleMenuImportedChartToFront(_:)))
     addMenuItem(menu, "Send to Back", #selector(handleMenuImportedChartToBack(_:)))
@@ -10387,6 +10846,67 @@ final class SpreadsheetGridNSView: NSView {
     else { return }
     viewModel.setTableStyle(name, at: index)
     needsDisplay = true
+  }
+
+  /// The selected chart drawn at twice its size on a light background, without its selection
+  /// frame (asked for on Reddit, Nov 19).
+  private func selectedChartImage() -> (image: NSImage, name: String)? {
+    guard let viewModel else { return nil }
+    let content: AnyView
+    let size: CGSize
+    let name: String
+    if let id = viewModel.selectedChartID, let host = chartHosts[id] {
+      var card = host.rootView
+      card.exporting = true
+      card.hover = nil
+      size = host.bounds.size
+      content = AnyView(card)
+      name = card.chart.title
+    } else if let id = viewModel.selectedImportedChartID, let host = importedChartHosts[id] {
+      var card = host.rootView
+      card.exporting = true
+      card.hover = nil
+      size = host.bounds.size
+      content = AnyView(card)
+      name = card.placement.chart.title
+    } else {
+      return nil
+    }
+    guard size.width >= 1, size.height >= 1 else { return nil }
+    let renderer = ImageRenderer(
+      content: content.frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light))
+    renderer.scale = 2
+    guard let image = renderer.nsImage else { return nil }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return (image, trimmed.isEmpty ? "Chart" : trimmed)
+  }
+
+  @objc private func handleMenuCopyChartImage(_ sender: Any?) {
+    guard let rendered = selectedChartImage() else { return NSSound.beep() }
+    let board = NSPasteboard.general
+    board.clearContents()
+    board.writeObjects([rendered.image])
+  }
+
+  @objc private func handleMenuSaveChartImage(_ sender: Any?) {
+    guard let rendered = selectedChartImage(), let window else { return NSSound.beep() }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.png]
+    panel.nameFieldStringValue = rendered.name.replacingOccurrences(of: "/", with: "-") + ".png"
+    panel.canCreateDirectories = true
+    panel.beginSheetModal(for: window) { response in
+      guard response == .OK, let url = panel.url,
+        let tiff = rendered.image.tiffRepresentation,
+        let bitmap = NSBitmapImageRep(data: tiff),
+        let png = bitmap.representation(using: .png, properties: [:])
+      else { return }
+      do {
+        try png.write(to: url, options: .atomic)
+      } catch {
+        NSAlert(error: error).beginSheetModal(for: window)
+      }
+    }
   }
 
   @objc private func handleMenuEditChart(_ sender: Any?) {
@@ -11139,7 +11659,10 @@ extension SpreadsheetGridNSView: NSTextFieldDelegate {
     else { return }
 
     let cursor = fieldEditor.selectedRange.location
+    let cellEditor = fieldEditor as? CellFieldEditor
+    cellEditor?.namedRangesForCompletion = namedRangeNames
     guard
+      cellEditor?.lastEditWasDeletion != true,
       FormulaAutocomplete.shouldOfferPopup(
         in: fieldEditor.string,
         utf16Cursor: cursor,
@@ -11171,6 +11694,9 @@ final class CellEditorTextField: NSTextField {}
 
 /// Field editor that saves on the Save shortcut instead of inserting the key.
 final class CellFieldEditor: NSTextView {
+  /// Backspace and Delete do not bring the completion list back (see FormulaBarNSTextView).
+  var lastEditWasDeletion = false
+  var namedRangesForCompletion: [String] = []
   private var isHandlingTextChange = false
   private var isApplyingSpellPolicy = false
 
@@ -11236,7 +11762,23 @@ final class CellFieldEditor: NSTextView {
       _ = SparkGridSaveShortcut.perform()
       return
     }
+    lastEditWasDeletion = false
     super.insertText(insertString, replacementRange: replacementRange)
+  }
+
+  override func deleteBackward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteBackward(sender)
+  }
+
+  override func deleteForward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteForward(sender)
+  }
+
+  override func deleteWordBackward(_ sender: Any?) {
+    lastEditWasDeletion = true
+    super.deleteWordBackward(sender)
   }
 
   override func insertCompletion(
@@ -11246,16 +11788,22 @@ final class CellFieldEditor: NSTextView {
     isFinal flag: Bool
   ) {
     let partial = Self.partialWord(in: string, range: charRange)
-    let before = string
     super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
     // Return on a finished token (`=SUM`) accepts the popup again and never
     // reaches insertNewline. Commit when this key did not change the text.
     let commitOnReturn =
       flag
       && movement == NSTextMovement.`return`.rawValue
-      && (before == string
-        || FormulaAutocomplete.isExactCompletion(partial: partial, completion: word))
-    guard commitOnReturn else { return }
+      // Only a name typed in full (`=SUM`) commits. macOS fills in the rest of the name before
+      // Return, so an unchanged text is not enough: Return on `=AVER` picks AVERAGE and adds
+      // its "(" (found in the 1.6 bug test).
+      && FormulaAutocomplete.isExactCompletion(partial: partial, completion: word)
+    guard commitOnReturn else {
+      FormulaCompletionParen.addIfChosen(
+        word, range: charRange, movement: movement, isFinal: flag, in: self,
+        namedRanges: namedRangesForCompletion)
+      return
+    }
     let editor = self
     DispatchQueue.main.async {
       guard editor.window?.firstResponder === editor else { return }
@@ -11275,9 +11823,14 @@ final class CellFieldEditor: NSTextView {
 
 /// Writes the open cell or formula-bar edit into the workbook before Save.
 enum SpreadsheetEditorFlush {
+  /// Commits a cell being typed in, so a save or the unsaved-changes question counts it. `window`
+  /// is the workbook's own window; nil means the one in front. With several windows open, quitting
+  /// asks each workbook, and its typing is in its own window, not the front one.
   @MainActor
-  static func commitForSave() {
-    let window = NSApp.keyWindow ?? NSApp.mainWindow
+  static func commitForSave(
+    in ownWindow: NSWindow? = nil, viewModel ownViewModel: SpreadsheetViewModel? = nil
+  ) {
+    let window = ownWindow ?? NSApp.keyWindow ?? NSApp.mainWindow
     let grid = window.flatMap { SpreadsheetGridNSView.first(in: $0.contentView) }
     if let window, window.firstResponder is FormulaBarNSTextView {
       if let grid {
@@ -11289,7 +11842,7 @@ enum SpreadsheetEditorFlush {
     if let grid {
       grid.commitEditingForSave()
     } else {
-      SparkGridAppDelegate.current?.documentStore?.activeViewModel?
+      (ownViewModel ?? SparkGridAppDelegate.current?.documentStore?.activeViewModel)?
         .commitEditIfNeeded()
     }
   }

@@ -63,6 +63,7 @@ public nonisolated enum StreamingWorksheet {
       for (name, xml) in scanner.keptElements {
         kept[name.description, default: []].append(xml)
       }
+      XLSXCodec.markFormulasThatOpenAsOneValue(in: &sheet, arrayFormulas: scanner.arrayFormulas)
       return (conditionalFormatting, kept, scanner.arrayRefs)
     }
   }
@@ -102,6 +103,8 @@ public nonisolated enum StreamingWorksheet {
     var keptElements: [(name: StaticString, xml: String)] = []
     /// Array formulas and the cells their results fill, as `<f t="array" ref="…">` gives them.
     var arrayRefs: [CellAddress: CellRange] = [:]
+    /// Every formula saved as an array formula (`t="array"`), whatever its size.
+    var arrayFormulas: Set<CellAddress> = []
 
     /// Names of unprefixed worksheet elements kept for the next save.
     func keptElementName(_ tag: Tag) -> StaticString? {
@@ -426,7 +429,8 @@ public nonisolated enum StreamingWorksheet {
       if sawFormula {
         if isShared, let si = formulaSI {
           let trimmed = formulaBody.trimmingCharacters(in: .whitespacesAndNewlines)
-          let decoded = trimmed.contains("&") ? XLSXCodec.decodeXMLEntities(trimmed) : trimmed
+          let decoded = ExcelFutureFunctions.unprefixed(
+            trimmed.contains("&") ? XLSXCodec.decodeXMLEntities(trimmed) : trimmed)
           if decoded.isEmpty {
             isFollower = true
           } else {
@@ -434,7 +438,7 @@ public nonisolated enum StreamingWorksheet {
             formulaRaw = decoded.hasPrefix("=") ? decoded : "=\(decoded)"
           }
         } else if !formulaBody.isEmpty {
-          let decoded = decodeXMLContent(formulaBody)
+          let decoded = ExcelFutureFunctions.unprefixed(decodeXMLContent(formulaBody))
           if !decoded.isEmpty {
             formulaRaw = decoded.hasPrefix("=") ? decoded : "=\(decoded)"
           }
@@ -444,6 +448,7 @@ public nonisolated enum StreamingWorksheet {
       cell.format = format
       if let formulaRaw {
         cell.raw = formulaRaw
+        if formulaType == "array" { arrayFormulas.insert(address) }
         if let formulaRef, let range = XLSXCodec.parseCellRange(formulaRef),
           range.start != range.end
         {
@@ -461,6 +466,11 @@ public nonisolated enum StreamingWorksheet {
         cells[address] = cell
       } else {
         cell.raw = literalRaw(cellType: cellType, valueText: valueText, inlineText: inlineText)
+        if cellType == "s" || cellType == "sharedString" || cellType == "inlineStr"
+          || cellType == "str"
+        {
+          cell.markTextIfNeeded()
+        }
         let keepsFormat =
           styleIndex.map { styleKeepsFormat.indices.contains($0) && styleKeepsFormat[$0] } ?? false
         if !cell.raw.isEmpty || keepsFormat {
@@ -562,7 +572,8 @@ public nonisolated enum StreamingWorksheet {
       if sawFormula {
         if isShared, let si = formulaSI {
           let trimmed = formulaBody.trimmingCharacters(in: .whitespacesAndNewlines)
-          let decoded = trimmed.contains("&") ? XLSXCodec.decodeXMLEntities(trimmed) : trimmed
+          let decoded = ExcelFutureFunctions.unprefixed(
+            trimmed.contains("&") ? XLSXCodec.decodeXMLEntities(trimmed) : trimmed)
           if decoded.isEmpty {
             isFollower = true
           } else {
@@ -570,7 +581,7 @@ public nonisolated enum StreamingWorksheet {
             formulaRaw = decoded.hasPrefix("=") ? decoded : "=\(decoded)"
           }
         } else if !formulaBody.isEmpty {
-          let decoded = decodeXMLContent(formulaBody)
+          let decoded = ExcelFutureFunctions.unprefixed(decodeXMLContent(formulaBody))
           if !decoded.isEmpty {
             formulaRaw = decoded.hasPrefix("=") ? decoded : "=\(decoded)"
           }
@@ -581,6 +592,7 @@ public nonisolated enum StreamingWorksheet {
       cell.format = format
       if let formulaRaw {
         cell.raw = formulaRaw
+        if formulaType == "array" { arrayFormulas.insert(address) }
         if let formulaRef, let range = XLSXCodec.parseCellRange(formulaRef),
           range.start != range.end
         {
@@ -597,6 +609,11 @@ public nonisolated enum StreamingWorksheet {
         }
       } else {
         cell.raw = literalRaw(cellType: cellType, valueText: valueText, inlineText: inlineText)
+        if cellType == "s" || cellType == "sharedString" || cellType == "inlineStr"
+          || cellType == "str"
+        {
+          cell.markTextIfNeeded()
+        }
       }
       if !cell.isEmpty {
         cells[address] = cell
@@ -1391,6 +1408,9 @@ public nonisolated final class ZipPackage: @unchecked Sendable {
     self.key = ArchiveKey(archiveData)
     self.files = files
   }
+
+  /// Every part's path in the archive.
+  public var entryPaths: [String] { Array(files.keys) }
 
   public func data(for entryPath: String) -> Data? {
     var key = entryPath

@@ -23,8 +23,10 @@ struct ImportedChartCard: View {
   let series: [SpreadsheetViewModel.ImportedChartSeriesData]
   var viewModel: SpreadsheetViewModel
   var hover: ChartHover?
+  /// Drawn for Copy or Save Chart as Image: no selection frame or handles.
+  var exporting = false
 
-  private var selected: Bool { viewModel.selectedImportedChartID == placement.id }
+  private var selected: Bool { !exporting && viewModel.selectedImportedChartID == placement.id }
 
   var body: some View {
     GeometryReader { geo in
@@ -225,9 +227,11 @@ struct ImportedChartPlot: View {
       case .line:
         LineMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
           .foregroundStyle(by: .value("Series", mark.seriesName))
+        // Each series its own marker shape, so the lines read apart in grey too (Reddit, Nov 19).
         PointMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
           .foregroundStyle(by: .value("Series", mark.seriesName))
-          .symbolSize(16)
+          .symbol(by: .value("Series", mark.seriesName))
+          .symbolSize(28)
       case .area:
         // Areas stack unless told not to; a file's standard area chart overlaps them.
         AreaMark(

@@ -75,6 +75,7 @@ struct FindReplaceBar: View {
       Menu {
         Toggle("Match Case", isOn: $viewModel.findMatchCase)
         Toggle("Entire Cell", isOn: $viewModel.findEntireCell)
+        Toggle("Regular Expression", isOn: $viewModel.findUsesRegex)
         Divider()
         Picker("Scope", selection: $viewModel.findScope) {
           Text("Sheet").tag(FindScope.sheet)
@@ -93,6 +94,9 @@ struct FindReplaceBar: View {
         viewModel.refreshFindMatches(selectCurrent: true)
       }
       .onChange(of: viewModel.findEntireCell) { _, _ in
+        viewModel.refreshFindMatches(selectCurrent: true)
+      }
+      .onChange(of: viewModel.findUsesRegex) { _, _ in
         viewModel.refreshFindMatches(selectCurrent: true)
       }
       .onChange(of: viewModel.findScope) { _, newScope in
@@ -142,6 +146,7 @@ struct FindReplaceBar: View {
   }
 
   private var matchLabel: String {
+    if viewModel.findPatternIsInvalid { return "Unfinished pattern" }
     guard !viewModel.findMatches.isEmpty else { return "No matches" }
     let index = viewModel.findMatchIndex + 1
     return "\(index) of \(viewModel.findMatches.count)"

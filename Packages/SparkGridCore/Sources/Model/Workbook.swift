@@ -179,6 +179,31 @@ public nonisolated enum DefinedNameFormula {
   }
 }
 
+/// What Spark Grid saves in its own parts of an .xlsx, which other apps do not keep.
+public nonisolated enum SparkGridExtra: String, CaseIterable, Codable, Sendable {
+  case pivots, locks, charts
+
+  /// As the warning names it.
+  public var title: String {
+    switch self {
+    case .pivots: return "pivot table settings"
+    case .locks: return "range locks"
+    case .charts: return "chart settings"
+    }
+  }
+
+  /// How many of these a workbook holds.
+  public func count(in workbook: Workbook) -> Int {
+    workbook.sheets.reduce(0) { total, sheet in
+      switch self {
+      case .pivots: return total + sheet.fileExtras.sparkPivots.count
+      case .locks: return total + sheet.fileExtras.rangeLocks.count
+      case .charts: return total + sheet.charts.count
+      }
+    }
+  }
+}
+
 public nonisolated struct Workbook: Codable, Equatable, Sendable {
   public static let defaultRowCount = 1_000
   public static let defaultColumnCount = 26
@@ -193,6 +218,12 @@ public nonisolated struct Workbook: Codable, Equatable, Sendable {
   public var xlsxThemeData: Data?
   /// Pivot caches kept from the file for the pivot tables on its sheets.
   public var pivotCaches: [PivotCachePart] = []
+  /// Raw `docProps/custom.xml` from import: the file's custom properties, written back with
+  /// Spark Grid's own note of what it saved.
+  public var xlsxCustomPropertiesData: Data?
+  /// Spark Grid extras the file says were saved but that did not open: another app saved the
+  /// file and dropped them. Found on open; not saved.
+  public var removedSparkGridExtras: [SparkGridExtra] = []
 
   public init(
     sheets: [Sheet] = [Sheet(name: "Sheet1")],
@@ -208,6 +239,7 @@ public nonisolated struct Workbook: Codable, Equatable, Sendable {
 
   public enum CodingKeys: String, CodingKey {
     case sheets, activeSheetIndex, namedRanges, xlsxThemeData, pivotCaches
+    case xlsxCustomPropertiesData
   }
 
   public init(from decoder: Decoder) throws {
@@ -217,6 +249,7 @@ public nonisolated struct Workbook: Codable, Equatable, Sendable {
     namedRanges = try c.decodeIfPresent([String: NamedRange].self, forKey: .namedRanges) ?? [:]
     xlsxThemeData = try c.decodeIfPresent(Data.self, forKey: .xlsxThemeData)
     pivotCaches = try c.decodeIfPresent([PivotCachePart].self, forKey: .pivotCaches) ?? []
+    xlsxCustomPropertiesData = try c.decodeIfPresent(Data.self, forKey: .xlsxCustomPropertiesData)
     if sheets.isEmpty { sheets = [Sheet(name: "Sheet1")] }
     activeSheetIndex = min(max(0, activeSheetIndex), sheets.count - 1)
   }
@@ -230,6 +263,7 @@ public nonisolated struct Workbook: Codable, Equatable, Sendable {
     if !pivotCaches.isEmpty {
       try c.encode(pivotCaches, forKey: .pivotCaches)
     }
+    try c.encodeIfPresent(xlsxCustomPropertiesData, forKey: .xlsxCustomPropertiesData)
   }
 
   public var activeSheet: Sheet {

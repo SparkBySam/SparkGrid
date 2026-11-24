@@ -210,7 +210,7 @@ extension FormulaEvaluator {
     guard args.count == 2 else { return .error(.value) }
     let value = evaluate(args[0])
     if case .error(.na) = value {
-      return evaluate(args[1])
+      return evaluateChosen(args[1])
     }
     return value
   }
@@ -240,8 +240,23 @@ extension FormulaEvaluator {
     guard args.count == 1 else { return .error(.value) }
     let value = evaluate(args[0])
     if case .error = value { return value }
-    let text = value.asString
-    return .string(uppercased ? text.uppercased() : text.lowercased())
+    return .string(Self.changeCase(value.asString, upper: uppercased))
+  }
+
+  /// Case changed one character at a time, as other apps change it: a character whose other
+  /// case is longer stays as it is, so UPPER("straße") is STRAßE, not STRASSE (Excel 16.115).
+  static func changeCase(_ text: String, upper: Bool) -> String {
+    var result = ""
+    result.reserveCapacity(text.utf8.count)
+    for character in text {
+      let changed = upper ? character.uppercased() : character.lowercased()
+      if changed.unicodeScalars.count == character.unicodeScalars.count {
+        result += changed
+      } else {
+        result.append(character)
+      }
+    }
+    return result
   }
 
   public func evalMID(_ args: [FormulaExpr]) -> CellValue {
@@ -690,6 +705,9 @@ extension FormulaEvaluator {
     let blank = isBlankForCount(value)
     if test.wildcard && (test.op == .eq || test.op == .ne) {
       if blank { return test.op == .ne }
+      // A wildcard matches text only: COUNTIF(A1:A8,"*") counts the text cells, not numbers
+      // or TRUE (Excel 16.115; it counted every cell before).
+      guard case .string = value else { return test.op == .ne }
       let matched = excelWildcardMatch(criteriaText(value), pattern: test.text)
       return test.op == .eq ? matched : !matched
     }
@@ -710,6 +728,8 @@ extension FormulaEvaluator {
     if case .number = value {
       return test.op == .ne
     }
+    // ">a" and the rest compare text with text; TRUE and FALSE are not text to them.
+    if case .bool = value, test.op != .eq, test.op != .ne { return false }
     let comparison = criteriaText(value).caseInsensitiveCompare(test.text)
     switch test.op {
     case .eq: return comparison == .orderedSame
@@ -774,7 +794,7 @@ extension FormulaEvaluator {
     return nil
   }
 
-  private func excelHasWildcard(_ text: String) -> Bool {
+  func excelHasWildcard(_ text: String) -> Bool {
     let chars = Array(text)
     var index = 0
     while index < chars.count {
@@ -832,6 +852,9 @@ extension FormulaEvaluator {
     if case .call(let name, let args) = expr, Self.isSpillReference(name) {
       return spillReferenceRange(args) ?? .error(.ref)
     }
+    if case .call(let name, let args) = expr, Self.isReferenceFunction(name) {
+      return referenceFunctionTarget(name, args) ?? .error(.ref)
+    }
     return expr
   }
 
@@ -883,7 +906,16 @@ extension FormulaEvaluator {
       return combine(op, left, right)
     case .cellRef:
       return ValueMatrix(rows: 1, cols: 1, values: [evaluate(resolved)])
+    case .array:
+      let array = evaluateArray(resolved)
+      return ValueMatrix(rows: array.rows, cols: array.cols, values: array.values)
     default:
+      // A spilling result is every value it gives: TEXTJOIN(",", TRUE, SORT(A1:A9)) joins them
+      // all; it took the first (found by script, Nov 18).
+      if Self.spills(resolved) || Self.givesArray(resolved) {
+        let array = evaluateArray(resolved)
+        return ValueMatrix(rows: array.rows, cols: array.cols, values: array.values)
+      }
       return ValueMatrix(rows: 1, cols: 1, values: [evaluate(resolved)])
     }
   }
@@ -950,9 +982,8 @@ extension FormulaEvaluator {
     switch value {
     case .number(let number):
       return number
-    case .bool(let flag):
-      return flag ? 1 : 0
-    case .blank, .string, .error:
+    case .blank, .string, .error, .bool:
+      // A range's TRUE and FALSE are not numbers to AVERAGE, as in other apps.
       return nil
     }
   }
@@ -2274,6 +2305,13 @@ extension FormulaEvaluator {
     guard let cache = lookupTableCache else {
       recalcProfile?.ifStripVlkNA += 1
       sink(origin, evaluate(fallbackExpr))
+      return
+    }
+    if case .string(let pattern) = needle, excelHasWildcard(pattern) {
+      let found = wildcardTableLookup(
+        pattern: pattern, horizontal: false, bounds: plan.bounds, start: plan.tableStart,
+        resultOffset: plan.resultOffset)
+      sink(origin, found.isError ? evaluate(fallbackExpr) : found)
       return
     }
     if let hit = cache.exactLookup(

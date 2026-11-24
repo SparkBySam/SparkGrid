@@ -140,9 +140,9 @@ final class FormulaCacheWriterTests: XCTestCase {
     XCTAssertEqual(box.value, .number(Double(links)))
   }
 
-  /// After a structural edit every stored result is stale. The save leaves them out rather
-  /// than recalculating the whole workbook, and never writes the stale 999.
-  func testStructuralRebuildDropsAStaleCache() {
+  /// After a structural edit every stored result is stale. A workbook of ordinary size is
+  /// calculated again on save, so the file gets the right result and never the stale 999.
+  func testStructuralRebuildReplacesAStaleCache() {
     let a1 = CellAddress(row: 0, col: 0)
     let b1 = CellAddress(row: 0, col: 1)
     let sheet = Sheet(
@@ -164,7 +164,7 @@ final class FormulaCacheWriterTests: XCTestCase {
       XCTFail("sheet missing")
       return
     }
-    XCTAssertNil(data.cell(at: b1).importedFormulaResult)
+    XCTAssertEqual(data.cell(at: b1).cachedFormulaValue, .number(3))
     XCTAssertEqual(data.cell(at: b1).raw, "=SUM(A1:A1)")
     XCTAssertTrue(engine.formulaSaveStamp().recalculateAllFormulas)
   }

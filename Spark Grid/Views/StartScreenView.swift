@@ -193,7 +193,7 @@ struct StartScreenView: View {
           .opacity(0)
           .accessibilityHidden(true)
       }
-      Button("Open…") { SpreadsheetOpenPanel.run(store: store) }
+      Button("Open…") { SpreadsheetOpenPanel.run(preferring: store) }
       Button("Blank Workbook") { create(.blank) }
       Button(primaryTitle) { create(choice) }
         .keyboardShortcut(.defaultAction)
@@ -234,15 +234,8 @@ struct StartScreenView: View {
     case .template(let template):
       store.newDocument(from: template)
     case .recent(let url):
-      do {
-        try store.load(from: url)
-      } catch {
-        let alert = NSAlert()
-        alert.messageText = "Couldn't Open \u{201C}\(url.lastPathComponent)\u{201D}"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.runModal()
-      }
+      // In this window, or the one that already has it.
+      WorkbookWindows.shared.open(url, preferring: store)
     }
   }
 }

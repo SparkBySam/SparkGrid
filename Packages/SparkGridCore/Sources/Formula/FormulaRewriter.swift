@@ -13,7 +13,9 @@ public enum FormulaFunctions {
     "SUBSTITUTE", "TEXTJOIN", "CONCAT", "CONCATENATE", "TEXT", "CHAR", "REPT",
     "SEQUENCE",
     "COLUMN", "TRUE",
-    "XLOOKUP", "XMATCH", "VLOOKUP", "HLOOKUP", "INDEX", "MATCH",
+    "XLOOKUP", "XMATCH", "VLOOKUP", "HLOOKUP", "INDEX", "MATCH", "INDIRECT", "ADDRESS", "ISREF",
+    "ISFORMULA", "CELL", "PERCENTILE.EXC", "QUARTILE.EXC", "OFFSET",
+    "LOOKUP", "YEARFRAC",
     "TODAY", "NOW", "DATE", "YEAR", "MONTH", "DAY",
     // 1.2 batch 1
     "INT", "SIGN", "SQRT", "PI", "MOD", "POWER", "CEILING", "CEILING.MATH", "FLOOR", "FLOOR.MATH",
@@ -34,6 +36,21 @@ public enum FormulaFunctions {
     "UNICHAR",
     // 1.4 spilling results
     "FILTER", "SORT", "SORTBY", "UNIQUE",
+    // 1.5
+    "LET", "TEXTSPLIT", "VSTACK", "HSTACK", "TAKE", "DROP", "CHOOSECOLS", "CHOOSEROWS",
+    "WRAPROWS", "WRAPCOLS", "TOCOL", "TOROW", "RANDARRAY",
+    // 1.5 batch 3
+    "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "ATAN2", "SINH", "COSH", "TANH", "ASINH",
+    "ACOSH", "ATANH", "DEGREES", "RADIANS", "SQRTPI", "COMBIN", "PERMUT", "QUOTIENT", "RAND",
+    "RANDBETWEEN", "AVERAGEA", "MAXA", "MINA", "STDEVA", "STDEVPA", "VARA", "VARPA",
+    "GEOMEAN", "HARMEAN", "SEM", "MEAN", "MEAN.ARITH", "MEAN.GEOM", "MEAN.HARM", "DEVSQ", "AVEDEV",
+    "SKEW", "SKEW.P", "KURT", "TRIMMEAN",
+    "STANDARDIZE", "FISHER", "FISHERINV", "COVARIANCE.S", "COVARIANCE.P", "COVAR", "PEARSON",
+    "RSQ", "RANK.AVG", "PERCENTRANK", "PERCENTRANK.INC", "PERCENTRANK.EXC", "NORM.DIST",
+    "NORMDIST", "NORM.S.DIST", "NORMSDIST", "NORM.INV", "NORMINV", "NORM.S.INV", "NORMSINV",
+    "REPLACE", "FIXED", "DOLLAR", "T", "NUMBERVALUE", "TIME", "TIMEVALUE", "DATEVALUE",
+    "DAYS360", "N", "ISNONTEXT", "TYPE", "ERROR.TYPE", "SLN", "SYD", "DDB", "DB", "EFFECT",
+    "NOMINAL", "ISPMT", "CUMIPMT", "CUMPRINC", "MIRR", "TRANSPOSE",
   ].sorted()
 
   public static func suggestions(matching prefix: String) -> [String] {
@@ -172,7 +189,7 @@ public nonisolated enum FormulaRewriter {
 
   private static func adjustExpr(_ expr: FormulaExpr, rowDelta: Int, colDelta: Int) -> FormulaExpr {
     switch expr {
-    case .number, .string, .boolean, .error, .namedRange:
+    case .number, .string, .boolean, .error, .namedRange, .missing, .array:
       return expr
     case .cellRef(let ref):
       if let next = ref.adjusted(rowDelta: rowDelta, colDelta: colDelta) {
@@ -207,7 +224,7 @@ public nonisolated enum FormulaRewriter {
     change: StructureChange
   ) -> FormulaExpr {
     switch expr {
-    case .number, .string, .boolean, .error, .namedRange:
+    case .number, .string, .boolean, .error, .namedRange, .missing, .array:
       return expr
     case .cellRef(let ref):
       return shiftRef(
@@ -392,15 +409,24 @@ public nonisolated enum FormulaRewriter {
       return e.displayCode
     case .namedRange(let name):
       return name
+    case .missing:
+      return ""
+    case .array(let rows):
+      return "{" + rows.map { $0.map(serialize).joined(separator: ",") }.joined(separator: ";")
+        + "}"
     case .cellRef(let ref):
       return A1Reference.format(ref)
     case .range(let start, let end):
       return A1Reference.formatRange(start: start, end: end)
     case .unary(let op, let inner):
-      let prefix = op == .negate ? "-" : "+"
       let needsParens = needsParensForUnary(inner)
       let body = serialize(inner)
-      return needsParens ? "\(prefix)(\(body))" : "\(prefix)\(body)"
+      let wrapped = needsParens ? "(\(body))" : body
+      switch op {
+      case .percent: return wrapped + "%"
+      case .negate: return "-" + wrapped
+      case .plus: return "+" + wrapped
+      }
     case .binary(let op, let lhs, let rhs):
       return serializeBinary(op, lhs, rhs)
     case .call(let name, let args):

@@ -115,12 +115,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
           sheetName: name.isEmpty ? "Sheet1" : name,
           contentType: type
         )
+        let presentation = PreviewPresentation.make(workbook)
         DispatchQueue.main.async {
           guard let self else {
             handler(nil)
             return
           }
-          let session = PreviewSession(fileURL: url, workbook: workbook)
+          let session = PreviewSession(fileURL: url, presentation: presentation)
           self.session = session
           self.tableController.session = session
           self.configureChrome(for: url, session: session)
@@ -158,6 +159,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     parts.append("\(session.previewRowCount) × \(session.previewColumnCount)")
     if session.isTruncated {
       parts.append("showing first \(PreviewSession.maxPreviewRows) rows")
+    }
+    if session.hasUncalculatedFormulas {
+      parts.append("open in Spark Grid to calculate formulas this file saved no results for")
     }
     if session.isDirty {
       parts.append("Edited — press ⌘S to save")

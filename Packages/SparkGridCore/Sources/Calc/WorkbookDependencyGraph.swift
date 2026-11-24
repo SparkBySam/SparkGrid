@@ -342,7 +342,7 @@ extension WorkbookDependencyGraph {
     ranges: inout [FormulaRangeRef]
   ) {
     switch expr {
-    case .number, .string, .boolean, .error:
+    case .number, .string, .boolean, .error, .missing, .array:
       break
     case .namedRange(let name):
       guard let named = namesByKey[name.uppercased()] else { return }
@@ -415,7 +415,16 @@ extension WorkbookDependencyGraph {
       collect(
         rhs, formulaSheet: formulaSheet, input: input, namesByKey: namesByKey, cells: &cells,
         ranges: &ranges)
-    case .call(_, let args):
+    case .call(let name, let args):
+      // INDIRECT and OFFSET can read any cell of any sheet, known only when they run: an edit anywhere
+      // updates it, as other apps recalculate it on every change.
+      if FormulaEvaluator.isVolatileReference(name) {
+        for sheet in input.sheets {
+          appendArea(
+            sheetID: sheet.sheetID, minRow: 0, maxRow: InputBounds.maxStructureCount - 1,
+            minCol: 0, maxCol: 16_383, cells: &cells, ranges: &ranges)
+        }
+      }
       for arg in args {
         collect(
           arg, formulaSheet: formulaSheet, input: input, namesByKey: namesByKey, cells: &cells,

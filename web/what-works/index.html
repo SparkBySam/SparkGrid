@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>What works in Spark Grid — .xlsx, CSV, formulas, and charts</title>
-  <meta name="description" content="What Spark Grid 1.1 does with your .xlsx and CSV files: what opens and saves, which formulas calculate, what formatting comes through, and what is not there yet." />
+  <meta name="description" content="What Spark Grid 1.5 does with your .xlsx and CSV files: what opens and saves, which formulas calculate, what formatting comes through, and what is not there yet." />
   <link rel="canonical" href="https://sparkgridapp.com/what-works" />
   <meta property="og:title" content="What works in Spark Grid" />
   <meta property="og:description" content="What opens, what calculates, what comes through, and what is not there yet. Spark Grid 1.1 for Mac." />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/changelog">What’s in 1.3</a>
+      <a href="/changelog">What’s in 1.5</a>
       <a href="/changelog">Changelog</a>
       <a href="/support">Support</a>
       <a href="/press">Press</a>
@@ -43,7 +43,7 @@
   </header>
   <article class="page">
     <h1>What works</h1>
-    <p>Last updated: November 6, 2026 · Spark Grid 1.3</p>
+    <p>Last updated: November 19, 2026 · Spark Grid 1.5</p>
     <p class="pitch">
       You have a workbook already. Here is what Spark Grid does with it, and what it doesn’t do yet.
     </p>
@@ -56,6 +56,10 @@
     <h2>Files</h2>
     <ul>
       <li><strong>.xlsx</strong> opens and saves. So does <strong>CSV</strong>.</li>
+      <li><strong>Numbers documents</strong> open, with formulas, formats, merged cells, borders, and frozen headers. Save writes a new .xlsx and leaves the Numbers file alone.</li>
+      <li>A start screen with ten templates and your recent files. Each workbook opens in its own window.</li>
+      <li>File &gt; Share sends the workbook, unsaved changes included. Shortcuts actions open a workbook, read or set a cell, and export a PDF or CSV. AppleScript can open, read, write, save, and export.</li>
+      <li>Quick Look (Space in Finder) shows a workbook as it looks in the grid.</li>
       <li>New, Open, Save, Save As, and recent files. Autosave writes a file you have already saved.</li>
       <li>Open from the Open dialog, or drop a file on the app icon.</li>
       <li>Several sheets: add, rename, delete, and switch. Drag a tab to move it. Tabs keep the file’s order, and a new order saves.</li>
@@ -65,16 +69,19 @@
     </ul>
 
     <h2>Formulas</h2>
-    <p>A formula cell shows its result. The formula stays in the formula bar. These 91 functions calculate:</p>
+    <p>A formula cell shows its result. The formula stays in the formula bar. These 259 functions calculate:</p>
     <ul>
-      <li><strong>Math:</strong> SUM, PRODUCT, ABS, ROUND, ROUNDUP, ROUNDDOWN, INT, MOD, POWER, SQRT, SIGN, PI, CEILING, CEILING.MATH, FLOOR, FLOOR.MATH, SUMPRODUCT, SEQUENCE</li>
+      <li><strong>Math:</strong> ABS, ROUND, ROUNDDOWN, ROUNDUP, SUM, SUMPRODUCT, SUMSQ, PRODUCT, INT, TRUNC, MROUND, MOD, QUOTIENT, SIGN, SQRT, SQRTPI, PI, POWER, EXP, LN, LOG, LOG10, FACT, GCD, LCM, EVEN, ODD, CEILING, CEILING.MATH, FLOOR, FLOOR.MATH, COMBIN, RAND, RANDBETWEEN, SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, SINH, COSH, TANH, ASINH, ACOSH, ATANH, DEGREES, RADIANS</li>
       <li><strong>Conditional totals:</strong> SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS, MAXIFS, MINIFS. Criteria can use wildcards.</li>
-      <li><strong>Statistics:</strong> AVERAGE, COUNT, COUNTA, COUNTBLANK, MIN, MAX, MEDIAN, LARGE, SMALL, RANK, RANK.EQ</li>
-      <li><strong>Logic:</strong> IF, IFS, IFERROR, IFNA, AND, OR, NOT, TRUE, FALSE, ISBLANK, ISNUMBER, ISTEXT, ISERROR</li>
-      <li><strong>Lookup:</strong> XLOOKUP, VLOOKUP, HLOOKUP, INDEX, MATCH, XMATCH, ROW, ROWS, COLUMN, COLUMNS</li>
-      <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, VALUE, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER, PROPER, SUBSTITUTE, FIND, SEARCH, EXACT, REPT, CHAR</li>
-      <li><strong>Dates:</strong> DATE, YEAR, MONTH, DAY, WEEKDAY, HOUR, MINUTE, SECOND, EDATE, EOMONTH, TODAY, NOW</li>
+      <li><strong>Statistics:</strong> AVERAGE, AVERAGEA, COUNT, COUNTA, COUNTBLANK, COUNTUNIQUE, MIN, MINA, MAX, MAXA, MEDIAN, MODE, MODE.SNGL, LARGE, SMALL, RANK, RANK.EQ, RANK.AVG, PERCENTRANK, PERCENTRANK.INC, PERCENTRANK.EXC, PERCENTILE, PERCENTILE.INC, QUARTILE, QUARTILE.INC, STDEV, STDEV.S, STDEV.P, STDEVP, STDEVA, STDEVPA, VAR, VAR.S, VAR.P, VARP, VARA, VARPA, GEOMEAN, HARMEAN, DEVSQ, AVEDEV, SKEW, SKEW.P, KURT, TRIMMEAN, STANDARDIZE, FISHER, FISHERINV, CORREL, PEARSON, RSQ, COVARIANCE.S, COVARIANCE.P, COVAR, SLOPE, INTERCEPT, FORECAST, FORECAST.LINEAR, PERMUT, NORM.DIST, NORMDIST, NORM.S.DIST, NORMSDIST, NORM.INV, NORMINV, NORM.S.INV, NORMSINV</li>
+      <li><strong>Logic and information:</strong> IF, IFS, IFERROR, IFNA, LET, AND, OR, NOT, XOR, SWITCH, TRUE, FALSE, NA, ISBLANK, ISNUMBER, ISTEXT, ISNONTEXT, ISLOGICAL, ISERROR, ISERR, ISNA, ISEVEN, ISODD, N, TYPE, ERROR.TYPE</li>
+      <li><strong>Lookup and references:</strong> XLOOKUP, VLOOKUP, HLOOKUP, LOOKUP, INDEX, MATCH, XMATCH, INDIRECT, OFFSET, ADDRESS, CHOOSE, ROW, ROWS, COLUMN, COLUMNS, HYPERLINK, GETPIVOTDATA</li>
+      <li><strong>Spilling results:</strong> FILTER, SORT, SORTBY, UNIQUE, SEQUENCE, RANDARRAY, TRANSPOSE, VSTACK, HSTACK, TAKE, DROP, CHOOSECOLS, CHOOSEROWS, WRAPROWS, WRAPCOLS, TOCOL, TOROW, TEXTSPLIT. Results fill the cells below and beside the formula; =SUM(C1#) uses all of them. A range, or a function given one, typed on its own spills too: =A1:A10, =LEN(A1:A10). Lists typed in a formula work: {1,2;3,4}.</li>
+      <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, VALUE, NUMBERVALUE, LEFT, RIGHT, MID, LEN, TRIM, CLEAN, UPPER, LOWER, PROPER, SUBSTITUTE, REPLACE, FIND, SEARCH, EXACT, REPT, CHAR, CODE, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, FIXED, DOLLAR, T</li>
+      <li><strong>Dates:</strong> DATE, DATEVALUE, TIME, TIMEVALUE, YEAR, MONTH, DAY, WEEKDAY, WEEKNUM, ISOWEEKNUM, HOUR, MINUTE, SECOND, EDATE, EOMONTH, DAYS, DAYS360, DATEDIF, YEARFRAC, NETWORKDAYS, WORKDAY, TODAY, NOW</li>
+      <li><strong>Financial:</strong> PMT, IPMT, PPMT, CUMIPMT, CUMPRINC, ISPMT, FV, PV, NPER, RATE, NPV, XNPV, IRR, XIRR, MIRR, EFFECT, NOMINAL, SLN, SYD, DDB, DB</li>
     </ul>
+    <p>Functions that take one value, such as LEN or IF, work through a range inside SUM, SUMPRODUCT, MAX and FILTER: =SUM(LEN(A1:A8)), =MAX(IF(B1:B8&lt;50,B1:B8)). Answers were checked against Excel by typing the same formulas into both, more than 500 of them.</p>
     <p>Any other function shows <code>#NAME?</code>. Missing a function you use? <a href="mailto:help@sparkgridapp.com?subject=Function%20request">Tell Sam which one</a>.</p>
 
     <h2>Formatting</h2>
@@ -83,7 +90,8 @@
       <li>Number formats keep the file’s format code: thousands separators, the currency symbol, and the date and time pattern.</li>
       <li>Conditional formatting: highlights, color scales, data bars, and three icon sets.</li>
       <li>Formatting comes back the same when you save and reopen, including in files with conditional formatting.</li>
-      <li>Saving keeps what Spark Grid doesn’t show or edit yet: grouped rows, tab colors, protection, page setup, links, tables, and pivot tables stay in the file.</li>
+      <li>Paste Special (values, formats, transposed), Format Painter, Fill Down and Fill Right, and Clear.</li>
+      <li>Saving keeps what Spark Grid doesn’t show or edit yet in the file, such as page headers and footers.</li>
       <li>Merged cells. Titles draw across the merge at full size.</li>
       <li>Freeze panes. Frozen rows and columns stay put when you scroll.</li>
     </ul>
@@ -108,7 +116,12 @@
       <li>Find Duplicates: pick the columns that must match, then highlight or remove repeated rows.</li>
       <li>Tables with a styled header and banded rows, made from Insert &gt; Table or kept from your files.</li>
       <li>Sheet tab colors, AutoSum (⇧⌘T), and the sum, average, and count of a selection.</li>
-      <li>Print preview for the selection, the used range, the sheet, or the workbook.</li>
+      <li>Pivot tables: make one from a range with rows, columns, values, and filters, group dates, add a PivotChart, and read it with GETPIVOTDATA. Pivot tables in your files show and refresh. They save as pivot tables Excel can refresh.</li>
+      <li>Group and fold rows and columns, from the Sheet menu or your files.</li>
+      <li>Protect a sheet with an optional password, choose which cells stay open, keep ranges editable with Allow Edit Ranges, or lock a range on its own.</li>
+      <li>Links to web pages, email addresses, sheets, cells, and named ranges (⌘K), and HYPERLINK. ⌘-click follows them.</li>
+      <li>Text to Columns, by delimiter or fixed width.</li>
+      <li>Print preview for the selection, the used range, the sheet, or the workbook. Print areas, page breaks, repeated frozen rows, and Export as PDF.</li>
     </ul>
 
     <h2>Big workbooks</h2>
@@ -117,12 +130,13 @@
       <li>An edit on the sheet you’re looking at shows up near-instantly. Other sheets catch up in the background.</li>
       <li>Saving doesn’t freeze the window. Switching sheets is immediate.</li>
       <li>Scrolling back to a page you’ve seen is instant. The first visit to a far part of a very large sheet can still hitch.</li>
+      <li>Scroll bars you can drag, with settings for when they show.</li>
     </ul>
 
     <h2>Not there yet</h2>
     <ul>
-      <li>Spark Grid is not Excel or Numbers. Pivot tables stay in the file, but you can’t make or change them. No live collaboration.</li>
-      <li>Pressing Space in Finder doesn’t preview a workbook in Spark Grid.</li>
+      <li>Spark Grid is not Excel or Numbers. Calculated fields in pivot tables, macros, and live collaboration are not there.</li>
+      <li>Pivot tables that group dates open in Excel as plain values.</li>
     </ul>
 
     <h2>Fixed in 1.1.1</h2>
@@ -146,7 +160,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/changelog">What’s in 1.3</a>
+      <a href="/changelog">What’s in 1.5</a>
       <a href="/what-works">What works</a>
       <a href="/changelog">Changelog</a>
       <a href="/press">Press kit</a>

@@ -193,6 +193,7 @@ private struct NameBox: View {
       .onChange(of: viewModel.nameBoxText) { _, next in
         if !focused { text = next }
       }
+      .onChange(of: viewModel.nameBoxFocusRequests) { _, _ in focused = true }
       .onChange(of: focused) { _, isFocused in
         if isFocused {
           // A click selects the whole address, so typing replaces it.
@@ -225,8 +226,17 @@ private struct NameBox: View {
 @MainActor
 enum GridFocus {
   static func returnToGrid() {
-    guard let window = NSApp.keyWindow, let root = window.contentView else { return }
-    if let grid = find(in: root) {
+    guard let window = NSApp.keyWindow, let root = window.contentView,
+      let grid = find(in: root)
+    else { return }
+    window.makeFirstResponder(grid)
+    // A text field that loses its focus state lets go of the keyboard a moment later and can
+    // leave nothing focused, so typing after the name box went nowhere (found in the 1.6 bug
+    // test). Take the keyboard again once that has happened.
+    DispatchQueue.main.async { [weak window, weak grid] in
+      guard let window, let grid, window.firstResponder !== grid,
+        !(window.firstResponder is NSText)
+      else { return }
       window.makeFirstResponder(grid)
     }
   }

@@ -65,6 +65,24 @@ struct SpreadsheetFormatCommands: Commands {
       }
       .disabled(viewModel == nil)
 
+      Button("Add Fonts…") {
+        ImportedFonts.chooseAndAdd(in: NSApp.keyWindow) { families in
+          viewModel?.fontListRevision += 1
+          let alert = NSAlert()
+          if families.isEmpty {
+            alert.messageText = "No fonts were added"
+            alert.informativeText = "Spark Grid could not read those files as fonts."
+          } else {
+            alert.messageText =
+              families.count == 1 ? "Added \(families[0])" : "Added \(families.count) fonts"
+            alert.informativeText =
+              (families.count > 1 ? families.joined(separator: ", ") + ". " : "")
+              + "Choose it from the font menu in the toolbar. A file that uses it shows the standard font on a Mac that does not have it."
+          }
+          alert.runModal()
+        }
+      }
+      Divider()
       Button("Cell Format…") {
         guard let viewModel else { return }
         CellFormatViewerPresenter.present(from: viewModel)

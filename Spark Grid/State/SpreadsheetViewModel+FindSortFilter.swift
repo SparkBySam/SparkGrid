@@ -193,10 +193,29 @@ extension SpreadsheetViewModel {
     return matches
   }
 
+  /// The query as a pattern, or nil when Regular Expression is off or the pattern is unfinished.
+  var findRegex: NSRegularExpression? {
+    guard findUsesRegex, !findQuery.isEmpty else { return nil }
+    var pattern = findQuery
+    if findEntireCell { pattern = "^(?:" + pattern + ")$" }
+    return try? NSRegularExpression(
+      pattern: pattern, options: findMatchCase ? [] : [.caseInsensitive])
+  }
+
+  /// True when Regular Expression is on and the query is not a pattern yet (such as `(ab`).
+  var findPatternIsInvalid: Bool {
+    findUsesRegex && !findQuery.isEmpty && findRegex == nil
+  }
+
   private func cellMatchesFind(at address: CellAddress) -> Bool {
     let query = findQuery
     guard !query.isEmpty else { return false }
     let haystack = displayString(at: address)
+    if findUsesRegex {
+      guard let regex = findRegex else { return false }
+      let whole = NSRange(haystack.startIndex..., in: haystack)
+      return regex.firstMatch(in: haystack, range: whole) != nil
+    }
     if findEntireCell {
       if findMatchCase {
         return haystack == query
@@ -225,7 +244,7 @@ extension SpreadsheetViewModel {
       return false
     }
 
-    if findEntireCell {
+    if findEntireCell, !findUsesRegex {
       setCellValue(findReplaceText, at: address)
       return true
     }
@@ -238,6 +257,12 @@ extension SpreadsheetViewModel {
 
   private func replacing(in text: String, query: String, replacement: String) -> String? {
     guard !query.isEmpty else { return nil }
+    if findUsesRegex {
+      guard let regex = findRegex else { return nil }
+      let whole = NSRange(text.startIndex..., in: text)
+      guard regex.firstMatch(in: text, range: whole) != nil else { return nil }
+      return regex.stringByReplacingMatches(in: text, range: whole, withTemplate: replacement)
+    }
     if findMatchCase {
       guard text.contains(query) else { return nil }
       return text.replacingOccurrences(of: query, with: replacement)

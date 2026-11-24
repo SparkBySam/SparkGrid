@@ -120,6 +120,15 @@ struct SpreadsheetCommands: Commands {
       Button("Find Previous") { viewModel?.findPrevious() }
         .keyboardShortcut("g", modifiers: [.command, .shift])
         .disabled(viewModel == nil)
+
+      Divider()
+
+      // Type a cell (U37), a range, Sheet2!A1 or a name in the name box and press Return.
+      Button("Go To…") { viewModel?.nameBoxFocusRequests += 1 }
+        .keyboardShortcut("g", modifiers: .control)
+        .disabled(viewModel == nil)
+      Button("Select Blank Cells") { viewModel?.selectBlankCells() }
+        .disabled(viewModel == nil)
     }
   }
 }

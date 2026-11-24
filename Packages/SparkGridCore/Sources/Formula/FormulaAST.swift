@@ -55,6 +55,10 @@ public nonisolated struct FormulaRef: Equatable, Hashable, Sendable {
 public nonisolated indirect enum FormulaExpr: Equatable, Hashable {
   /// `G1#` parses as a call of this function on `G1`, the name files save it under.
   public static let anchorArrayFunction = "ANCHORARRAY"
+  /// `X:Y` where X or Y is not a plain cell, as in `B1:INDEX(B:B,5)` or `INDIRECT("B1"):B9`.
+  public static let rangeOperatorFunction = "SG.RANGE"
+  /// `X Y`, two references with a space between: the cells they share.
+  public static let intersectionFunction = "SG.INTERSECT"
 
   case number(Double)
   case string(String)
@@ -66,11 +70,19 @@ public nonisolated indirect enum FormulaExpr: Equatable, Hashable {
   case unary(UnaryOp, FormulaExpr)
   case binary(BinaryOp, FormulaExpr, FormulaExpr)
   case call(String, [FormulaExpr])
+  /// An argument left out between commas, as in `IF(A2>1,,2)` or `VLOOKUP(A1,B:C,2,)`. It reads
+  /// as a blank: 0 to arithmetic and FALSE to a yes-or-no argument, as other apps read it.
+  case missing
+  /// A list typed in the formula, as in `{1,2,3}`, `{1;2;3}` or `{1,2;3,4}`: rows of numbers,
+  /// text, TRUE/FALSE or errors. Commas separate items in a row, semicolons separate rows.
+  case array([[FormulaExpr]])
 }
 
 public nonisolated enum UnaryOp: Equatable, Hashable {
   case negate
   case plus
+  /// Postfix `%`: the value divided by 100.
+  case percent
 }
 
 public nonisolated enum BinaryOp: Equatable, Hashable {

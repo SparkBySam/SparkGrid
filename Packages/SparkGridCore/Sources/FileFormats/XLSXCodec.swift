@@ -97,6 +97,7 @@ public nonisolated enum XLSXCodec {
         themeScheme: themeScheme
       )
       importSparkCharts(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
+      importSparkFormulas(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importSparkPivots(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importRangeLocks(into: &sheet, archiveData: archiveData, sheetIndex: sheets.count)
       importSheetImages(
@@ -231,6 +232,7 @@ public nonisolated enum XLSXCodec {
         )
       }
       importSparkCharts(into: &sheet, archiveData: data, sheetIndex: index)
+      importSparkFormulas(into: &sheet, archiveData: data, sheetIndex: index)
       importSheetImages(into: &sheet, archiveData: data, worksheetPath: path)
       let package = self.package
       importFileExtras(
@@ -252,6 +254,7 @@ public nonisolated enum XLSXCodec {
       )
       let package = self.package
       importWorkbookExtras(into: &workbook, package: { package.data(for: $0) })
+      importCustomProperties(into: &workbook, package: { package.data(for: $0) })
       return workbook
     }
   }
@@ -462,7 +465,8 @@ public nonisolated enum XLSXCodec {
     for raw in globals + locals {
       let key = raw.name.uppercased()
       if raw.localSheet != nil, named[key] != nil { continue }
-      let formula = raw.formula.trimmingCharacters(in: .whitespacesAndNewlines)
+      let formula = ExcelFutureFunctions.unprefixed(
+        raw.formula.trimmingCharacters(in: .whitespacesAndNewlines))
       guard !formula.isEmpty else { continue }
       named[key] = DefinedNameFormula.make(
         name: raw.name,
@@ -531,9 +535,10 @@ public nonisolated enum XLSXCodec {
       if let open = fTag.range(of: ">"), fTag.contains("</f>") {
         let after = fTag[open.upperBound...]
         if let close = after.range(of: "</f>") {
-          let formula = decodeXMLEntities(
-            String(after[..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-          )
+          let formula = ExcelFutureFunctions.unprefixed(
+            decodeXMLEntities(
+              String(after[..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            ))
           if !formula.isEmpty {
             masters[sharedIndex] = SharedMaster(address: address, formula: formula)
             let raw = formula.hasPrefix("=") ? formula : "=\(formula)"
@@ -807,7 +812,7 @@ public nonisolated enum XLSXCodec {
       .replacingOccurrences(of: "&apos;", with: "'")
   }
 
-  private static func address(fromA1 ref: String) -> CellAddress? {
+  static func address(fromA1 ref: String) -> CellAddress? {
     guard let parsed = A1Reference.parseAddress(ref) else { return nil }
     return CellAddress(row: parsed.row, col: parsed.col)
   }
@@ -978,7 +983,8 @@ public nonisolated enum XLSXCodec {
   }
 
   private static func cellRawValue(_ cell: CoreXLSX.Cell, sharedStrings: SharedStrings?) -> String {
-    if let formula = cell.formula?.value, !formula.isEmpty {
+    if let stored = cell.formula?.value, !stored.isEmpty {
+      let formula = ExcelFutureFunctions.unprefixed(stored)
       return formula.hasPrefix("=") ? formula : "=\(formula)"
     }
     if cell.type == .bool, let value = cell.value {
@@ -1431,7 +1437,9 @@ public nonisolated enum XLSXCodec {
     // Workbook relationships: sheets, then styles, shared strings and theme, then pivot caches.
     let pivotCaches = appendPivotCacheParts(
       workbook, numbers: numbers, firstID: sheetCount + 4, into: &files)
-    files["_rels/.rels"] = rootRelsXML
+    let customProperties = customPropertiesPart(for: workbook)
+    if let customProperties { files[customPropertiesPath] = customProperties }
+    files["_rels/.rels"] = rootRelsXML(includeCustomProperties: customProperties != nil)
     files["xl/workbook.xml"] = workbookXML(
       workbook, resultsWritten: includeFormulaCaches, pivotCaches: pivotCaches.element)
     var extraRelationships = pivotCaches.rels
@@ -1463,6 +1471,9 @@ public nonisolated enum XLSXCodec {
       if let chartsData = sparkChartsJSON(workbook.sheets[index].charts) {
         files["xl/sparkGrid/charts\(index + 1).json"] = chartsData
       }
+      if let formulasData = sparkFormulasJSON(workbook.sheets[index]) {
+        files["xl/sparkGrid/formulas\(index + 1).json"] = formulasData
+      }
       if let pivotsData = sparkPivotsJSON(workbook.sheets[index].fileExtras.sparkPivots) {
         files["xl/sparkGrid/pivots\(index + 1).json"] = pivotsData
       }
@@ -1479,7 +1490,8 @@ public nonisolated enum XLSXCodec {
     files["[Content_Types].xml"] = contentTypesXML(
       sheetCount: sheetCount,
       drawingOverrides: drawingContentTypeOverrides(workbook: workbook)
-        + keptPartContentTypes(files),
+        + keptPartContentTypes(files)
+        + (files[customPropertiesPath] != nil ? customPropertiesContentType : ""),
       imageDefaults: imageContentTypeDefaults(workbook: workbook),
       includeTheme: workbook.xlsxThemeData != nil,
       includeVML: files.keys.contains { $0.hasSuffix(".vml") }
@@ -1530,13 +1542,15 @@ public nonisolated enum XLSXCodec {
     return Data(xml.utf8)
   }
 
-  private static let rootRelsXML = Data(
-    """
-    <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-    </Relationships>
-    """.utf8)
+  private static func rootRelsXML(includeCustomProperties: Bool) -> Data {
+    Data(
+      """
+      <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>\(includeCustomProperties ? customPropertiesRelationship : "")
+      </Relationships>
+      """.utf8)
+  }
 
   private static func workbookXML(
     _ workbook: Workbook, resultsWritten: Bool, pivotCaches: String = ""
@@ -1569,7 +1583,11 @@ public nonisolated enum XLSXCodec {
       .sorted { $0.name.uppercased() < $1.name.uppercased() }
     let body =
       items.map { named -> String in
-        let formula = named.referenceText
+        // A formula name keeps Excel's prefixes the way cell formulas do; a range has none.
+        let formula =
+          named.resolvesToRange
+          ? named.referenceText
+          : ExcelFutureFunctions.prefixed(ExcelFutureFunctions.anchorArrays(named.referenceText))
         return
           #"<definedName name="\#(escapeXML(named.name))">\#(escapeXML(formula))</definedName>"#
       }.joined() + sheetBuiltInNamesXML(workbook.sheets)
@@ -1754,7 +1772,10 @@ public nonisolated enum XLSXCodec {
         appendCell(
           sheet.cell(at: address),
           at: address,
-          spill: spills.isEmpty ? nil : spills[address],
+          // A blocked spill is saved as a one-cell array formula, so it opens as one.
+          spill: spills[address]
+            ?? (sheet.fileExtras.blockedSpills.contains(address)
+              ? CellRange(start: address, end: address) : nil),
           stringIndex: stringIndex,
           formatIndex: formatIndex,
           includeFormulaCaches: includeFormulaCaches,
@@ -2064,6 +2085,8 @@ public nonisolated enum XLSXCodec {
 
   private static func exportCellKind(_ cell: Cell) -> ExportCellKind {
     if FormulaSyntax.isFormula(cell.raw) { return .formula }
+    // Text such as 02134 is saved as text, so other apps keep its zero.
+    if cell.isText == true, !cell.raw.isEmpty { return .sharedString }
     // A typed TRUE or FALSE is a boolean, saved as one so other apps read it the same way.
     let upper = cell.raw.uppercased()
     if upper == "TRUE" || upper == "FALSE" { return .boolean }
@@ -2343,7 +2366,7 @@ private nonisolated struct PreparedZipEntry: Sendable {
   var uncompressed: UInt32
 }
 
-private nonisolated enum MinimalZip {
+nonisolated enum MinimalZip {
   static func archive(files: [String: Data]) -> Data? {
     let paths = files.keys.sorted()
     guard let entryCount = UInt16(exactly: paths.count) else { return nil }

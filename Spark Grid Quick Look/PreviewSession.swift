@@ -10,6 +10,8 @@ final class PreviewSession {
   private(set) var workbook: Workbook
   private(set) var isCSV: Bool
   private(set) var isDirty = false
+  /// Display text and styles, with results for formulas the file saved none for.
+  private(set) var presentation: PreviewPresentation
 
   var activeSheetIndex: Int {
     get { workbook.activeSheetIndex }
@@ -37,19 +39,32 @@ final class PreviewSession {
     activeSheet.maxPopulatedRow + 1 > Self.maxPreviewRows
   }
 
-  init(fileURL: URL, workbook: Workbook) {
+  /// `presentation` is made in the background, before the session.
+  init(fileURL: URL, presentation: PreviewPresentation) {
     self.fileURL = fileURL
-    self.workbook = workbook
+    self.workbook = presentation.workbook
+    self.presentation = presentation
     self.isCSV = Self.isDelimitedText(url: fileURL)
   }
 
+  /// Some formulas have no saved result and the workbook is too large to calculate here.
+  var hasUncalculatedFormulas: Bool { presentation.hasUncalculatedFormulas }
+
   func displayValue(row: Int, column: Int) -> String {
-    let cell = activeSheet.cell(at: CellAddress(row: row, col: column))
-    if FormulaSyntax.isFormula(cell.raw) {
-      let value = cell.cachedFormulaValue ?? .blank
-      return CellFormatRenderer.displayText(for: value, format: cell.format, fallbackRaw: "")
-    }
-    return CellFormatRenderer.displayText(raw: cell.raw, format: cell.format)
+    presentation.text(sheet: workbook.activeSheetIndex, at: CellAddress(row: row, col: column))
+  }
+
+  func style(row: Int, column: Int, darkMode: Bool) -> PreviewPresentation.Style {
+    presentation.style(
+      sheet: workbook.activeSheetIndex, at: CellAddress(row: row, col: column), darkMode: darkMode)
+  }
+
+  func rowHeight(_ row: Int) -> CGFloat {
+    max(activeSheet.rowHeight(for: row, default: 22), 14)
+  }
+
+  func columnWidth(_ column: Int) -> CGFloat {
+    CGFloat(presentation.columnWidth(sheet: workbook.activeSheetIndex, column: column, default: 80))
   }
 
   func rawValue(row: Int, column: Int) -> String {
@@ -69,6 +84,8 @@ final class PreviewSession {
     }
     sheet.setCell(cell, at: address)
     workbook.activeSheet = sheet
+    // An edited formula has no saved result; calculating again also updates what reads it.
+    presentation = PreviewPresentation.make(workbook)
     isDirty = true
   }
 

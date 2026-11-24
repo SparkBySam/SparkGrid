@@ -26,10 +26,7 @@ extension FormulaEvaluator {
         return .number(number - divisor * (number / divisor).rounded(.down))
       }
     case "POWER":
-      return binaryNumber(args) { base, exponent in
-        let result = pow(base, exponent)
-        return result.isFinite ? .number(result) : .error(.num)
-      }
+      return binaryNumber(args) { base, exponent in Self.power(base, exponent) }
     case "CEILING", "CEILING.MATH":
       return roundToMultiple(args, rule: .up)
     case "FLOOR", "FLOOR.MATH":
@@ -101,6 +98,11 @@ extension FormulaEvaluator {
           .replacingOccurrences(of: "$", with: "")
         if cleaned.hasSuffix("%"), let n = Double(cleaned.dropLast()) { return .number(n / 100) }
         if let n = Double(cleaned) { return .number(n) }
+        // Dates and times read as typing them would: VALUE("3/15/2026"), VALUE("10:30").
+        if let reading = TypedEntry.read(text) { return .number(reading.value) }
+        if let serial = Self.dateSerial(text.trimmingCharacters(in: .whitespaces)), serial >= 1 {
+          return .number(serial)
+        }
         return .error(.value)
       }
     case "EXACT":
@@ -240,13 +242,14 @@ extension FormulaEvaluator {
   private func properCase(_ text: String) -> String {
     var result = ""
     var startOfWord = true
+    // A letter after anything but a letter starts a word, as in other apps: 2Nd, O'Neil, 3D.
     for character in text {
       if character.isLetter {
-        result += startOfWord ? character.uppercased() : character.lowercased()
+        result += Self.changeCase(String(character), upper: startOfWord)
         startOfWord = false
       } else {
         result.append(character)
-        startOfWord = !character.isNumber && character != "'"
+        startOfWord = true
       }
     }
     return result

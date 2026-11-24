@@ -16,6 +16,15 @@ public enum ChartPreviewSeries {
     public let id: Int
     public let label: String
     public let value: Double
+    /// The error bar's plus-or-minus amount, when the chart has an error bar column.
+    public let error: Double?
+
+    public init(id: Int, label: String, value: Double, error: Double? = nil) {
+      self.id = id
+      self.label = label
+      self.value = value
+      self.error = error
+    }
   }
 
   public struct ColumnOption: Identifiable, Equatable {
@@ -55,6 +64,7 @@ public enum ChartPreviewSeries {
       valueColumn: resolved.valueColumn,
       hasHeaderRow: resolved.hasHeaderRow,
       valueMode: resolved.valueMode,
+      errorColumn: chart.drawsErrorBars ? chart.errorBarColumn : nil,
       labelFor: labelFor,
       numberFor: numberFor
     )
@@ -197,6 +207,7 @@ public enum ChartPreviewSeries {
     valueColumn: Int,
     hasHeaderRow: Bool,
     valueMode: SheetChart.ValueMode,
+    errorColumn: Int? = nil,
     labelFor: (CellAddress) -> String,
     numberFor: (CellAddress) -> Double?
   ) -> [Point] {
@@ -215,7 +226,13 @@ public enum ChartPreviewSeries {
         let raw = labelFor(CellAddress(row: row, col: categoryColumn))
           .trimmingCharacters(in: .whitespacesAndNewlines)
         let label = raw.isEmpty ? "\(index + 1)" : raw
-        result.append(Point(id: index, label: label, value: value))
+        var error: Double?
+        if let errorColumn, let amount = numberFor(CellAddress(row: row, col: errorColumn)),
+          amount.isFinite
+        {
+          error = abs(amount)
+        }
+        result.append(Point(id: index, label: label, value: value, error: error))
         index += 1
       }
       return result

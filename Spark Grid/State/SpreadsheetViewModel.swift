@@ -62,6 +62,10 @@ final class SpreadsheetViewModel {
     }
   }
   private var savedSelections: [UUID: SavedSelection] = [:]
+  /// Format › Add Fonts bumps this so the toolbar lists the new fonts.
+  var fontListRevision = 0
+  /// Edit › Go To bumps this; the name box takes the keyboard and selects its text.
+  var nameBoxFocusRequests = 0
   var selectionAnchor: CellAddress = .origin
   var selectionEnd: CellAddress = .origin
   /// All selected regions. The last entry is the active range (matches anchor/end).
@@ -125,6 +129,9 @@ final class SpreadsheetViewModel {
   var findQuery = ""
   var findReplaceText = ""
   var findMatchCase = false
+  /// Find › Regular Expression: the query is a pattern, and Replace can use $1, $2 for its
+  /// groups (asked for on Reddit, Nov 19, for tidying CSV files).
+  var findUsesRegex = false
   var findEntireCell = false
   var findScope: FindScope = .sheet
   /// Stable range for Find-in-Selection so jumping to a match does not shrink search scope.
@@ -362,6 +369,26 @@ final class SpreadsheetViewModel {
     }
   }
 
+  /// Works out every formula the file saved no result for, as opening does, and waits for
+  /// it: Shortcuts read cells straight after opening a file.
+  func calculateMissingResults() async {
+    guard workbookNeedsOpenCalculation() else { return }
+    // The pass opening started is not needed once this one is in.
+    openCalculationGeneration &+= 1
+    let snapshot = workbookCopyForCalculation(workbook)
+    let outcome = await Task.detached(priority: .userInitiated) {
+      CrossSheetBackground.calculateFormulasWithoutCaches(in: snapshot)
+    }.value
+    var results: [String: [CellAddress: CellValue]] = [:]
+    for (name, values) in outcome.valuesBySheet {
+      results[name.lowercased()] = values
+    }
+    formulaEngine.installCalculatedResults(results)
+    structureRevision &+= 1
+    hiddenRowsCache = nil
+    syncSpills()
+  }
+
   /// Cell dictionaries the background calculation owns. The open grid keeps the original.
   private func workbookCopyForCalculation(_ workbook: Workbook) -> Workbook {
     var copy = workbook
@@ -475,6 +502,18 @@ final class SpreadsheetViewModel {
     selectionAnchor = clamped.start
     selectionEnd = clamped.end
     selectionRanges = [clamped]
+    noteSelectionChanged()
+  }
+
+  /// Several ranges at once (Select Blank Cells). The first range's top-left is the active cell.
+  func replaceSelection(withRanges ranges: [CellRange]) {
+    guard !ranges.isEmpty else { return }
+    let clamped = ranges.map { CellRange(start: clamp($0.start), end: clamp($0.end)) }
+    let first = clamped[0].normalized
+    selectionAnchor = CellAddress(row: first.minRow, col: first.minCol)
+    selectionEnd = CellAddress(row: first.maxRow, col: first.maxCol)
+    // The active range is the last one; keep the first blank cell active.
+    selectionRanges = Array(clamped.dropFirst()) + [clamped[0]]
     noteSelectionChanged()
   }
 
@@ -1389,6 +1428,8 @@ final class SpreadsheetViewModel {
     }
     workbook = next
     selection = .origin
+    // The Find bar's matches were for the sheet that was showing.
+    invalidateFindMatches()
     syncEditTextFromSelection()
     isEditing = false
   }

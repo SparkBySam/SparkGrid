@@ -24,14 +24,12 @@ extension EnvironmentValues {
 
 final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   static weak var current: SparkGridAppDelegate?
-  var onOpenFile: ((URL) -> Void)? {
-    didSet { flushPendingOpenURL() }
-  }
-  weak var documentStore: SpreadsheetDocumentStore? {
-    didSet { flushPendingOpenURL() }
-  }
+  /// The front workbook window's document.
+  var documentStore: SpreadsheetDocumentStore? { WorkbookWindows.shared.frontStore }
   var spreadsheetViewModel: SpreadsheetViewModel?
-  private var pendingOpenURL: URL?
+  /// Files asked for before any workbook window was up.
+  private var pendingOpenURLs: [URL] = []
+  private var offeredCrashRecovery = false
 
   private var printingResponder: PrintingResponder?
   private var printKeyMonitor: Any?
@@ -70,53 +68,30 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     application(NSApp, open: urls)
   }
 
+  /// Every file asked for opens: the first in the front window when it is unused, the rest in
+  /// windows of their own.
   func application(_ application: NSApplication, open urls: [URL]) {
-    guard let url = urls.first else { return }
-    openExternalFile(url)
+    guard WorkbookWindows.shared.openWindow != nil else {
+      pendingOpenURLs += urls
+      return
+    }
+    for url in urls { WorkbookWindows.shared.open(url) }
   }
 
-  private func openExternalFile(_ url: URL) {
-    if let onOpenFile {
-      onOpenFile(url)
-    } else if let documentStore {
-      do {
-        try documentStore.load(from: url)
-      } catch {
-        pendingOpenURL = url
-        let alert = NSAlert()
-        alert.messageText = "Couldn't Open File"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-      }
-    } else {
-      pendingOpenURL = url
+  /// The first workbook window is up: offer crash recovery once, then open what was waiting.
+  func workbookWindowIsReady() {
+    if !offeredCrashRecovery {
+      offeredCrashRecovery = true
+      offerCrashRecoveryIfNeeded()
     }
-  }
-
-  private func flushPendingOpenURL() {
-    guard let pending = pendingOpenURL else { return }
-    if let onOpenFile {
-      pendingOpenURL = nil
-      onOpenFile(pending)
-    } else if let documentStore {
-      pendingOpenURL = nil
-      do {
-        try documentStore.load(from: pending)
-      } catch {
-        let alert = NSAlert()
-        alert.messageText = "Couldn't Open File"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-      }
-    }
+    let waiting = pendingOpenURLs
+    pendingOpenURLs = []
+    for url in waiting { WorkbookWindows.shared.open(url) }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     Self.current = self
+    ImportedFonts.registerSaved()
     takeOverOpenDocumentsEvent()
     installPrintKeyMonitor()
     installSaveKeyMonitor()
@@ -204,20 +179,19 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard let documentStore else { return .terminateNow }
-    return documentStore.terminationReply()
+    WorkbookWindows.shared.terminationReply()
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    // Settings and other windows close on their own. Only the spreadsheet window asks to save,
-    // and closing it closes the document; Settings used to take that path and quit the app.
-    guard sender.identifier?.rawValue.hasPrefix("main") == true, let documentStore else {
-      return true
-    }
-    return documentStore.allowWindowToClose(sender)
+    // Settings and other windows close on their own. A workbook window asks to save its own
+    // document; Settings used to take that path and quit the app.
+    guard let store = WorkbookWindows.shared.store(for: sender) else { return true }
+    return store.allowWindowToClose(sender)
   }
 
   func resolvedSpreadsheetViewModel() -> SpreadsheetViewModel? {
+    // The front window's sheet, so Print and Export act on the workbook in front.
+    if let front = documentStore?.activeViewModel { return front }
     if let spreadsheetViewModel { return spreadsheetViewModel }
     guard let documentStore else { return nil }
     if let activeViewModel = documentStore.activeViewModel { return activeViewModel }
@@ -228,8 +202,10 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     _ viewModel: SpreadsheetViewModel, store: SpreadsheetDocumentStore
   ) {
     spreadsheetViewModel = viewModel
-    documentStore = store
     store.activeViewModel = viewModel
+    // The store counts this view model's edits from now. Looked at first when asked to save, an
+    // edit made before that, still being typed, was taken as the starting point and not asked about.
+    store.documentDidChange()
   }
 
   func unregisterSpreadsheetViewModel(
@@ -283,7 +259,7 @@ final class SparkGridAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         window.delegate = self
       }
       installPrintingResponder(in: window)
-      if window.identifier?.rawValue.hasPrefix("main") == true {
+      if window.identifier?.rawValue.hasPrefix("workbook") == true {
         // The title bar takes the toolbar's ground, so dark mode is one warm graphite band.
         window.titlebarAppearsTransparent = true
         window.backgroundColor = SparkTheme.chrome

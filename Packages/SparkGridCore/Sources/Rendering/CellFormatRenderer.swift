@@ -21,6 +21,22 @@ public enum CellFormatRenderer {
     "Menlo",
   ]
 
+  /// Every font family on this Mac and those added to Spark Grid, for the font menu under the
+  /// common ones (a Reddit request, Nov 19). Hidden system families (names starting with ".")
+  /// are left out.
+  @MainActor public private(set) static var installedFontFamilies: [String] = familiesNow()
+
+  /// Reads the families again after fonts are added.
+  @MainActor public static func reloadInstalledFontFamilies() {
+    installedFontFamilies = familiesNow()
+  }
+
+  @MainActor private static func familiesNow() -> [String] {
+    NSFontManager.shared.availableFontFamilies
+      .filter { !$0.hasPrefix(".") }
+      .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+  }
+
   public static func displayText(raw: String, format: CellFormat?) -> String {
     guard let format, !raw.isEmpty else { return raw }
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -485,7 +501,12 @@ public enum CellFormatRenderer {
     }
     fontLock.unlock()
 
-    var font = NSFont(name: family, size: size) ?? NSFont.systemFont(ofSize: size)
+    // Any installed family (Avenir Next, say) has a regular face by family name even when no
+    // face is called exactly that.
+    var font =
+      NSFont(name: family, size: size)
+      ?? NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size)
+      ?? NSFont.systemFont(ofSize: size)
     if format.bold && format.italic {
       font = NSFontManager.shared.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask])
     } else if format.bold {

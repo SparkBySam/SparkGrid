@@ -4,6 +4,43 @@ import Observation
 import SparkGridCore
 import SwiftUI
 
+/// When the grid's scroll bars show.
+enum ScrollBarVisibility: String, CaseIterable, Identifiable {
+  /// As System Settings › Appearance › Show scroll bars says.
+  case automatic
+  /// Always on screen, with their tracks, as classic scroll bars are.
+  case always
+  /// Only while scrolling, or with the pointer at the edge.
+  case whenScrolling
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .automatic: return "Automatic"
+    case .always: return "Always"
+    case .whenScrolling: return "When scrolling"
+    }
+  }
+}
+
+/// How much of the sheet the scroll bars stand for.
+enum ScrollBarLength: String, CaseIterable, Identifiable {
+  /// The rows and columns in use and half a screen more, as other spreadsheet apps do.
+  case rowsInUse
+  /// The whole grid, 1,000 rows and more.
+  case wholeGrid
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .rowsInUse: return "Rows in use"
+    case .wholeGrid: return "Whole grid"
+    }
+  }
+}
+
 enum AppearanceMode: String, CaseIterable, Identifiable, Codable {
   case system
   case light
@@ -144,11 +181,39 @@ final class AppSettings {
   private let autosaveIntervalKey = "autosaveIntervalSeconds"
   private let startScreenKey = "showStartScreen"
   private let shortcutsKey = "keyboardShortcuts"
+  private let scrollBarVisibilityKey = "scrollBarVisibility"
+  private let scrollBarLengthKey = "scrollBarLength"
+
+  /// Posted when a scroll bar setting changes, for the grids to redraw their bars.
+  static let scrollBarsChanged = Notification.Name("SparkGridScrollBarsChanged")
 
   static let autosaveIntervalOptions = [10, 30, 60, 120, 300]
 
   var invertScrollDirection: Bool {
     didSet { defaults.set(invertScrollDirection, forKey: invertScrollKey) }
+  }
+
+  var scrollBarVisibility: ScrollBarVisibility {
+    didSet {
+      defaults.set(scrollBarVisibility.rawValue, forKey: scrollBarVisibilityKey)
+      NotificationCenter.default.post(name: Self.scrollBarsChanged, object: nil)
+    }
+  }
+
+  var scrollBarLength: ScrollBarLength {
+    didSet {
+      defaults.set(scrollBarLength.rawValue, forKey: scrollBarLengthKey)
+      NotificationCenter.default.post(name: Self.scrollBarsChanged, object: nil)
+    }
+  }
+
+  /// Whether the bars stay on screen: the setting, or with Automatic, the system's.
+  var scrollBarsAlwaysShown: Bool {
+    switch scrollBarVisibility {
+    case .always: return true
+    case .whenScrolling: return false
+    case .automatic: return NSScroller.preferredScrollerStyle == .legacy
+    }
   }
 
   var showToolbarLabels: Bool {
@@ -186,6 +251,12 @@ final class AppSettings {
 
   private init() {
     invertScrollDirection = defaults.bool(forKey: invertScrollKey)
+    scrollBarVisibility =
+      defaults.string(forKey: scrollBarVisibilityKey).flatMap(ScrollBarVisibility.init(rawValue:))
+      ?? .automatic
+    scrollBarLength =
+      defaults.string(forKey: scrollBarLengthKey).flatMap(ScrollBarLength.init(rawValue:))
+      ?? .rowsInUse
     showToolbarLabels = defaults.bool(forKey: toolbarLabelsKey)
     if let raw = defaults.string(forKey: appearanceModeKey),
       let mode = AppearanceMode(rawValue: raw)

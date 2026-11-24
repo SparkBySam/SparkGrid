@@ -1,4 +1,6 @@
+import AppIntents
 import AppKit
+import CoreText
 import CoreXLSX
 import Foundation
 import PDFKit
@@ -87,6 +89,17 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { undoRedoAlternatesForEveryStep() })
       results.append(MainActor.assumeIsolated { spillsSurviveMovingCells() })
       results.append(MainActor.assumeIsolated { spillReferencesFollowTheSpill() })
+      results.append(MainActor.assumeIsolated { spillReadersWithoutWaiting() })
+      results.append(MainActor.assumeIsolated { scrollFollowsTheMac() })
+      results.append(MainActor.assumeIsolated { selectBlankCellsAndRegexReplace() })
+      results.append(MainActor.assumeIsolated { moveCellsAndAddFonts() })
+      results.append(MainActor.assumeIsolated { newArrayFunctionsWhenTyped() })
+      results.append(MainActor.assumeIsolated { shortcutsActions() })
+      results.append(MainActor.assumeIsolated { shareSendsUnsavedEdits() })
+      results.append(MainActor.assumeIsolated { scrollBarsDragAndPage() })
+      results.append(MainActor.assumeIsolated { scrollBarsStayAtTheEdges() })
+      results.append(MainActor.assumeIsolated { scrollBarSettings() })
+      results.append(MainActor.assumeIsolated { resizeKeepsScrollTiles() })
       results.append(MainActor.assumeIsolated { mergeLeavesNoSavedResult() })
       results.append(MainActor.assumeIsolated { filterPopoverModel() })
       results.append(MainActor.assumeIsolated { commandArrowJumps() })
@@ -136,6 +149,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { cellTextWrapLayout() })
       results.append(MainActor.assumeIsolated { textDisplayToolbarLabel() })
       results.append(MainActor.assumeIsolated { unsavedPromptOnce() })
+      results.append(MainActor.assumeIsolated { editBeforeFirstLookIsAskedAbout() })
       results.append(largeWorkbookOpenBaseline())
       results.append(MainActor.assumeIsolated { wideFreezeMergeLayoutOpen() })
       results.append(MainActor.assumeIsolated { bdcKpiWorkbookOpenPath() })
@@ -1002,6 +1016,119 @@ typealias Cell = SparkGridCore.Cell
     }
 
     // MARK: - Focused regression tests
+
+    /// Dragging cells by their border moves them, formulas follow, Undo puts them back; and a
+    /// font file added from Format › Add Fonts shows in the font list (Sam, Nov 19).
+    @MainActor
+    private static func moveCellsAndAddFonts() -> Result {
+      let name = "move cells and add fonts"
+      var data = Sheet(name: "Data")
+      data.setCell(Cell(raw: "10"), at: CellAddress(row: 0, col: 1))  // B1
+      data.setCell(Cell(raw: "=B1*2"), at: CellAddress(row: 1, col: 1))  // B2
+      data.setCell(Cell(raw: "=SUM(B1:B2)"), at: CellAddress(row: 0, col: 0))  // A1
+      var other = Sheet(name: "Other")
+      other.setCell(Cell(raw: "=Data!B2+1"), at: .origin)
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [data, other]))
+      let undo = UndoManager()
+      vm.undoManager = undo
+      vm.moveCells(
+        CellRange(start: CellAddress(row: 0, col: 1), end: CellAddress(row: 1, col: 1)),
+        to: CellAddress(row: 4, col: 3))  // to D5
+      let sheet = vm.workbook.sheets[0]
+      let raws = [
+        sheet.cell(at: CellAddress(row: 4, col: 3)).raw,
+        sheet.cell(at: CellAddress(row: 5, col: 3)).raw,
+        sheet.cell(at: .origin).raw, sheet.cell(at: CellAddress(row: 0, col: 1)).raw,
+        vm.workbook.sheets[1].cell(at: .origin).raw,
+      ]
+      guard raws == ["10", "=D5*2", "=SUM(D5:D6)", "", "=Data!D6+1"] else {
+        return Result(name: name, passed: false, detail: "after move \(raws)")
+      }
+      guard vm.displayValue(at: .origin) == .number(30) else {
+        return Result(name: name, passed: false, detail: "A1 shows \(vm.displayValue(at: .origin))")
+      }
+      undo.undo()
+      guard vm.workbook.sheets[0].cell(at: CellAddress(row: 1, col: 1)).raw == "=B1*2",
+        vm.workbook.sheets[1].cell(at: .origin).raw == "=Data!B2+1"
+      else {
+        return Result(name: name, passed: false, detail: "Undo did not put the cells back")
+      }
+
+      let font = URL(
+        fileURLWithPath:
+          "/System/Library/Fonts/Supplemental/Chalkduster.ttf")
+      guard FileManager.default.fileExists(atPath: font.path) else {
+        return Result(name: name, passed: true, detail: "moved and undone; no test font to add")
+      }
+      let families = ImportedFonts.add([font])
+      defer {
+        if let folder = ImportedFonts.folder {
+          let copy = folder.appendingPathComponent(font.lastPathComponent)
+          CTFontManagerUnregisterFontsForURL(copy as CFURL, .process, nil)
+          try? FileManager.default.removeItem(at: copy)
+        }
+      }
+      guard families.contains("Chalkduster"),
+        CellFormatRenderer.installedFontFamilies.contains("Chalkduster")
+      else {
+        return Result(name: name, passed: false, detail: "added fonts \(families)")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "B1:B2 moved to D5:D6 with A1 and Other!A1 following; Undo restored; font added")
+    }
+
+    /// Edit › Select Blank Cells and Find › Regular Expression (Reddit requests, Nov 19).
+    @MainActor
+    private static func selectBlankCellsAndRegexReplace() -> Result {
+      let name = "select blank cells and regex replace"
+      var sheet = Sheet(name: "Data")
+      // A1:C3 with B1, A2 and C3 empty.
+      for (row, col, raw) in [
+        (0, 0, "id"), (0, 2, "when"), (1, 1, "Ann 2026-01-05"), (1, 2, "x"),
+        (2, 0, "3"), (2, 1, "Bo 2026-11-19"),
+      ] {
+        sheet.setCell(Cell(raw: raw), at: CellAddress(row: row, col: col))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      vm.select(.origin)
+      vm.selectBlankCells()
+      let picked = Set(
+        vm.selectionRanges.flatMap { range -> [CellAddress] in
+          let n = range.normalized
+          return (n.minRow...n.maxRow).flatMap { row in
+            (n.minCol...n.maxCol).map { CellAddress(row: row, col: $0) }
+          }
+        })
+      let expected: Set<CellAddress> = [
+        CellAddress(row: 0, col: 1), CellAddress(row: 1, col: 0), CellAddress(row: 2, col: 2),
+      ]
+      guard picked == expected else {
+        return Result(name: name, passed: false, detail: "blank cells selected: \(picked)")
+      }
+      guard vm.selectionAnchor == CellAddress(row: 0, col: 1) else {
+        return Result(name: name, passed: false, detail: "active cell \(vm.selectionAnchor)")
+      }
+      vm.findUsesRegex = true
+      vm.findQuery = #"(\d{4})-(\d{2})-(\d{2})"#
+      vm.findReplaceText = "$3/$2/$1"
+      vm.showFindBar(replace: true)
+      guard vm.findMatches.count == 2 else {
+        return Result(name: name, passed: false, detail: "regex matches \(vm.findMatches.count)")
+      }
+      let replaced = vm.replaceAll()
+      let b2 = vm.activeSheet.cell(at: CellAddress(row: 1, col: 1)).raw
+      guard replaced == 2, b2 == "Ann 05/01/2026" else {
+        return Result(name: name, passed: false, detail: "replaced \(replaced), B2 \(b2)")
+      }
+      vm.findQuery = "(unfinished"
+      guard vm.findPatternIsInvalid else {
+        return Result(name: name, passed: false, detail: "unfinished pattern not noticed")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "3 blank cells in 3 ranges; dates rewritten as 05/01/2026 by $3/$2/$1")
+    }
 
     @MainActor
     private static func findScopePersistsAfterJump() -> Result {
@@ -2053,6 +2180,85 @@ typealias Cell = SparkGridCore.Cell
       )
     }
 
+    /// A scroll event the Mac sends for "show what is below" moves the grid down, and right for
+    /// "show what is to the right", whatever the person's Natural Scrolling setting (the Mac
+    /// has already turned the amounts around for it). The grid went the other way (a Reddit
+    /// review, Nov 18). Settings › Reverse scroll direction turns it around.
+    @MainActor
+    private static func scrollFollowsTheMac() -> Result {
+      let name = "scroll follows the Mac"
+      var sheet = Sheet(name: "Rows")
+      for row in 0..<400 {
+        sheet.setCell(Cell(raw: "\(row + 1)"), at: CellAddress(row: row, col: 0))
+      }
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      let reverseBefore = AppSettings.shared.invertScrollDirection
+      defer {
+        AppSettings.shared.invertScrollDirection = reverseBefore
+        window.orderOut(nil)
+        window.close()
+      }
+      grid.viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      func scroll(down: Int32, right: Int32, units: CGScrollEventUnit = .pixel) {
+        // CGEvent: a negative wheel amount shows what is below or to the right.
+        guard
+          let cg = CGEvent(
+            scrollWheelEvent2Source: nil, units: units, wheelCount: 2, wheel1: -down,
+            wheel2: -right, wheel3: 0),
+          let event = NSEvent(cgEvent: cg)
+        else { return }
+        grid.scrollWheel(with: event)
+      }
+      func topRow() -> Int { grid.rowAtContent(y: grid.bounds.minY + 60) }
+      AppSettings.shared.invertScrollDirection = false
+      let start = topRow()
+      for _ in 0..<5 { scroll(down: 80, right: 0) }
+      let afterDown = topRow()
+      guard afterDown > start else {
+        return Result(
+          name: name, passed: false, detail: "scrolling down went from row \(start) to \(afterDown)"
+        )
+      }
+      AppSettings.shared.invertScrollDirection = true
+      for _ in 0..<5 { scroll(down: 80, right: 0) }
+      let afterReversed = topRow()
+      guard afterReversed < afterDown else {
+        return Result(
+          name: name, passed: false,
+          detail: "reversed, scrolling down went from row \(afterDown) to \(afterReversed)")
+      }
+      // A mouse wheel: line units, one notch at a time.
+      AppSettings.shared.invertScrollDirection = false
+      let beforeWheel = topRow()
+      scroll(down: 1, right: 0, units: .line)
+      let afterNotch = topRow()
+      guard afterNotch >= beforeWheel + 1 else {
+        return Result(
+          name: name, passed: false,
+          detail: "one mouse wheel notch went from row \(beforeWheel) to \(afterNotch)")
+      }
+      scroll(down: -1, right: 0, units: .line)
+      guard topRow() < afterNotch else {
+        return Result(
+          name: name, passed: false,
+          detail: "a mouse wheel notch up stayed at row \(topRow())")
+      }
+      return Result(
+        name: name, passed: true,
+        detail:
+          "down moves down (row \(start) to \(afterDown)); reversed moves back to \(afterReversed); "
+          + "a mouse wheel notch moves \(afterNotch - beforeWheel) rows and back")
+    }
+
     @MainActor
     private static func scrollWhileEditingKeepsColumnText() -> Result {
       let name = "scroll while editing keeps column text"
@@ -2377,6 +2583,42 @@ typealias Cell = SparkGridCore.Cell
       return Result(name: name, passed: true, detail: passed.joined(separator: ", "))
     }
 
+    /// Formulas reading a spill, read as the app shows them: nothing finishes the background
+    /// update first. A new value further down the spill, or a longer spill, left SUM(C1#) and
+    /// ROWS(C1#) with the old answer (found by script, Nov 18).
+    @MainActor
+    private static func spillReadersWithoutWaiting() -> Result {
+      let name = "spill readers without waiting"
+      var sheet = Sheet(name: "Data")
+      for (r, value) in ["3", "1", "2"].enumerated() {
+        sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: 0))
+      }
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      func text(_ labels: [String]) -> [String] {
+        drainMainQueue()
+        return labels.map { vm.displayString(at: address($0)) }
+      }
+      vm.setCellValue("=SORT(A1:A3)", at: address("C1"))
+      vm.setCellValue("=SUM(C1#)", at: address("E1"))
+      vm.setCellValue("=ROWS(C1#)", at: address("E2"))
+      guard text(["E1", "E2"]) == ["6", "3"] else {
+        return Result(name: name, passed: false, detail: "start \(text(["E1", "E2"]))")
+      }
+      vm.setCellValue("10", at: address("A2"))
+      guard text(["E1", "E2"]) == ["15", "3"] else {
+        return Result(name: name, passed: false, detail: "value changed \(text(["E1", "E2"]))")
+      }
+      vm.setCellValue("7", at: address("A4"))
+      vm.setCellValue("=SORT(A1:A4)", at: address("C1"))
+      guard text(["E1", "E2", "C4"]) == ["22", "4", "10"] else {
+        return Result(name: name, passed: false, detail: "spill grew \(text(["E1", "E2", "C4"]))")
+      }
+      return Result(name: name, passed: true, detail: "a value in the spill, a longer spill")
+    }
+
     /// `C1#` reads every cell C1's results spill into. Typing in the data, growing the spill,
     /// and blocking it must each update the formulas that read it, without a full recalculation.
     @MainActor
@@ -2435,6 +2677,159 @@ typealias Cell = SparkGridCore.Cell
         return fail("undo block")
       }
       return Result(name: name, passed: true, detail: "C1# follows typing, growth and a block")
+    }
+
+    /// The 1.5 functions typed into cells: they spill, a LET recalculates when a cell it reads
+    /// changes, and RANDARRAY keeps its numbers until something is edited.
+    @MainActor
+    private static func newArrayFunctionsWhenTyped() -> Result {
+      let name = "new array functions when typed"
+      var sheet = Sheet(name: "Data")
+      for (r, value) in ["30", "10", "20"].enumerated() {
+        sheet.setCell(Cell(raw: value), at: CellAddress(row: r, col: 0))
+      }
+      sheet.setCell(Cell(raw: "red,green;blue,amber"), at: CellAddress(row: 0, col: 1))
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      func text(_ labels: [String]) -> [String] {
+        vm.formulaEngine.finishPendingCrossSheet()
+        return labels.map { vm.displayString(at: address($0)) }
+      }
+      let watched = ["C1", "C2", "C3", "C4", "D1", "E1", "F1", "E2", "F2"]
+      func fail(_ what: String) -> Result {
+        Result(name: name, passed: false, detail: "\(what): \(watched) = \(text(watched))")
+      }
+      vm.setCellValue("=VSTACK(A1:A3, 99)", at: address("C1"))
+      vm.setCellValue("=LET(x, SUM(A1:A3), x * 2)", at: address("D1"))
+      vm.setCellValue("=TEXTSPLIT(B1, \",\", \";\")", at: address("E1"))
+      guard text(watched) == ["30", "10", "20", "99", "120", "red", "green", "blue", "amber"]
+      else { return fail("typed") }
+      vm.setCellValue("5", at: address("A1"))
+      guard text(["C1", "D1"]) == ["5", "70"] else { return fail("data changed") }
+      vm.setCellValue("=RANDARRAY(3, 1, 1, 1000000, TRUE)", at: address("H1"))
+      let drawn = text(["H1", "H2", "H3"])
+      guard drawn.allSatisfy({ Int($0) != nil }) else { return fail("RANDARRAY \(drawn)") }
+      // Shown again with nothing edited, the numbers stay.
+      guard text(["H1", "H2", "H3"]) == drawn else { return fail("RANDARRAY redrew unedited") }
+      vm.setCellValue("unrelated", at: address("J9"))
+      let after = text(["H1", "H2", "H3"])
+      let kept = after == drawn ? "kept its numbers" : "drew new numbers"
+      return Result(
+        name: name, passed: true,
+        detail: "spill, LET recalculates; after an unrelated edit RANDARRAY \(kept)")
+    }
+
+    /// Runs an async step on the main actor, turning the run loop until it is done.
+    @MainActor
+    private static func awaitMain<T>(_ body: @escaping @MainActor () async throws -> T) throws -> T
+    {
+      let box = AwaitBox<T>()
+      Task { @MainActor in
+        do { box.result = .success(try await body()) } catch { box.result = .failure(error) }
+      }
+      let deadline = Date().addingTimeInterval(30)
+      while box.result == nil, Date() < deadline {
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+      }
+      guard let result = box.result else { throw CocoaError(.featureUnsupported) }
+      return try result.get()
+    }
+
+    private final class AwaitBox<T>: @unchecked Sendable {
+      var result: Swift.Result<T, Error>?
+    }
+
+    /// The Shortcuts actions on a made-up workbook: reading a cell as shown and as a value, on
+    /// another sheet, changing one and reading the result back, and both exports.
+    @MainActor
+    private static func shortcutsActions() -> Result {
+      let name = "shortcuts actions"
+      func fail(_ detail: String) -> Result { Result(name: name, passed: false, detail: detail) }
+      var sales = Sheet(name: "Sales")
+      var money = CellFormat()
+      money.numberFormat = .currency
+      sales.setCell(Cell(raw: "Item"), at: CellAddress(row: 0, col: 0))
+      sales.setCell(Cell(raw: "Amount"), at: CellAddress(row: 0, col: 1))
+      sales.setCell(Cell(raw: "Pens"), at: CellAddress(row: 1, col: 0))
+      sales.setCell(Cell(raw: "1200.5", format: money), at: CellAddress(row: 1, col: 1))
+      sales.setCell(Cell(raw: "=B2*2"), at: CellAddress(row: 2, col: 1))
+      var notes = Sheet(name: "Notes")
+      notes.setCell(Cell(raw: "hello"), at: .origin)
+      do {
+        let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [sales, notes]))
+        let file = IntentFile(data: data, filename: "Sales.xlsx", type: .spreadsheetML)
+        func get(_ cell: String, _ reading: CellReading = .shown, from source: IntentFile? = nil)
+          throws -> String
+        {
+          var intent = GetCellIntent()
+          intent.file = source ?? file
+          intent.cell = cell
+          intent.reading = reading
+          return try awaitMain { try await intent.perform().value ?? "" }
+        }
+        let shown = try get("B2")
+        let plain = try get("B2", .value)
+        let formula = try get("B3")
+        let other = try get("notes!A1")
+        guard shown == "$1,200.50", plain == "1200.5", formula == "2401", other == "hello" else {
+          return fail("get: \(shown) \(plain) \(formula) \(other)")
+        }
+        for (bad, expected) in [("Nope!A1", "no sheet"), ("B", "isn’t a cell")] {
+          do {
+            _ = try get(bad)
+            return fail("\(bad) gave no error")
+          } catch {
+            guard error.localizedDescription.contains(expected) else {
+              return fail("\(bad): \(error.localizedDescription)")
+            }
+          }
+        }
+
+        var set = SetCellIntent()
+        set.file = file
+        set.cell = "B2"
+        set.value = "100"
+        guard let changed = try awaitMain({ try await set.perform().value }),
+          changed.filename == "Sales.xlsx"
+        else { return fail("set gave no workbook") }
+        let after = try get("B3", from: changed)
+        // Saved with the new result, as other apps read it without calculating.
+        let reopened = try XLSXCodec.importWorkbook(from: changed.data)
+        let cached = reopened.sheets[0].cell(at: CellAddress(row: 2, col: 1)).importedFormulaResult
+        guard after == "200", cached == "200", reopened.sheets.count == 2 else {
+          return fail("set: B3 \(after), saved \(cached ?? "nil")")
+        }
+
+        var csv = ExportWorkbookIntent()
+        csv.file = file
+        csv.format = .csv
+        csv.sheet = nil
+        csv.everySheet = false
+        guard let csvFile = try awaitMain({ try await csv.perform().value }) else {
+          return fail("csv gave nothing")
+        }
+        let text = String(decoding: csvFile.data, as: UTF8.self)
+        guard text == "Item,Amount\nPens,\"$1,200.50\"\n,2401",
+          csvFile.filename == "Sales - Sales.csv"
+        else { return fail("csv \(csvFile.filename): \(text)") }
+
+        var pdf = ExportWorkbookIntent()
+        pdf.file = file
+        pdf.format = .pdf
+        pdf.sheet = nil
+        pdf.everySheet = true
+        guard let pdfFile = try awaitMain({ try await pdf.perform().value }),
+          let document = PDFDocument(data: pdfFile.data), document.pageCount == 2,
+          (document.page(at: 0)?.string ?? "").contains("Pens"),
+          (document.page(at: 1)?.string ?? "").contains("hello")
+        else { return fail("pdf") }
+      } catch {
+        return fail(error.localizedDescription)
+      }
+      return Result(
+        name: name, passed: true, detail: "get shown and value, other sheet, errors, set, CSV, PDF")
     }
 
     /// Inserting or deleting rows and columns, and sorting, move cells. Spilled results must
@@ -6610,7 +7005,9 @@ typealias Cell = SparkGridCore.Cell
         ("=XLOOKUP(\"star~*\",G2:G3,H2:H3,\"no\",2)", .number(11)),
         ("=XLOOKUP(\"nope*\",C1:C3,D1:D3,\"no\",2)", .string("no")),
         ("=XLOOKUP(20,A1:A3,B1:B3,\"no\",3)", .error(.value)),
-        ("=XLOOKUP(20,A1:A3,B1:B3,\"no\",0,1)", .error(.value)),
+        // The sixth argument is the search direction, as in Excel; it was refused before.
+        ("=XLOOKUP(20,A1:A3,B1:B3,\"no\",0,1)", .string("b")),
+        ("=XLOOKUP(20,A1:A3,B1:B3,\"no\",0,3)", .error(.value)),
         ("=XLOOKUP(10,A1:A3)", .error(.value)),
         ("=XMATCH(20,A1:A3)", .number(2)),
         ("=XMATCH(\"z\",A1:A3)", .error(.na)),
@@ -6692,7 +7089,9 @@ typealias Cell = SparkGridCore.Cell
         (shown(1234.5, code: "\"Qty \"#,##0.00"), "Qty 1,234.50"),
         (shown(5, code: "\"say \"\"hi\"\" \"0"), "say \"hi\" 5"),
         (shown(1, code: "\"a;b\""), "a;b"),
-        (shown(5, code: "0\\;0"), "5;0"),
+        // Digits fill placeholders from the right, as Excel 16.115 shows it: TEXT(5,"0\\;0").
+        (shown(5, code: "0\\;0"), "0;5"),
+        (shown(123, code: "0\\-0"), "12-3"),
         (shown(0.5, code: "0%"), "50%"),
         (shown(0.256, code: "0.00%"), "25.60%"),
         (shown(-0.256, code: "0.00%"), "-25.60%"),
@@ -6748,7 +7147,8 @@ typealias Cell = SparkGridCore.Cell
         (shown(0.75, code: "h:mm \"AM\""), "18:00 AM"),
         (shown(0.75, code: "h\"h\" mm\"m\""), "18h 00m"),
         (shown(1.5, code: "[h]:mm:ss"), "36:00:00"),
-        (shown(1.5, code: "[h]:mm \"sec\""), "36:00"),
+        // Quoted text stays, as Excel 16.115 shows it.
+        (shown(1.5, code: "[h]:mm \"sec\""), "36:00 sec"),
       ]
       for (actual, expected) in dates where actual != expected {
         return Result(name: name, passed: false, detail: "\(actual) expected \(expected)")
@@ -8154,6 +8554,27 @@ typealias Cell = SparkGridCore.Cell
         name: name, passed: true, detail: "label follows the selection; mixed does not name a mode")
     }
 
+    /// A window's first edit, made before its store had looked at the window's view model (typing
+    /// still in the cell when quitting), was taken as the starting point: quitting did not ask, and
+    /// the edit was lost. The store counts from when the window registers its view model.
+    @MainActor
+    private static func editBeforeFirstLookIsAskedAbout() -> Result {
+      let name = "edit before first look is asked about"
+      let store = SpreadsheetDocumentStore()
+      store.unsavedPromptTestAnswer = .cancel
+      let viewModel = SpreadsheetViewModel(workbook: store.document.workbook)
+      SparkGridAppDelegate().registerSpreadsheetViewModel(viewModel, store: store)
+      // An edit the store hears nothing about until it is asked to close.
+      viewModel.setCellValue("42", at: .origin)
+      let closed = store.attemptClose()
+      guard !closed, store.unsavedPromptCount == 1, store.isDirty else {
+        return Result(
+          name: name, passed: false,
+          detail: "closed \(closed) prompts \(store.unsavedPromptCount) dirty \(store.isDirty)")
+      }
+      return Result(name: name, passed: true, detail: "asked once; cancel keeps the edit")
+    }
+
     /// Quit calls attemptClose from both the app and the window. That must show one prompt.
     @MainActor
     private static func unsavedPromptOnce() -> Result {
@@ -8162,16 +8583,18 @@ typealias Cell = SparkGridCore.Cell
       let cancelled = dirtyStore()
       cancelled.unsavedPromptTestAnswer = .cancel
       let delegate = SparkGridAppDelegate()
-      delegate.documentStore = cancelled
-      let reply = delegate.applicationShouldTerminate(NSApp)
-      // Only the spreadsheet window asks to save; Settings and other windows just close.
+      // Only a workbook window asks to save; Settings and other windows just close.
       let documentWindow = NSWindow(
         contentRect: .zero,
         styleMask: [.titled],
         backing: .buffered,
         defer: true
       )
-      documentWindow.identifier = NSUserInterfaceItemIdentifier("main-check")
+      let windowID = UUID()
+      WorkbookWindows.shared.adopt(cancelled, id: windowID)
+      WorkbookWindows.shared.attach(documentWindow, to: windowID)
+      defer { WorkbookWindows.shared.closed(windowID) }
+      let reply = delegate.applicationShouldTerminate(NSApp)
       let windowClosed = delegate.windowShouldClose(documentWindow)
       if reply != .terminateCancel || windowClosed || cancelled.unsavedPromptCount != 1 {
         return Result(
@@ -8260,6 +8683,315 @@ typealias Cell = SparkGridCore.Cell
       }
 
       return Result(name: name, passed: true, detail: "quit, New, and Open each ask once")
+    }
+
+    /// A window resize keeps the pre-drawn tiles: laid out again for the new size, the new part
+    /// drawn in the background, and the cells still matching a fresh drawing. Dropping them
+    /// painted every frame after a resize on the main thread until the next scroll.
+    @MainActor
+    private static func resizeKeepsScrollTiles() -> Result {
+      let name = "resize keeps scroll tiles"
+      func fail(_ detail: String) -> Result { Result(name: name, passed: false, detail: detail) }
+      var sheet = Sheet(name: "Wide")
+      for row in 0..<400 {
+        for col in 0..<30 {
+          sheet.setCell(Cell(raw: "\(row)-\(col)"), at: CellAddress(row: row, col: col))
+        }
+      }
+      let frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1400, height: 1000), styleMask: [.borderless],
+        backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1400, height: 1000))
+      window.contentView?.addSubview(grid)
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      grid.viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      let deadline = Date().addingTimeInterval(10)
+      while !grid.testingViewportTileCacheReady(), Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      }
+      grid.testingApplyScroll(dx: 0, dy: 120)
+      grid.testingFinishScrollTileFills()
+      guard grid.testingScrollTilesPresented else { return fail("no tiles before the resize") }
+      grid.setFrameSize(NSSize(width: 1300, height: 900))
+      guard grid.testingScrollTilesPresented else { return fail("the resize dropped the tiles") }
+      grid.testingFinishScrollTileFills()
+      RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+      let mismatches = grid.testingTilePixelMismatches()
+      guard mismatches == 0 else { return fail("tiles differ from the cells: \(mismatches)") }
+      grid.setFrameSize(NSSize(width: 700, height: 500))
+      guard grid.testingScrollTilesPresented else { return fail("shrinking dropped the tiles") }
+      return Result(name: name, passed: true, detail: "kept through grow and shrink, cells match")
+    }
+
+    /// Settings › General › Scroll bars: Always keeps the bars on screen without a scroll and
+    /// past the fade; When scrolling lets them fade; Whole grid makes the thumb stand for every
+    /// row, so it is shorter than with Rows in use.
+    @MainActor
+    private static func scrollBarSettings() -> Result {
+      let name = "scroll bar settings"
+      func fail(_ detail: String) -> Result { Result(name: name, passed: false, detail: detail) }
+      let settings = AppSettings.shared
+      let savedVisibility = settings.scrollBarVisibility
+      let savedLength = settings.scrollBarLength
+      defer {
+        settings.scrollBarVisibility = savedVisibility
+        settings.scrollBarLength = savedLength
+      }
+      settings.scrollBarVisibility = .whenScrolling
+      settings.scrollBarLength = .rowsInUse
+      var sheet = Sheet(name: "Short")
+      for row in 0..<60 {
+        sheet.setCell(Cell(raw: "\(row + 1)"), at: CellAddress(row: row, col: 0))
+      }
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      grid.viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      guard let inUse = grid.testingScrollBarThumb(.vertical) else {
+        return fail("no thumb with rows in use")
+      }
+      settings.scrollBarLength = .wholeGrid
+      guard let whole = grid.testingScrollBarThumb(.vertical), whole.height < inUse.height / 3
+      else { return fail("whole grid thumb not shorter than \(Int(inUse.height))") }
+      settings.scrollBarLength = .rowsInUse
+
+      // When scrolling: gone after the fade.
+      RunLoop.current.run(until: Date().addingTimeInterval(1.6))
+      guard grid.testingDrawnThumb(.vertical) == nil else { return fail("did not fade") }
+      // Always: on screen at once, and still there after the fade time.
+      settings.scrollBarVisibility = .always
+      guard grid.testingDrawnThumb(.vertical) != nil else { return fail("always: not shown") }
+      RunLoop.current.run(until: Date().addingTimeInterval(1.6))
+      guard grid.testingDrawnThumb(.vertical) != nil else { return fail("always: faded") }
+      return Result(
+        name: name, passed: true, detail: "rows in use vs whole grid, fades, always stays")
+    }
+
+    /// Fast scrolling draws tiles by moving the grid to each tile and back. The scroll bars
+    /// must stay at the window's edges, not be placed against a tile's (Sam, Nov 18: a bar
+    /// flickered mid-screen on every sheet).
+    @MainActor
+    private static func scrollBarsStayAtTheEdges() -> Result {
+      let name = "scroll bars stay at the edges"
+      var sheet = Sheet(name: "Long")
+      for row in 0..<3000 {
+        for col in 0..<30 {
+          sheet.setCell(Cell(raw: "\(row * col)"), at: CellAddress(row: row, col: col))
+        }
+      }
+      let frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      grid.viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      let deadline = Date().addingTimeInterval(10)
+      while !grid.testingViewportTileCacheReady(), Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      }
+      for step in 0..<40 {
+        grid.testingApplyScroll(dx: step % 3 == 0 ? 60 : 0, dy: step < 25 ? 700 : -500)
+        grid.testingFinishScrollTileFills()
+        // The larger scroll pictures are drawn the same way, a screen ahead.
+        grid.testingWarmScrollPlanes()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        if let v = grid.testingDrawnThumb(.vertical), v.maxX < frame.width - 20 {
+          return Result(
+            name: name, passed: false, detail: "step \(step): vertical bar at x \(Int(v.minX))")
+        }
+        if let h = grid.testingDrawnThumb(.horizontal), h.maxY < frame.height - 20 {
+          return Result(
+            name: name, passed: false, detail: "step \(step): horizontal bar at y \(Int(h.minY))")
+        }
+      }
+      return Result(name: name, passed: true, detail: "40 fast scrolls with tiles drawn")
+    }
+
+    /// The overlay scroll bars: dragging a thumb scrolls with it, a click in the track moves a
+    /// page or jumps to the spot, and a click on a cell is still a click on the cell.
+    @MainActor
+    private static func scrollBarsDragAndPage() -> Result {
+      let name = "scroll bars drag and page"
+      func fail(_ detail: String) -> Result { Result(name: name, passed: false, detail: detail) }
+      var sheet = Sheet(name: "Long")
+      for row in 0..<400 {
+        sheet.setCell(Cell(raw: "\(row + 1)"), at: CellAddress(row: row, col: 0))
+      }
+      sheet.setCell(Cell(raw: "far"), at: CellAddress(row: 0, col: 60))
+      let frame = NSRect(x: 0, y: 0, width: 820, height: 520)
+      let grid = SpreadsheetGridNSView(frame: frame)
+      let window = NSWindow(
+        contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.contentView = grid
+      window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+      window.orderFrontRegardless()
+      defer {
+        window.orderOut(nil)
+        window.close()
+      }
+      let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [sheet]))
+      grid.viewModel = viewModel
+      grid.layoutSubtreeIfNeeded()
+      grid.display()
+      guard let thumb = grid.testingScrollBarThumb(.vertical) else { return fail("no thumb") }
+      let start = NSPoint(x: thumb.midX, y: thumb.midY)
+
+      // Drag the thumb 100 points down: the sheet scrolls, and the thumb stays under the pointer.
+      guard grid.testingScrollBarPress(at: start) else {
+        return fail("thumb did not take the press")
+      }
+      grid.testingScrollBarDrag(to: NSPoint(x: start.x, y: start.y + 100))
+      let dragged = grid.testingScrollOrigin.y
+      guard dragged > 0, let moved = grid.testingScrollBarThumb(.vertical),
+        abs(moved.minY - (thumb.minY + 100)) < 1.5
+      else { return fail("drag: origin \(dragged), thumb \(thumb.minY) to ?") }
+      // Past the top stops at the top.
+      grid.testingScrollBarDrag(to: NSPoint(x: start.x, y: start.y - 500))
+      guard grid.testingScrollOrigin.y == 0 else { return fail("drag above the top") }
+      grid.testingScrollBarRelease(at: start)
+
+      // A click in the track below the thumb moves one page; above it, back.
+      guard let top = grid.testingScrollBarThumb(.vertical) else { return fail("thumb gone") }
+      let below = NSPoint(x: top.midX, y: top.maxY + 60)
+      guard grid.testingScrollBarPress(at: below) else { return fail("track did not take") }
+      grid.testingScrollBarRelease(at: below)
+      let page = grid.testingScrollablePageHeight()
+      guard abs(grid.testingScrollOrigin.y - page) < 1.5 else {
+        return fail("page down to \(grid.testingScrollOrigin.y), page \(page)")
+      }
+      guard let paged = grid.testingScrollBarThumb(.vertical) else { return fail("thumb gone") }
+      grid.testingScrollBarPress(at: NSPoint(x: paged.midX, y: paged.minY - 2))
+      grid.testingScrollBarRelease(at: .zero)
+      guard grid.testingScrollOrigin.y == 0 else { return fail("page up") }
+
+      // Jump to the spot: a click at the bottom of the track goes to the end.
+      guard let again = grid.testingScrollBarThumb(.vertical) else { return fail("thumb gone") }
+      let bottom = NSPoint(x: again.midX, y: frame.height - 20)
+      grid.testingScrollBarPress(at: bottom, jumpsToSpot: true)
+      grid.testingScrollBarRelease(at: bottom)
+      let end = grid.testingScrollOrigin.y
+      // The bar spans the rows in use and half a screen more: at the end row 400 is in view.
+      guard let last = grid.testingScrollBarThumb(.vertical) else { return fail("thumb gone") }
+      let bottomAgain = NSPoint(x: last.midX, y: frame.height - 20)
+      grid.testingScrollBarPress(at: bottomAgain, jumpsToSpot: true)
+      grid.testingScrollBarRelease(at: bottomAgain)
+      let visibleHeight = page / 0.9
+      let row400 = grid.testingRowTop(399)
+      guard end > page, grid.testingScrollOrigin.y == end, row400 > end,
+        row400 < end + visibleHeight * 0.75
+      else { return fail("jump went to \(end); row 400 starts at \(row400)") }
+      // Scrolling on past the rows in use still works, and the bar follows.
+      grid.testingApplyScroll(dx: 0, dy: 300)
+      guard grid.testingScrollOrigin.y > end else { return fail("could not scroll past the data") }
+
+      // The horizontal bar drags too.
+      guard let across = grid.testingScrollBarThumb(.horizontal) else {
+        return fail("no horizontal thumb")
+      }
+      let from = NSPoint(x: across.midX, y: across.midY)
+      grid.testingScrollBarPress(at: from)
+      grid.testingScrollBarDrag(to: NSPoint(x: from.x + 80, y: from.y))
+      grid.testingScrollBarRelease(at: from)
+      guard grid.testingScrollOrigin.x > 0 else { return fail("horizontal drag") }
+
+      // A cell away from the edges is not a scroll bar.
+      _ = grid.testingScrollBarThumb(.vertical)
+      guard !grid.testingScrollBarPress(at: NSPoint(x: 300, y: 200)) else {
+        return fail("a cell click went to the bar")
+      }
+      return Result(name: name, passed: true, detail: "drag, stop at top, page, jump, across")
+    }
+
+    /// File ▸ Share sends the workbook as it is, unsaved edits included, as .xlsx under the
+    /// document's name; a CSV document goes as CSV; a new empty window has nothing to share.
+    @MainActor
+    private static func shareSendsUnsavedEdits() -> Result {
+      let name = "share sends unsaved edits"
+      func fail(_ detail: String) -> Result { Result(name: name, passed: false, detail: detail) }
+      let empty = SpreadsheetDocumentStore()
+      empty.showsStartScreen = false
+      guard !empty.canShare else { return fail("an empty window can share") }
+      let store = dirtyStore()
+      store.showsStartScreen = false
+      guard store.canShare else { return fail("an edited window cannot share") }
+      do {
+        let url = try SpreadsheetDocumentStore.writeShareCopy(store.shareCopy())
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let shared = try XLSXCodec.importWorkbook(from: Data(contentsOf: url))
+        guard url.lastPathComponent == "Sheet1.xlsx",
+          shared.activeSheet.cell(at: .origin).raw == "1"
+        else { return fail("shared \(url.lastPathComponent) without the edit") }
+        let csvStore = dirtyStore()
+        csvStore.fileURL = URL(fileURLWithPath: "/nowhere/Prices.csv")
+        let csvURL = try SpreadsheetDocumentStore.writeShareCopy(csvStore.shareCopy())
+        defer { try? FileManager.default.removeItem(at: csvURL.deletingLastPathComponent()) }
+        guard csvURL.lastPathComponent == "Prices.csv",
+          try String(contentsOf: csvURL, encoding: .utf8) == "1"
+        else { return fail("CSV shared as \(csvURL.lastPathComponent)") }
+      } catch {
+        return fail(error.localizedDescription)
+      }
+      // Saved and unchanged: the file itself is copied, byte for byte.
+      do {
+        let folder = FileManager.default.temporaryDirectory
+          .appendingPathComponent("bugbash-share-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let saved = folder.appendingPathComponent("Budget.xlsx")
+        let bytes = Data("not rewritten".utf8)
+        try bytes.write(to: saved)
+        let clean = SpreadsheetDocumentStore()
+        clean.showsStartScreen = false
+        clean.fileURL = saved
+        let copy = clean.shareCopy()
+        guard copy.savedFile == saved else { return fail("a clean file was not shared as it is") }
+        let url = try SpreadsheetDocumentStore.writeShareCopy(copy)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        guard url.lastPathComponent == "Budget.xlsx", try Data(contentsOf: url) == bytes else {
+          return fail("the clean file was written again")
+        }
+        // An edit since the save: written again.
+        let edited = dirtyStore()
+        edited.fileURL = saved
+        guard edited.shareCopy().savedFile == nil else {
+          return fail("an edited file was shared as saved")
+        }
+      } catch {
+        return fail(error.localizedDescription)
+      }
+      return Result(
+        name: name, passed: true, detail: "edits, name, CSV, nothing when empty, clean file copied")
     }
 
     @MainActor

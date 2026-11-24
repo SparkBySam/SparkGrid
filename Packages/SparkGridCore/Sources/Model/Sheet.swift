@@ -195,15 +195,15 @@ public nonisolated struct Sheet: Identifiable, Codable, Equatable, Sendable {
   }
 
   private mutating func removeFormulaIngestEntry(address: CellAddress, raw: String) {
-    guard Self.bulkIngestTrimmedFormulaRaw(raw) != nil else { return }
-    guard var column = formulaIngestByColumn[address.col] else { return }
-    if let idx = column.firstIndex(where: { $0.0 == address }) {
-      column.remove(at: idx)
-      if column.isEmpty {
-        formulaIngestByColumn.removeValue(forKey: address.col)
-      } else {
-        formulaIngestByColumn[address.col] = column
-      }
+    guard Self.bulkIngestTrimmedFormulaRaw(raw) != nil,
+      let column = formulaIngestByColumn[address.col]
+    else { return }
+    let idx = Self.firstIndex(in: column, atOrAfterRow: address.row)
+    guard idx < column.count, column[idx].0 == address else { return }
+    if column.count == 1 {
+      formulaIngestByColumn.removeValue(forKey: address.col)
+    } else {
+      formulaIngestByColumn[address.col]?.remove(at: idx)
     }
   }
 
@@ -217,10 +217,24 @@ public nonisolated struct Sheet: Identifiable, Codable, Equatable, Sendable {
       removeFormulaIngestEntry(address: address, raw: previousRaw ?? "")
     }
     guard let trimmed = newTrimmed else { return }
-    var column = formulaIngestByColumn[address.col, default: []]
-    let insertIndex = column.firstIndex { $0.0.row >= address.row } ?? column.endIndex
-    column.insert((address, trimmed), at: insertIndex)
-    formulaIngestByColumn[address.col] = column
+    // Changed in place, at a place found by halving: copying the column and searching it from
+    // the top made filling a long column with formulas take time in the square of its length.
+    let insertIndex = Self.firstIndex(
+      in: formulaIngestByColumn[address.col] ?? [], atOrAfterRow: address.row)
+    formulaIngestByColumn[address.col, default: []].insert((address, trimmed), at: insertIndex)
+  }
+
+  /// In a column's formulas, sorted by row: the first at or after `row`.
+  private static func firstIndex(
+    in column: [(CellAddress, String)], atOrAfterRow row: Int
+  ) -> Int {
+    var low = 0
+    var high = column.count
+    while low < high {
+      let mid = (low + high) / 2
+      if column[mid].0.row < row { low = mid + 1 } else { high = mid }
+    }
+    return low
   }
 
   /// Call after direct `cells` dictionary surgery that may change extents.

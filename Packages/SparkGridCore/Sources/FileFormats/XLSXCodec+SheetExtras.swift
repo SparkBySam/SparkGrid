@@ -432,6 +432,39 @@ extension XLSXCodec {
     sheet.charts = charts.map { $0.positionedUnderData() }
   }
 
+  /// Formulas with Spark Grid's own functions (SEM, MEAN) as they were typed, by cell. The sheet
+  /// part has the form other apps calculate; this puts back what was typed when that is still
+  /// what the cell holds.
+  public static func importSparkFormulas(
+    into sheet: inout Sheet, archiveData: Data, sheetIndex: Int
+  ) {
+    let path = "xl/sparkGrid/formulas\(sheetIndex + 1).json"
+    guard let data = zipEntryData(archiveData: archiveData, entryPath: path),
+      let typed = try? JSONDecoder().decode([String: String].self, from: data)
+    else { return }
+    for (reference, formula) in typed {
+      guard let address = address(fromA1: reference) else { continue }
+      var cell = sheet.cell(at: address)
+      let stored = cell.raw.drop(while: { $0 == "=" })
+      let expected = SparkOnlyFunctions.excelForm(String(formula.drop(while: { $0 == "=" })))
+      guard stored.caseInsensitiveCompare(expected) == .orderedSame else { continue }
+      cell.raw = formula
+      sheet.setCell(cell, at: address)
+    }
+  }
+
+  public static func sparkFormulasJSON(_ sheet: Sheet) -> Data? {
+    var typed: [String: String] = [:]
+    for (address, cell) in sheet.cells
+    where cell.raw.hasPrefix("=") && SparkOnlyFunctions.uses(cell.raw) {
+      typed[address.a1] = cell.raw
+    }
+    guard !typed.isEmpty else { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try? encoder.encode(typed)
+  }
+
   /// Pivot tables made in Spark Grid keep their settings beside the sheet, in a part other apps
   /// do not read. The drawn cells are ordinary values, so other apps show the table as it was.
   public static func importSparkPivots(into sheet: inout Sheet, archiveData: Data, sheetIndex: Int)
@@ -685,7 +718,8 @@ extension XLSXCodec {
             #"<cfRule type="\#(type)" dxfId="\#(dxfId)" priority="\#(priority)"\#(stop)/>"#
         case .formula(let raw):
           let dxfId = dxfIndex(rule.style)
-          let formula = raw.hasPrefix("=") ? String(raw.dropFirst()) : raw
+          let formula = ExcelFutureFunctions.prefixed(
+            ExcelFutureFunctions.anchorArrays(raw.hasPrefix("=") ? String(raw.dropFirst()) : raw))
           xml +=
             #"<cfRule type="expression" dxfId="\#(dxfId)" priority="\#(priority)"\#(stop)><formula>\#(escapeXML(formula))</formula></cfRule>"#
         case .colorScale(let stops):
@@ -1015,8 +1049,9 @@ extension XLSXCodec {
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
     let ns = body as NSString
     return regex.matches(in: body, range: NSRange(location: 0, length: ns.length)).map { match in
-      decodeXMLEntities(
-        ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines))
+      ExcelFutureFunctions.unprefixed(
+        decodeXMLEntities(
+          ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)))
     }
   }
 
@@ -1025,8 +1060,9 @@ extension XLSXCodec {
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
     let ns = body as NSString
     return regex.matches(in: body, range: NSRange(location: 0, length: ns.length)).map { match in
-      decodeXMLEntities(
-        ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines))
+      ExcelFutureFunctions.unprefixed(
+        decodeXMLEntities(
+          ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)))
     }
   }
 

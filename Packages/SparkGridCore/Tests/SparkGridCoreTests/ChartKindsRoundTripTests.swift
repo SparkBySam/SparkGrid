@@ -44,6 +44,32 @@ final class ChartKindsRoundTripTests: XCTestCase {
     XCTAssertEqual(part.series[2].values?.range.start, CellAddress(row: 1, col: 3))
   }
 
+  /// Error bars from a column save as custom plus-and-minus bars before the series' values,
+  /// and the chart reopens with its error bar column.
+  func testErrorBarsSaveFromTheirColumn() throws {
+    let chart = SheetChart(
+      kind: .line, title: "East", dataRange: range, categoryColumn: 0, valueColumn: 1,
+      anchorRow: 5, anchorCol: 0, errorBarColumn: 3)
+    XCTAssertTrue(chart.drawsErrorBars)
+    let data = try XLSXCodec.exportWorkbook(Workbook(sheets: [salesSheet(with: chart)]))
+    if let out = ProcessInfo.processInfo.environment["SPARK_GRID_ERRBARS_OUT"] {
+      try data.write(to: URL(fileURLWithPath: out))
+    }
+    let xml = XLSXCodec.zipEntryString(archiveData: data, entryPath: "xl/charts/chart1.xml") ?? ""
+    XCTAssertTrue(xml.contains("<c:errValType val=\"cust\"/>"))
+    XCTAssertTrue(
+      xml.contains("<c:plus><c:numRef><c:f>&apos;Sales&apos;!D2:D3</c:f></c:numRef></c:plus>"))
+    let errBars = try XCTUnwrap(xml.range(of: "<c:errBars>"))
+    let cat = try XCTUnwrap(xml.range(of: "<c:cat>"))
+    XCTAssertLessThan(errBars.lowerBound, cat.lowerBound)
+    let reopened = try XLSXCodec.importWorkbook(from: data).sheets[0].charts.first
+    XCTAssertEqual(reopened?.errorBarColumn, 3)
+
+    var twoSeries = chart
+    twoSeries.extraValueColumns = [2]
+    XCTAssertFalse(twoSeries.drawsErrorBars)
+  }
+
   func testPieSavesAsAPieWithOneSeries() throws {
     let chart = SheetChart(
       kind: .pie, title: "Share", dataRange: range, categoryColumn: 0, valueColumn: 1,

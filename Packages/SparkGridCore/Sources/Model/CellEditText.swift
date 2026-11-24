@@ -6,6 +6,7 @@ extension Cell {
   /// date as `2/28/2026`, as other spreadsheet apps show them, rather than the stored `0.298`
   /// or `46081`. Typing either form back stores the same value.
   public var editableText: String {
+    if isText == true, !raw.isEmpty { return "'" + raw }
     guard let format, !raw.isEmpty, !raw.hasPrefix("="), let value = Double(raw), value.isFinite
     else { return raw }
     switch format.numberFormat {
@@ -15,6 +16,9 @@ extension Cell {
       // Whole days only; a date with a time keeps its stored number.
       guard value >= 1, value == value.rounded(), value < 2_958_466 else { return raw }
       return Self.dateFormatter.string(from: Date(timeIntervalSince1970: (value - 25_569) * 86_400))
+    case .time:
+      // A typed time edits as it was typed, not as 0.4375.
+      return TypedEntry.timeText(value, formatCode: format.viewerFormatCode) ?? raw
     default:
       return raw
     }

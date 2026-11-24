@@ -149,6 +149,22 @@ public enum FormulaAutocomplete {
     return Result(text: updated, cursor: newCursor)
   }
 
+  /// After the completion list put `word` in at `range`: true when it is a function with no `(`
+  /// after it yet, so the caller adds one and the next cells clicked go between the brackets
+  /// (a Reddit note, Nov 19: picking AVERAGE then selecting cells replaced the formula).
+  public static func needsOpenParen(
+    after word: String, insertedAt location: Int, in text: String, namedRanges: [String]
+  ) -> Bool {
+    guard FormulaFunctions.all.contains(word.uppercased()),
+      !namedRanges.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame })
+    else { return false }
+    let ns = text as NSString
+    let end = location + (word as NSString).length
+    guard end <= ns.length else { return false }
+    if end < ns.length, ns.character(at: end) == 40 { return false }  // "("
+    return true
+  }
+
   public static func tabComplete(
     text: String,
     utf16Cursor: Int,

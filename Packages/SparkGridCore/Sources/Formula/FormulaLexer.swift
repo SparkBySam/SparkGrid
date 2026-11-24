@@ -16,6 +16,8 @@ public nonisolated enum FormulaToken: Equatable {
   case star
   case slash
   case caret
+  /// Postfix percent, as in `A2%` or `10%`: the value divided by 100.
+  case percent
   case amp
   case eq
   case ne
@@ -27,12 +29,18 @@ public nonisolated enum FormulaToken: Equatable {
   case rParen
   case comma
   case colon
+  /// `{`, `}` and the `;` between rows of a typed list.
+  case lBrace
+  case rBrace
+  case semicolon
   case eof
 }
 
 public nonisolated struct FormulaLexer {
   private let chars: [Character]
   private var index = 0
+  /// Whether whitespace came just before the last token: `A1:B9 B3` is an intersection.
+  public private(set) var spaceBefore = false
 
   public init(_ source: String) {
     var text = source.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -43,7 +51,9 @@ public nonisolated struct FormulaLexer {
   }
 
   public mutating func next() throws -> FormulaToken {
+    let start = index
     skipWhitespace()
+    spaceBefore = index > start
     guard index < chars.count else { return .eof }
 
     let ch = chars[index]
@@ -71,11 +81,15 @@ public nonisolated struct FormulaLexer {
     case "*": return .star
     case "/": return .slash
     case "^": return .caret
+    case "%": return .percent
     case "&": return .amp
     case "(": return .lParen
     case ")": return .rParen
     case ",": return .comma
     case ":": return .colon
+    case "{": return .lBrace
+    case "}": return .rBrace
+    case ";": return .semicolon
     case "=": return .eq
     case "<":
       if match("=") { return .le }
@@ -140,7 +154,7 @@ public nonisolated struct FormulaLexer {
       let inErrorName = ch == "/" && (soFar == "#N" || soFar == "#DIV")
       if ch.isWhitespace || ch == "," || ch == ")" || ch == "(" || ch == "+" || ch == "-"
         || ch == "*" || (ch == "/" && !inErrorName) || ch == "^" || ch == "&" || ch == "="
-        || ch == "<" || ch == ">" || ch == ":"
+        || ch == "<" || ch == ">" || ch == ":" || ch == "}" || ch == ";"
       {
         break
       }
@@ -232,7 +246,11 @@ public nonisolated struct FormulaLexer {
           break
         }
       }
-      if end > afterColon {
+      // `B1:INDEX(B:B,5)`: a name followed by "(" is a function, not the range's other end.
+      var afterName = end
+      while afterName < chars.count, chars[afterName].isWhitespace { afterName += 1 }
+      let isFunction = afterName < chars.count && chars[afterName] == "("
+      if end > afterColon, !isFunction {
         let rhs = String(chars[afterColon..<end])
         if A1Reference.isValidRangeEndpointToken(text), A1Reference.isValidRangeEndpointToken(rhs) {
           index = end

@@ -58,6 +58,9 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(name: "ABS", kind: .math, arguments: "number"),
     FormulaFunctionEntry(
       name: "SEQUENCE", kind: .math, arguments: "rows, [columns], [start], [step]"),
+    FormulaFunctionEntry(
+      name: "RANDARRAY", kind: .math,
+      arguments: "[rows], [columns], [min], [max], [whole_number]"),
     FormulaFunctionEntry(name: "ROUND", kind: .math, arguments: "number, [num_digits]"),
     FormulaFunctionEntry(name: "ROUNDDOWN", kind: .math, arguments: "number, [num_digits]"),
     FormulaFunctionEntry(name: "ROUNDUP", kind: .math, arguments: "number, [num_digits]"),
@@ -86,6 +89,8 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(
       name: "IF", kind: .logical, arguments: "logical_test, value_if_true, [value_if_false]"),
     FormulaFunctionEntry(name: "IFERROR", kind: .logical, arguments: "value, value_if_error"),
+    FormulaFunctionEntry(
+      name: "LET", kind: .logical, arguments: "name1, value1, [name2, value2], ..., calculation"),
     FormulaFunctionEntry(name: "IFNA", kind: .logical, arguments: "value, value_if_na"),
     FormulaFunctionEntry(
       name: "IFS", kind: .logical, arguments: "logical_test1, value_if_true1, ..."),
@@ -123,9 +128,20 @@ public enum FormulaFunctionCatalog {
       arguments: "lookup_value, table_array, col_index_num, [range_lookup]"),
     FormulaFunctionEntry(
       name: "XLOOKUP", kind: .lookup,
-      arguments: "lookup_value, lookup_array, return_array, [if_not_found], [match_mode]"),
+      arguments:
+        "lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]"),
     FormulaFunctionEntry(
       name: "XMATCH", kind: .lookup, arguments: "lookup_value, lookup_array, [match_mode]"),
+    FormulaFunctionEntry(
+      name: "INDIRECT", kind: .lookup, arguments: "ref_text, [a1]"),
+    FormulaFunctionEntry(name: "CELL", kind: .lookup, arguments: "info_type, [reference]"),
+    FormulaFunctionEntry(
+      name: "OFFSET", kind: .lookup, arguments: "reference, rows, cols, [height], [width]"),
+    FormulaFunctionEntry(
+      name: "LOOKUP", kind: .lookup, arguments: "lookup_value, lookup_vector, [result_vector]"),
+    FormulaFunctionEntry(
+      name: "ADDRESS", kind: .lookup,
+      arguments: "row_num, column_num, [abs_num], [a1], [sheet_text]"),
 
     FormulaFunctionEntry(name: "DATE", kind: .dateTime, arguments: "year, month, day"),
     FormulaFunctionEntry(name: "DAY", kind: .dateTime, arguments: "serial_number"),
@@ -133,6 +149,8 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(name: "NOW", kind: .dateTime, arguments: ""),
     FormulaFunctionEntry(name: "TODAY", kind: .dateTime, arguments: ""),
     FormulaFunctionEntry(name: "YEAR", kind: .dateTime, arguments: "serial_number"),
+    FormulaFunctionEntry(
+      name: "YEARFRAC", kind: .dateTime, arguments: "start_date, end_date, [basis]"),
     FormulaFunctionEntry(name: "INT", kind: .math, arguments: "number"),
     FormulaFunctionEntry(name: "SIGN", kind: .math, arguments: "number"),
     FormulaFunctionEntry(name: "SQRT", kind: .math, arguments: "number"),
@@ -250,6 +268,8 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(name: "ISODD", kind: .logical, arguments: "number"),
     FormulaFunctionEntry(name: "ISLOGICAL", kind: .logical, arguments: "value"),
     FormulaFunctionEntry(name: "ISNA", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ISREF", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ISFORMULA", kind: .logical, arguments: "reference"),
     FormulaFunctionEntry(name: "ISERR", kind: .logical, arguments: "value"),
     FormulaFunctionEntry(name: "NA", kind: .logical, arguments: ""),
     FormulaFunctionEntry(
@@ -268,6 +288,24 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(
       name: "UNIQUE", kind: .lookup, arguments: "array, [by_col], [exactly_once]"),
     FormulaFunctionEntry(
+      name: "VSTACK", kind: .lookup, arguments: "array1, [array2], ..."),
+    FormulaFunctionEntry(
+      name: "HSTACK", kind: .lookup, arguments: "array1, [array2], ..."),
+    FormulaFunctionEntry(name: "TAKE", kind: .lookup, arguments: "array, rows, [columns]"),
+    FormulaFunctionEntry(name: "DROP", kind: .lookup, arguments: "array, rows, [columns]"),
+    FormulaFunctionEntry(
+      name: "CHOOSECOLS", kind: .lookup, arguments: "array, col_num1, [col_num2], ..."),
+    FormulaFunctionEntry(
+      name: "CHOOSEROWS", kind: .lookup, arguments: "array, row_num1, [row_num2], ..."),
+    FormulaFunctionEntry(
+      name: "WRAPROWS", kind: .lookup, arguments: "vector, wrap_count, [pad_with]"),
+    FormulaFunctionEntry(
+      name: "WRAPCOLS", kind: .lookup, arguments: "vector, wrap_count, [pad_with]"),
+    FormulaFunctionEntry(
+      name: "TOCOL", kind: .lookup, arguments: "array, [ignore], [scan_by_column]"),
+    FormulaFunctionEntry(
+      name: "TOROW", kind: .lookup, arguments: "array, [ignore], [scan_by_column]"),
+    FormulaFunctionEntry(
       name: "GETPIVOTDATA", kind: .lookup,
       arguments: "data_field, pivot_table, [field1, item1], ..."),
     FormulaFunctionEntry(
@@ -276,10 +314,137 @@ public enum FormulaFunctionCatalog {
     FormulaFunctionEntry(
       name: "TEXTAFTER", kind: .text,
       arguments: "text, delimiter, [instance_num], [match_mode], [match_end], [if_not_found]"),
+    FormulaFunctionEntry(
+      name: "TEXTSPLIT", kind: .text,
+      arguments:
+        "text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with]"),
     FormulaFunctionEntry(name: "CLEAN", kind: .text, arguments: "text"),
     FormulaFunctionEntry(name: "CODE", kind: .text, arguments: "text"),
     FormulaFunctionEntry(name: "UNICODE", kind: .text, arguments: "text"),
     FormulaFunctionEntry(name: "UNICHAR", kind: .text, arguments: "number"),
+    // 1.5 batch 3
+    FormulaFunctionEntry(name: "SIN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "COS", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "TAN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ASIN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ACOS", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ATAN", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ATAN2", kind: .math, arguments: "x_num, y_num"),
+    FormulaFunctionEntry(name: "SINH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "COSH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "TANH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ASINH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ACOSH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ATANH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "DEGREES", kind: .math, arguments: "angle"),
+    FormulaFunctionEntry(name: "RADIANS", kind: .math, arguments: "angle"),
+    FormulaFunctionEntry(name: "SQRTPI", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "COMBIN", kind: .math, arguments: "number, number_chosen"),
+    FormulaFunctionEntry(name: "PERMUT", kind: .statistical, arguments: "number, number_chosen"),
+    FormulaFunctionEntry(name: "QUOTIENT", kind: .math, arguments: "numerator, denominator"),
+    FormulaFunctionEntry(name: "RAND", kind: .math, arguments: ""),
+    FormulaFunctionEntry(name: "RANDBETWEEN", kind: .math, arguments: "bottom, top"),
+    FormulaFunctionEntry(name: "AVERAGEA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "MAXA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "MINA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "STDEVA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "STDEVPA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "VARA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "VARPA", kind: .statistical, arguments: "value1, [value2], ..."),
+    FormulaFunctionEntry(name: "GEOMEAN", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "HARMEAN", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "SEM", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "MEAN", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(
+      name: "MEAN.ARITH", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(
+      name: "MEAN.GEOM", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(
+      name: "MEAN.HARM", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "DEVSQ", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "AVEDEV", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "SKEW", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "SKEW.P", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "KURT", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "TRIMMEAN", kind: .statistical, arguments: "array, percent"),
+    FormulaFunctionEntry(
+      name: "STANDARDIZE", kind: .statistical,
+      arguments: "x, mean, standard_dev"),
+    FormulaFunctionEntry(name: "FISHER", kind: .statistical, arguments: "x"),
+    FormulaFunctionEntry(name: "FISHERINV", kind: .statistical, arguments: "y"),
+    FormulaFunctionEntry(name: "COVARIANCE.S", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "COVARIANCE.P", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "COVAR", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "PEARSON", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "RSQ", kind: .statistical, arguments: "known_ys, known_xs"),
+    FormulaFunctionEntry(name: "RANK.AVG", kind: .statistical, arguments: "number, ref, [order]"),
+    FormulaFunctionEntry(
+      name: "PERCENTRANK", kind: .statistical,
+      arguments: "array, x, [significance]"),
+    FormulaFunctionEntry(
+      name: "PERCENTRANK.INC", kind: .statistical,
+      arguments: "array, x, [significance]"),
+    FormulaFunctionEntry(
+      name: "PERCENTRANK.EXC", kind: .statistical,
+      arguments: "array, x, [significance]"),
+    FormulaFunctionEntry(name: "PERCENTILE.EXC", kind: .statistical, arguments: "array, k"),
+    FormulaFunctionEntry(name: "QUARTILE.EXC", kind: .statistical, arguments: "array, quart"),
+    FormulaFunctionEntry(
+      name: "NORM.DIST", kind: .statistical,
+      arguments: "x, mean, standard_dev, cumulative"),
+    FormulaFunctionEntry(
+      name: "NORMDIST", kind: .statistical,
+      arguments: "x, mean, standard_dev, cumulative"),
+    FormulaFunctionEntry(name: "NORM.S.DIST", kind: .statistical, arguments: "z, cumulative"),
+    FormulaFunctionEntry(name: "NORMSDIST", kind: .statistical, arguments: "z"),
+    FormulaFunctionEntry(
+      name: "NORM.INV", kind: .statistical,
+      arguments: "probability, mean, standard_dev"),
+    FormulaFunctionEntry(
+      name: "NORMINV", kind: .statistical,
+      arguments: "probability, mean, standard_dev"),
+    FormulaFunctionEntry(name: "NORM.S.INV", kind: .statistical, arguments: "probability"),
+    FormulaFunctionEntry(name: "NORMSINV", kind: .statistical, arguments: "probability"),
+    FormulaFunctionEntry(
+      name: "REPLACE", kind: .text,
+      arguments: "old_text, start_num, num_chars, new_text"),
+    FormulaFunctionEntry(name: "FIXED", kind: .text, arguments: "number, [decimals], [no_commas]"),
+    FormulaFunctionEntry(name: "DOLLAR", kind: .text, arguments: "number, [decimals]"),
+    FormulaFunctionEntry(name: "T", kind: .text, arguments: "value"),
+    FormulaFunctionEntry(
+      name: "NUMBERVALUE", kind: .text,
+      arguments: "text, [decimal_separator], [group_separator]"),
+    FormulaFunctionEntry(name: "TIME", kind: .dateTime, arguments: "hour, minute, second"),
+    FormulaFunctionEntry(name: "TIMEVALUE", kind: .dateTime, arguments: "time_text"),
+    FormulaFunctionEntry(name: "DATEVALUE", kind: .dateTime, arguments: "date_text"),
+    FormulaFunctionEntry(
+      name: "DAYS360", kind: .dateTime,
+      arguments: "start_date, end_date, [method]"),
+    FormulaFunctionEntry(name: "N", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ISNONTEXT", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "TYPE", kind: .logical, arguments: "value"),
+    FormulaFunctionEntry(name: "ERROR.TYPE", kind: .logical, arguments: "error_val"),
+    FormulaFunctionEntry(name: "SLN", kind: .financial, arguments: "cost, salvage, life"),
+    FormulaFunctionEntry(name: "SYD", kind: .financial, arguments: "cost, salvage, life, per"),
+    FormulaFunctionEntry(
+      name: "DDB", kind: .financial,
+      arguments: "cost, salvage, life, period, [factor]"),
+    FormulaFunctionEntry(
+      name: "DB", kind: .financial,
+      arguments: "cost, salvage, life, period, [month]"),
+    FormulaFunctionEntry(name: "EFFECT", kind: .financial, arguments: "nominal_rate, npery"),
+    FormulaFunctionEntry(name: "NOMINAL", kind: .financial, arguments: "effect_rate, npery"),
+    FormulaFunctionEntry(name: "ISPMT", kind: .financial, arguments: "rate, per, nper, pv"),
+    FormulaFunctionEntry(
+      name: "CUMIPMT", kind: .financial,
+      arguments: "rate, nper, pv, start_period, end_period, type"),
+    FormulaFunctionEntry(
+      name: "CUMPRINC", kind: .financial,
+      arguments: "rate, nper, pv, start_period, end_period, type"),
+    FormulaFunctionEntry(
+      name: "MIRR", kind: .financial,
+      arguments: "values, finance_rate, reinvest_rate"),
+    FormulaFunctionEntry(name: "TRANSPOSE", kind: .lookup, arguments: "array"),
   ]
 
   public static func groups(matching query: String) -> [FormulaFunctionGroup] {

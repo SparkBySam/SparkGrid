@@ -13,7 +13,6 @@
 			<string>Excel Workbook</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
-			<!-- Owner ties Excel (also Owner). Quick Look uses whichever app is the default. -->
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -30,7 +29,6 @@
 			<string>Comma Separated Values</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
-			<!-- Owner so Quick Look selects this app’s extension instead of Numbers. -->
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -38,7 +36,46 @@
 				<string>public.comma-separated-values-text</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>numbers</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Numbers Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.iwork.numbers.sffnumbers</string>
+				<string>com.apple.iwork.numbers.numbers</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>ods</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>OpenDocument Spreadsheet</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.oasis-open.opendocument.spreadsheet</string>
+			</array>
+		</dict>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>SparkGrid.sdef</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -63,9 +100,64 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Numbers Document</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.iwork.numbers.sffnumbers</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>numbers</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Numbers Document</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.iwork.numbers.numbers</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>numbers</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>OpenDocument Spreadsheet</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.oasis-open.opendocument.spreadsheet</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ods</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.oasis.opendocument.spreadsheet</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
-	<!-- Standard HTTPS / no custom crypto beyond system frameworks. -->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 </dict>
 </plist>

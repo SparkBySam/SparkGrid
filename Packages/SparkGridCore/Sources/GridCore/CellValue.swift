@@ -10,6 +10,8 @@ public nonisolated enum ImportedFormulaValueType: String, Codable, Equatable, Se
 
 public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterable {
   case divZero
+  /// Two ranges with a space between them that do not overlap.
+  case null
   case ref
   case value
   /// Multi-cell / array result forced into a single cell (Sheets-style `#VALUE!`).
@@ -29,6 +31,7 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
   public var displayCode: String {
     switch self {
     case .divZero: return "#DIV/0!"
+    case .null: return "#NULL!"
     case .ref: return "#REF!"
     case .value, .arrayResult: return "#VALUE!"
     case .name: return "#NAME?"
@@ -52,6 +55,8 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
     case .value:
       return
         "Wrong type of argument or operand. Check that values and ranges are the kinds this formula expects."
+    case .null:
+      return "The two ranges have no cell in common, so there is nothing to read."
     case .arrayResult:
       return
         "This formula produces more than one value, but it sits in a single cell. Wrap it in SUM(…) to combine the results, or use ARRAYFORMULA to fill a range."
@@ -79,6 +84,7 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
   public init?(displayCode code: String) {
     switch code.uppercased() {
     case "#DIV/0!": self = .divZero
+    case "#NULL!": self = .null
     case "#REF!": self = .ref
     case "#VALUE!": self = .value
     case "#NAME?": self = .name
@@ -147,7 +153,7 @@ public nonisolated enum CellValue: Equatable, Sendable {
     case .string(let s):
       let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
       if trimmed.isEmpty { return 0 }
-      return Double(trimmed.replacingOccurrences(of: ",", with: ""))
+      return CellValue.numberReadingGroupCommas(trimmed)
     case .error:
       return nil
     }
@@ -162,7 +168,7 @@ public nonisolated enum CellValue: Equatable, Sendable {
     case .string(let s):
       let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
       if trimmed.isEmpty { return nil }
-      return Double(trimmed.replacingOccurrences(of: ",", with: ""))
+      return CellValue.numberReadingGroupCommas(trimmed)
     case .error:
       return nil
     }
@@ -241,7 +247,7 @@ public nonisolated enum CellValue: Equatable, Sendable {
       return trimmed.isEmpty ? .blank : .string(trimmed)
     case .number:
       let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-      if let number = Double(trimmed.replacingOccurrences(of: ",", with: "")) {
+      if let number = CellValue.numberReadingGroupCommas(trimmed) {
         return .number(number)
       }
       return fromImportedExcel(trimmed)
@@ -256,23 +262,43 @@ public nonisolated enum CellValue: Equatable, Sendable {
     let upper = trimmed.uppercased()
     if upper == "TRUE" { return .bool(true) }
     if upper == "FALSE" { return .bool(false) }
-    if let number = Double(trimmed.replacingOccurrences(of: ",", with: "")) {
+    if let number = CellValue.numberReadingGroupCommas(trimmed) {
       return .number(number)
     }
     if trimmed.hasPrefix("$"),
-      let number = Double(String(trimmed.dropFirst()).replacingOccurrences(of: ",", with: ""))
+      let number = CellValue.numberReadingGroupCommas(String(trimmed.dropFirst()))
     {
       return .number(number)
     }
     if trimmed.hasSuffix("%"),
-      let number = Double(
-        String(trimmed.dropLast())
-          .trimmingCharacters(in: .whitespaces)
-          .replacingOccurrences(of: ",", with: "")
-      )
+      let number = CellValue.numberReadingGroupCommas(
+        String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces))
     {
       return .number(number / 100)
     }
     return .string(trimmed)
+  }
+}
+
+extension CellValue {
+  /// A number that may have commas between groups of three digits: `1,234.5`, `-12,000`.
+  /// Commas anywhere else (`1,23`, `12,34,567`) make it text, as in other spreadsheet apps;
+  /// they read as 123 and 1234567 before (found by script, Nov 18).
+  public static func numberReadingGroupCommas(_ text: String) -> Double? {
+    guard text.contains(",") else { return Double(text) }
+    var body = Substring(text)
+    var sign = ""
+    if let first = body.first, first == "-" || first == "+" {
+      sign = first == "-" ? "-" : ""
+      body = body.dropFirst()
+    }
+    let parts = body.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count <= 2, let whole = parts.first else { return nil }
+    let groups = whole.split(separator: ",", omittingEmptySubsequences: false)
+    guard let first = groups.first, (1...3).contains(first.count) else { return nil }
+    for group in groups.dropFirst() where group.count != 3 { return nil }
+    guard groups.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }) else { return nil }
+    let plain = sign + groups.joined() + (parts.count == 2 ? "." + parts[1] : "")
+    return Double(plain)
   }
 }
