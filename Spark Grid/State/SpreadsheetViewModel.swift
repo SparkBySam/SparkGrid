@@ -150,6 +150,8 @@ final class SpreadsheetViewModel {
       // Chevrons / hidden rows are grid-visual — always refresh when filter changes.
       if oldValue != filterState {
         notifyGridRefresh()
+        // After the change settles: the hidden rows are worked out from what cells show.
+        DispatchQueue.main.async { [weak self] in self?.syncFilteredRowsForFormulas() }
       }
     }
   }
@@ -169,6 +171,8 @@ final class SpreadsheetViewModel {
   var duplicateHighlight: DuplicateRequest?
   @ObservationIgnored var duplicateScanCache: (key: DuplicateScanKey, scan: DuplicateScan)?
   var conditionalFormatCacheRevision: Int = -1
+  /// Settings › Readable text on filled cells when the cache was filled; a change empties it.
+  var conditionalFormatCacheReadableText = SparkTheme.readableTextOnFills
   /// Numbers in each conditional-format range, reset with `conditionalFormatCache`.
   var conditionalRangeNumbers: [ConditionalRangeKey: [Double]] = [:]
   /// View zoom (0.5…2.0). Scales cell geometry in the grid.
@@ -273,6 +277,9 @@ final class SpreadsheetViewModel {
     if editedCount > Self.fullPaintCellCount || valueEditChangesFilterVisibility(addresses) {
       structureRevision &+= 1
       hiddenRowsCache = nil
+      if filterState != nil {
+        DispatchQueue.main.async { [weak self] in self?.syncFilteredRowsForFormulas() }
+      }
       conditionalFormatCache.removeAll(keepingCapacity: true)
       conditionalFormatCacheRevision = -1
       onGridInvalidation?(.full)
@@ -1088,6 +1095,7 @@ final class SpreadsheetViewModel {
   }
 
   func commitEdit() {
+    returnToFormulaHome()
     formulaArgumentHint = nil
     let address = selectionAnchor
     let newValue = editText
@@ -1103,12 +1111,24 @@ final class SpreadsheetViewModel {
       cancelEdit()
       return
     }
+    // A data validation rule on the cell: the entry waits for the rule's alert.
+    if let rule = brokenValidationRule(for: newValue, at: address) {
+      cancelEdit()
+      presentValidationAlert(rule, entry: newValue, at: address) { [weak self] keep in
+        if keep { self?.setCellValue(newValue, at: address) }
+      }
+      return
+    }
     setCellValue(newValue, at: address)
     isEditing = false
     noteFormulaEditTextChanged()
   }
 
   func cancelEdit() {
+    if formulaHome != nil {
+      returnToFormulaHome()
+      isEditing = false
+    }
     formulaArgumentHint = nil
     syncEditTextFromSelection()
     isEditing = false
@@ -1441,9 +1461,50 @@ final class SpreadsheetViewModel {
     var ranges: [CellRange]
   }
 
+  /// While a formula reaches into another sheet: the sheet and cell it is being typed into.
+  /// The formula is finished there, whichever sheet shows when Return is pressed.
+  var formulaHome: (sheetIndex: Int, address: CellAddress)?
+  /// Set by the grid: hides the in-cell editor without finishing the edit, and gives its text.
+  @ObservationIgnored var onEditMovesToFormulaBar: (() -> String?)?
+
+  /// A formula being typed whose end is waiting for a reference: `=SUM(`, `=A1+`, `=`.
+  var formulaWaitsForReference: Bool {
+    guard isEditing, editText.hasPrefix("=") else { return false }
+    let trimmed = editText.trimmingCharacters(in: .whitespaces)
+    guard let last = trimmed.last else { return false }
+    return "=(,+-*/^&<>:;".contains(last)
+  }
+
   func selectSheet(at index: Int) {
+    // Clicking another sheet's tab while a formula waits for a reference goes there to point at
+    // its cells, as in other apps; the formula stays open in the formula bar (Nov 20).
+    if index != workbook.activeSheetIndex, index >= 0, index < workbook.sheets.count,
+      formulaWaitsForReference || (formulaHome != nil && isEditing)
+    {
+      if let text = onEditMovesToFormulaBar?() { editText = text }
+      if formulaHome == nil { formulaHome = (workbook.activeSheetIndex, selectionAnchor) }
+      showSheet(at: index, keepingEdit: true)
+      return
+    }
     commitEditIfNeeded()
     guard index >= 0, index < workbook.sheets.count else { return }
+    showSheet(at: index, keepingEdit: false)
+  }
+
+  /// Back to the sheet and cell a formula reaching into other sheets is being typed into.
+  private func returnToFormulaHome() {
+    guard let home = formulaHome else { return }
+    formulaHome = nil
+    guard home.sheetIndex != workbook.activeSheetIndex, home.sheetIndex < workbook.sheets.count
+    else { return }
+    let text = editText
+    showSheet(at: home.sheetIndex, keepingEdit: true)
+    selection = home.address
+    editText = text
+    isEditing = true
+  }
+
+  private func showSheet(at index: Int, keepingEdit: Bool) {
     if index != workbook.activeSheetIndex {
       savedSelections[activeSheet.id] = SavedSelection(
         anchor: selectionAnchor, end: selectionEnd, ranges: selectionRanges)
@@ -1467,8 +1528,14 @@ final class SpreadsheetViewModel {
     } else {
       selection = .origin
     }
-    syncEditTextFromSelection()
-    isEditing = false
+    if keepingEdit {
+      // The formula carries on in the formula bar, with the cursor at its end.
+      formulaCaretUTF16 = editText.utf16.count
+      formulaCaretToken += 1
+    } else {
+      syncEditTextFromSelection()
+      isEditing = false
+    }
     // Charts from the file are numbered per sheet.
     selectedImportedChartID = nil
     // Data on other sheets may have changed what this sheet's array formulas spill.
@@ -2614,7 +2681,10 @@ final class SpreadsheetViewModel {
       setCellValue(text, at: selectionAnchor)
       pasteCopiedConditionalFormats(formats, at: selectionAnchor)
     } else {
-      pasteGrid(grid, at: selectionAnchor, adjustFormulas: false, conditionalFormats: formats)
+      // Text from another app reads as typing reads it; cells copied in Spark Grid keep theirs.
+      pasteGrid(
+        grid, at: selectionAnchor, adjustFormulas: false, conditionalFormats: formats,
+        readsAsTyped: cells == nil)
     }
     if let cells { pasteCellFormats(cells, at: selectionAnchor, actionName: nil) }
     undoManager?.endUndoGrouping()
@@ -2666,7 +2736,8 @@ final class SpreadsheetViewModel {
     adjustFormulas: Bool,
     sourceOrigin: CellAddress? = nil,
     actionName: String = "Paste",
-    conditionalFormats: SpreadsheetClipboard.ConditionalFormatClipboardPayload? = nil
+    conditionalFormats: SpreadsheetClipboard.ConditionalFormatClipboardPayload? = nil,
+    readsAsTyped: Bool = false
   ) {
     let rowDelta = adjustFormulas ? origin.row - (sourceOrigin?.row ?? origin.row) : 0
     let colDelta = adjustFormulas ? origin.col - (sourceOrigin?.col ?? origin.col) : 0
@@ -2698,6 +2769,7 @@ final class SpreadsheetViewModel {
           "text": text,
           "rowDelta": String(rowDelta),
           "colDelta": String(colDelta),
+          "typed": readsAsTyped ? "1" : "0",
         ],
         incremental: true
       )

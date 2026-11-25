@@ -57,7 +57,8 @@ extension FormulaEvaluator {
   /// Functions whose result can be many cells.
   public static let arrayFunctionNames: Set<String> = Set([
     "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", FormulaExpr.anchorArrayFunction,
-  ]).union(shapeFunctionNames)
+  ]).union(shapeFunctionNames).union(statArrayFunctionNames).union(lambdaArrayFunctionNames)
+    .union(regexArrayFunctionNames)
 
   /// The name without the `_xlfn.` and `_xlws.` prefixes Excel saves newer functions with.
   public static func plainFunctionName(_ name: String) -> String {
@@ -79,12 +80,19 @@ extension FormulaEvaluator {
     case .call(let name, let args):
       // LET spills when what it works with or works out does.
       if isLet(name) { return args.contains(where: spills) }
+      // `LAMBDA(n,SEQUENCE(n))(3)` spills when the LAMBDA's body does.
+      if name == FormulaExpr.lambdaCallFunction {
+        return lambdaBody(args.first).map(spills) ?? false
+      }
       let plain = plainFunctionName(name)
       if arrayFunctionNames.contains(plain) { return true }
       // `=LEN(D1:D8)` and `=ROW(B1:B8)` give a value for each cell.
       if plain == "ROW" || plain == "COLUMN", case .range = args.first { return true }
       // `=B1:INDEX(B:B,5)` spills like a range.
       if plain == FormulaExpr.rangeOperatorFunction { return true }
+      if let slots = criteriaSlots(plain, count: args.count) {
+        return slots.contains { spills(args[$0]) }
+      }
       return liftedFunctionNames.contains(plain) && args.contains(where: spills)
     case .unary(_, let inner):
       return spills(inner)
@@ -98,6 +106,15 @@ extension FormulaEvaluator {
     }
   }
 
+  /// The body of the LAMBDA called in place, through LAMBDAs that give LAMBDAs.
+  static func lambdaBody(_ expr: FormulaExpr?) -> FormulaExpr? {
+    guard case .call(let name, let args)? = expr else { return nil }
+    if name == FormulaExpr.lambdaCallFunction { return lambdaBody(lambdaBody(args.first)) }
+    let upper = name.uppercased()
+    guard upper == "LAMBDA" || upper.hasSuffix(".LAMBDA") else { return nil }
+    return args.last
+  }
+
   /// Functions that take one value in each argument. Given a range or a list there, they work
   /// value by value and give an array of answers, as in other apps: SUM(LEN(A1:A8)) adds the
   /// lengths, MAX(IF(B1:B8<50,B1:B8)) is the largest under 50, and
@@ -109,7 +126,7 @@ extension FormulaEvaluator {
     "ISEVEN", "ISODD",
     "LEN", "LEFT", "RIGHT", "MID", "UPPER", "LOWER", "PROPER", "TRIM", "CLEAN", "VALUE",
     "NUMBERVALUE", "TEXT", "SUBSTITUTE", "REPLACE", "FIND", "SEARCH", "EXACT", "CODE", "CHAR",
-    "UNICODE", "UNICHAR", "REPT", "CONCATENATE", "DOLLAR", "FIXED",
+    "UNICODE", "UNICHAR", "REPT", "CONCATENATE", "DOLLAR", "FIXED", "REGEXTEST", "REGEXREPLACE",
     "ABS", "SIGN", "INT", "TRUNC", "ROUND", "ROUNDUP", "ROUNDDOWN", "MROUND", "CEILING",
     "FLOOR", "MOD", "QUOTIENT", "POWER", "SQRT", "EXP", "LN", "LOG", "LOG10", "EVEN", "ODD",
     "FACT", "DAY", "MONTH", "YEAR", "WEEKDAY", "HOUR", "MINUTE", "SECOND", "DATE", "TIME",
@@ -128,12 +145,19 @@ extension FormulaEvaluator {
       let plain = plainFunctionName(name)
       if arrayFunctionNames.contains(plain) { return true }
       if isLet(name) { return args.contains(where: givesArray) }
+      if name == FormulaExpr.lambdaCallFunction {
+        return args.dropFirst().contains(where: givesArray)
+          || (lambdaBody(args.first).map(givesArray) ?? false)
+      }
       if plain == "INDIRECT" || plain == "OFFSET" || plain == FormulaExpr.rangeOperatorFunction
         || plain == FormulaExpr.intersectionFunction
       {
         return true
       }
       if plain == "ROW" || plain == "COLUMN", case .range = args.first { return true }
+      if let slots = criteriaSlots(plain, count: args.count) {
+        return slots.contains { givesArray(args[$0]) }
+      }
       return liftedFunctionNames.contains(plain) && args.contains(where: givesArray)
     default: return false
     }
@@ -158,6 +182,52 @@ extension FormulaEvaluator {
 
   /// `rawName` worked out once for each position of its array arguments. A single value
   /// stretches to fit; an array too short for a position gives #N/A there, as in other apps.
+  /// Where SUMIF, COUNTIFS and the rest take their criteria. A range or list there gives one
+  /// answer for each criterion, as in other apps: =SUMIFS(H2:H5,A2:A5,B2:B5) spills four totals.
+  /// It was #VALUE! (Sam's test, Nov 20).
+  static func criteriaSlots(_ plain: String, count: Int) -> [Int]? {
+    switch plain {
+    case "SUMIF", "COUNTIF", "AVERAGEIF": return count >= 2 ? [1] : nil
+    case "COUNTIFS": return Array(stride(from: 1, to: count, by: 2))
+    case "SUMIFS", "AVERAGEIFS", "MAXIFS", "MINIFS": return Array(stride(from: 2, to: count, by: 2))
+    default: return nil
+    }
+  }
+
+  /// One answer per criterion when a criteria argument holds several; nil when none does.
+  func criteriaLifted(_ rawName: String, _ plain: String, _ args: [FormulaExpr]) -> ArrayResult? {
+    guard let slots = Self.criteriaSlots(plain, count: args.count),
+      slots.contains(where: { Self.givesArray(args[$0]) })
+    else { return nil }
+    var arrays: [Int: ArrayResult] = [:]
+    for slot in slots { arrays[slot] = evaluateArray(args[slot]) }
+    if arrays.values.allSatisfy(\.isSingle) { return nil }
+    let rows = arrays.values.map(\.rows).max() ?? 1
+    let cols = arrays.values.map(\.cols).max() ?? 1
+    guard InputBounds.materializedCount(rows: rows, cols: cols) != nil else {
+      return ArrayResult(.error(.value))
+    }
+    var values: [CellValue] = []
+    values.reserveCapacity(rows * cols)
+    for r in 0..<rows {
+      for c in 0..<cols {
+        var elementArgs = args
+        var outside = false
+        for (slot, array) in arrays {
+          let row = array.rows == 1 ? 0 : r
+          let col = array.cols == 1 ? 0 : c
+          guard row < array.rows, col < array.cols else {
+            outside = true
+            break
+          }
+          elementArgs[slot] = Self.elementLiteral(array.values[row * array.cols + col])
+        }
+        values.append(outside ? .error(.na) : evaluate(.call(rawName, elementArgs)))
+      }
+    }
+    return ArrayResult(rows: rows, cols: cols, values: values)
+  }
+
   func liftedCall(_ rawName: String, _ args: [FormulaExpr]) -> ArrayResult {
     let arrays: [ArrayResult?] = args.map { arg in
       if case .missing = arg { return nil }
@@ -253,10 +323,12 @@ extension FormulaEvaluator {
         if let numbers = rowOrColumnNumbers(rawName, args) { return numbers }
         return ArrayResult(evaluate(expr))
       case let name:
+        if let answers = criteriaLifted(rawName, name, args) { return answers }
         if Self.liftedFunctionNames.contains(name), args.contains(where: Self.givesArray) {
           return liftedCall(rawName, args)
         }
-        return shapeArray(name, args) ?? ArrayResult(evaluate(expr))
+        return shapeArray(name, args) ?? statArray(name, args) ?? lambdaArray(name, args)
+          ?? regexArray(name, args) ?? ArrayResult(evaluate(expr))
       }
     default:
       return ArrayResult(evaluate(expr))

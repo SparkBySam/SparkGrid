@@ -50,6 +50,18 @@ struct Spark_GridApp: App {
     }
     .defaultSize(width: 820, height: 560)
 
+    Window("Welcome to Spark Grid", id: "welcome") {
+      WelcomeView()
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    Window("What's New", id: "whatsnew") {
+      WhatsNewView()
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
     Settings {
       SettingsView()
     }
@@ -72,6 +84,10 @@ private struct WorkbookWindowRoot: View {
         WorkbookWindows.shared.openWindow = openWindow
         appDelegate?.workbookWindowIsReady()
         store.restartAutosave()
+        // Welcome the first time Spark Grid opens; What's New the first time a version does.
+        if let screen = LaunchIntro.screenForThisLaunch() {
+          openWindow(id: screen.windowID)
+        }
       }
       .onDisappear {
         WorkbookWindows.shared.closed(windowID)

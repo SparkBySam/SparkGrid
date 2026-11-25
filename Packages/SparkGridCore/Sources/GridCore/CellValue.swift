@@ -59,7 +59,7 @@ public nonisolated enum FormulaError: Equatable, Hashable, Sendable, CaseIterabl
       return "The two ranges have no cell in common, so there is nothing to read."
     case .arrayResult:
       return
-        "This formula produces more than one value, but it sits in a single cell. Wrap it in SUM(…) to combine the results, or use ARRAYFORMULA to fill a range."
+        "This formula produces more than one value, but it sits in a single cell. Wrap it in SUM(…) to combine the results, or in INDEX(…) to pick one of them."
     case .name:
       return
         "Unknown function or named range. Check the spelling, or define the name under Sheet → Name Manager…"
@@ -256,12 +256,22 @@ public nonisolated enum CellValue: Equatable, Sendable {
     }
   }
 
+  /// The error codes a cell can hold as a value: typed, or saved as one by another app.
+  public static let literalErrorCodes: Set<String> = [
+    "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A",
+  ]
+
   public static func fromLiteralRaw(_ raw: String) -> CellValue {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty { return .blank }
     let upper = trimmed.uppercased()
     if upper == "TRUE" { return .bool(true) }
     if upper == "FALSE" { return .bool(false) }
+    if trimmed.first == "#", literalErrorCodes.contains(upper),
+      let error = FormulaError(displayCode: upper)
+    {
+      return .error(error)
+    }
     if let number = CellValue.numberReadingGroupCommas(trimmed) {
       return .number(number)
     }

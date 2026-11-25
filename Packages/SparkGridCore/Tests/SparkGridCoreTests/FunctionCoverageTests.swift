@@ -513,6 +513,13 @@ final class FunctionCoverageTests: XCTestCase {
     "TEXTBEFORE": Sample(
       formula: "TEXTBEFORE(\"Little Red Riding Hood's red hood\", \"hood\")",
       expect: .value(.string("Little Red Riding Hood's red "))),
+    "REGEXTEST": Sample(
+      formula: "REGEXTEST(\"Hello World\", \"world\", 1)", expect: .value(.bool(true))),
+    "REGEXEXTRACT": Sample(
+      formula: "REGEXEXTRACT(\"Order 12-B\", \"\\d+\")", expect: .value(.string("12"))),
+    "REGEXREPLACE": Sample(
+      formula: "REGEXREPLACE(\"Hello World\", \"(\\w+) (\\w+)\", \"$2 $1\")",
+      expect: .value(.string("World Hello"))),
     "TEXTAFTER": Sample(
       formula: "TEXTAFTER(\"Little Red Riding Hood's red hood\", \"HOOD\", -1, 1)",
       expect: .value(.string(""))),
@@ -642,6 +649,496 @@ final class FunctionCoverageTests: XCTestCase {
     "CUMIPMT": Sample(formula: "CUMIPMT(0.1, 2, 100, 1, 1, 0)", expect: .value(.number(-10))),
     "CUMPRINC": Sample(
       formula: "CUMPRINC(0.1, 2, 100, 1, 2, 0)", expect: .numberBetween(-100.0001, -99.9999)),
+    // 1.7 batch 7: answers from Excel 16.115.
+    "COUPDAYBS": Sample(
+      formula: "COUPDAYBS(DATE(2008,2,15),DATE(2017,11,15),2,0)",
+      expect: .numberBetween(89.999999909999, 90.000000090001)),
+    "COUPDAYS": Sample(
+      formula: "COUPDAYS(DATE(2008,2,15),DATE(2017,11,15),2,0)",
+      expect: .numberBetween(179.999999819999, 180.000000180001)),
+    "COUPDAYSNC": Sample(
+      formula: "COUPDAYSNC(DATE(2008,2,15),DATE(2017,11,15),2,0)",
+      expect: .numberBetween(89.999999909999, 90.000000090001)),
+    "COUPNCD": Sample(
+      formula: "COUPNCD(DATE(2008,2,15),DATE(2017,11,15),2,1)",
+      expect: .numberBetween(39582.999960417, 39583.000039583)),
+    "COUPNUM": Sample(
+      formula: "COUPNUM(DATE(2008,2,15),DATE(2017,11,15),2,1)",
+      expect: .numberBetween(19.999999979999, 20.000000020001)),
+    "COUPPCD": Sample(
+      formula: "COUPPCD(DATE(2008,2,15),DATE(2017,11,15),2,1)",
+      expect: .numberBetween(39400.999960599, 39401.000039401)),
+    "PRICE": Sample(
+      formula: "PRICE(DATE(2008,2,15),DATE(2017,11,15),0.0575,0.065,100,2,0)",
+      expect: .numberBetween(94.63436152668675, 94.63436171595745)),
+    "YIELD": Sample(
+      formula: "YIELD(DATE(2008,2,15),DATE(2017,11,15),0.0575,95.04287,100,2,0)",
+      expect: .numberBetween(0.06440961166613587, 0.06440961179695512)),
+    "DURATION": Sample(
+      formula: "DURATION(DATE(2008,2,15),DATE(2017,11,15),0.08,0.09,2,0)",
+      expect: .numberBetween(6.704496332562293, 6.704496345973286)),
+    "MDURATION": Sample(
+      formula: "MDURATION(DATE(2024,1,31),DATE(2030,8,31),0.08,0.09,4,0)",
+      expect: .numberBetween(4.956466315621324, 4.956466325536256)),
+    "ACCRINT": Sample(
+      formula: "ACCRINT(DATE(2008,3,1),DATE(2008,8,31),DATE(2008,5,1),0.1,1000,2,0)",
+      expect: .numberBetween(16.666666649999033, 16.666666683334366)),
+    "ACCRINTM": Sample(
+      formula: "ACCRINTM(DATE(2008,4,1),DATE(2008,6,15),0.1,1000,3)",
+      expect: .numberBetween(20.54794518493056, 20.547945226028443)),
+    "DISC": Sample(
+      formula: "DISC(DATE(2018,1,25),DATE(2018,6,15),97.975,100,1)",
+      expect: .numberBetween(0.05242021271253749, 0.052420212819377913)),
+    "INTRATE": Sample(
+      formula: "INTRATE(DATE(2008,2,15),DATE(2008,5,15),1000000,1014420,2)",
+      expect: .numberBetween(0.057679999941320004, 0.05768000005868)),
+    "RECEIVED": Sample(
+      formula: "RECEIVED(DATE(2008,2,15),DATE(2008,5,15),1000000,0.0575,2)",
+      expect: .numberBetween(1014584.6533925154, 1014584.6554216847)),
+    "PRICEDISC": Sample(
+      formula: "PRICEDISC(DATE(2008,2,16),DATE(2008,3,1),0.0525,100,2)",
+      expect: .numberBetween(99.79583323353648, 99.79583343313013)),
+    "YIELDDISC": Sample(
+      formula: "YIELDDISC(DATE(2008,2,16),DATE(2008,3,1),99.795,100,2)",
+      expect: .numberBetween(0.05282257193303573, 0.052822572040680874)),
+    "PRICEMAT": Sample(
+      formula: "PRICEMAT(DATE(2008,2,15),DATE(2008,4,13),DATE(2007,11,11),0.061,0.061,0)",
+      expect: .numberBetween(99.9844987755714, 99.9844989755424)),
+    "YIELDMAT": Sample(
+      formula: "YIELDMAT(DATE(2008,3,15),DATE(2008,11,3),DATE(2007,11,8),0.0625,100.0123,0)",
+      expect: .numberBetween(0.06095433362958437, 0.06095433375349303)),
+    "TBILLPRICE": Sample(
+      formula: "TBILLPRICE(DATE(2008,3,31),DATE(2008,6,1),0.09)",
+      expect: .numberBetween(98.449999901549, 98.450000098451)),
+    "TBILLYIELD": Sample(
+      formula: "TBILLYIELD(DATE(2008,3,31),DATE(2008,6,1),98.45)",
+      expect: .numberBetween(0.09141696283292564, 0.09141696301775956)),
+    "TBILLEQ": Sample(
+      formula: "TBILLEQ(DATE(2008,3,31),DATE(2008,6,1),0.0914)",
+      expect: .numberBetween(0.0941514934707915, 0.0941514936610945)),
+    "VDB": Sample(
+      formula: "VDB(2400,300,10,0,1)", expect: .numberBetween(479.999999519999, 480.000000480001)),
+    "AMORLINC": Sample(
+      formula: "AMORLINC(2400,DATE(2008,8,19),DATE(2008,12,31),300,1,0.15,1)",
+      expect: .numberBetween(359.999999639999, 360.000000360001)),
+    "AMORDEGRC": Sample(
+      formula: "AMORDEGRC(2400,DATE(2008,8,19),DATE(2008,12,31),300,1,0.15,1)",
+      expect: .numberBetween(775.999999223999, 776.000000776001)),
+    "FVSCHEDULE": Sample(
+      formula: "FVSCHEDULE(1,{0.09,0.11,0.1})",
+      expect: .numberBetween(1.3308899986681098, 1.33089000133189)),
+    "DOLLARDE": Sample(
+      formula: "DOLLARDE(1.02,16)", expect: .numberBetween(1.1249999988739998, 1.1250000011260002)),
+    "DOLLARFR": Sample(
+      formula: "DOLLARFR(1.125,16)", expect: .numberBetween(1.0199999989789998, 1.0200000010210002)),
+    "PDURATION": Sample(
+      formula: "PDURATION(0.025,2000,2200)",
+      expect: .numberBetween(3.8598661587617937, 3.8598661664835263)),
+    "RRI": Sample(
+      formula: "RRI(96,10000,11000)",
+      expect: .numberBetween(0.0009933073742980226, 0.0009933073782846375)),
+    "CONVERT": Sample(
+      formula: "CONVERT(68,\"F\",\"C\")", expect: .numberBetween(19.999999979999, 20.000000020001)),
+    "COMPLEX": Sample(formula: "COMPLEX(3,4)", expect: .value(.string("3+4i"))),
+    "BESSELJ": Sample(
+      formula: "BESSELJ(1.9,2)", expect: .numberBetween(0.3299192301522116, 0.3299324271873584)),
+    "BESSELY": Sample(
+      formula: "BESSELY(2.5,1)", expect: .numberBetween(0.14591521914456285, 0.14592105587206317)),
+    "BESSELI": Sample(
+      formula: "BESSELI(1.5,1)", expect: .numberBetween(0.9816467951455966, 0.9816860618047355)),
+    "BESSELK": Sample(
+      formula: "BESSELK(1.5,1)", expect: .numberBetween(0.2773822558751864, 0.27739335138933163)),
+    "IMABS": Sample(
+      formula: "IMABS(\"5+12i\")", expect: .numberBetween(12.999999986999, 13.000000013001)),
+    "IMAGINARY": Sample(
+      formula: "IMAGINARY(\"3+4i\")", expect: .numberBetween(3.999999995999, 4.000000004001)),
+    "IMARGUMENT": Sample(
+      formula: "IMARGUMENT(\"3+4i\")",
+      expect: .numberBetween(0.9272952170733167, 0.9272952189299072)),
+    "IMCONJUGATE": Sample(formula: "IMCONJUGATE(\"3+4i\")", expect: .value(.string("3-4i"))),
+    "IMCOS": Sample(
+      formula: "IMCOS(\"1+i\")", expect: .value(.string("0.833730025131149-0.988897705762865i"))),
+    "IMCOSH": Sample(
+      formula: "IMCOSH(\"4+3i\")", expect: .value(.string("-27.0349456030742+3.85115333481178i"))),
+    "IMCOT": Sample(
+      formula: "IMCOT(\"4+3i\")", expect: .value(.string("0.00490118239430447-0.999266927805902i"))),
+    "IMCSC": Sample(
+      formula: "IMCSC(\"4+3i\")", expect: .value(.string("-0.0754898329158637+0.0648774713706355i"))
+    ),
+    "IMCSCH": Sample(
+      formula: "IMCSCH(\"4+3i\")", expect: .value(.string("-0.036275889628626-0.0051744731840194i"))
+    ),
+    "IMEXP": Sample(
+      formula: "IMEXP(\"1+i\")", expect: .value(.string("1.46869393991589+2.28735528717884i"))),
+    "IMLN": Sample(
+      formula: "IMLN(\"3+4i\")", expect: .value(.string("1.6094379124341+0.927295218001612i"))),
+    "IMLOG10": Sample(
+      formula: "IMLOG10(\"3+4i\")", expect: .value(.string("0.698970004336019+0.402719196273373i"))),
+    "IMLOG2": Sample(
+      formula: "IMLOG2(\"3+4i\")", expect: .value(.string("2.32192809488736+1.33780421245098i"))),
+    "IMREAL": Sample(
+      formula: "IMREAL(\"6-9i\")", expect: .numberBetween(5.999999993999, 6.000000006001)),
+    "IMSEC": Sample(
+      formula: "IMSEC(\"4+3i\")", expect: .value(.string("-0.0652940278579471-0.0752249603027732i"))
+    ),
+    "IMSECH": Sample(
+      formula: "IMSECH(\"4+3i\")",
+      expect: .value(.string("-0.0362534969158689-0.00516434460775318i"))),
+    "IMSIN": Sample(
+      formula: "IMSIN(\"4+3i\")", expect: .value(.string("-7.61923172032141-6.548120040911i"))),
+    "IMSINH": Sample(
+      formula: "IMSINH(\"4+3i\")", expect: .value(.string("-27.0168132580039+3.85373803791938i"))),
+    "IMSQRT": Sample(
+      formula: "IMSQRT(\"1+i\")", expect: .value(.string("1.09868411346781+0.455089860562227i"))),
+    "IMTAN": Sample(
+      formula: "IMTAN(\"4+3i\")", expect: .value(.string("0.00490825806749606+1.00070953606723i"))),
+    "IMDIV": Sample(formula: "IMDIV(\"-238+240i\",\"10+24i\")", expect: .value(.string("5+12i"))),
+    "IMSUB": Sample(formula: "IMSUB(\"13+4i\",\"5+3i\")", expect: .value(.string("8+i"))),
+    "IMPOWER": Sample(
+      formula: "IMPOWER(\"2+3i\",3)", expect: .value(.string("-46+9.00000000000001i"))),
+    "IMPRODUCT": Sample(formula: "IMPRODUCT(\"3+4i\",\"5-3i\")", expect: .value(.string("27+11i"))),
+    "IMSUM": Sample(formula: "IMSUM(\"3+4i\",\"5-3i\")", expect: .value(.string("8+i"))),
+    // 1.7 batch 6
+    "LAMBDA": Sample(formula: "LAMBDA(x, x + 1)", expect: .value(.error(.calc))),
+    "MAP": Sample(formula: "SUM(MAP({1,2,3}, LAMBDA(x, x * x)))", expect: .value(.number(14))),
+    "REDUCE": Sample(
+      formula: "REDUCE(0, {1,2,3}, LAMBDA(a, b, a + b))", expect: .value(.number(6))),
+    "SCAN": Sample(
+      formula: "SUM(SCAN(0, {1,2,3}, LAMBDA(a, b, a + b)))", expect: .value(.number(10))),
+    "BYROW": Sample(
+      formula: "SUM(BYROW({1,2;3,4}, LAMBDA(r, MAX(r))))", expect: .value(.number(6))),
+    "BYCOL": Sample(formula: "SUM(BYCOL({1,2;3,4}, SUM))", expect: .value(.number(10))),
+    "MAKEARRAY": Sample(
+      formula: "SUM(MAKEARRAY(2, 2, LAMBDA(r, c, r * c)))", expect: .value(.number(9))),
+    "ISOMITTED": Sample(formula: "ISOMITTED(1)", expect: .value(.bool(false))),
+    "EXPAND": Sample(formula: "ROWS(EXPAND({1;2}, 4))", expect: .value(.number(4))),
+    "GROUPBY": Sample(
+      formula: "ROWS(GROUPBY({\"a\";\"b\";\"a\"}, {1;2;3}, SUM))", expect: .value(.number(3))),
+    "PIVOTBY": Sample(
+      formula: "ROWS(PIVOTBY({\"a\";\"b\"}, {\"x\";\"y\"}, {1;2}, SUM))", expect: .value(.number(4))
+    ),
+    // 1.7 batch 5: answers from Excel 16.115 where the formula needs no cells.
+    "BETA.DIST": Sample(
+      formula: "BETA.DIST(2,8,10,TRUE,1,3)",
+      expect: .numberBetween(0.6854705803682164, 0.6854705817411575)),
+    "BETA.INV": Sample(
+      formula: "BETA.INV(0.685470581,8,10,1,3)",
+      expect: .numberBetween(1.99999999796214, 2.00000000196414)),
+    "BETADIST": Sample(
+      formula: "BETADIST(2,8,10,1,3)",
+      expect: .numberBetween(0.6854705803682164, 0.6854705817411575)),
+    "BETAINV": Sample(
+      formula: "BETAINV(0.2,4,5)", expect: .numberBetween(0.30322584435985617, 0.3032258449683078)),
+    "BINOM.DIST": Sample(
+      formula: "BINOM.DIST(6,10,0.5,FALSE)",
+      expect: .numberBetween(0.20507812479392187, 0.20507812520607813)),
+    "BINOMDIST": Sample(
+      formula: "BINOMDIST(3,8,0.3,TRUE)",
+      expect: .numberBetween(0.8058956491931043, 0.8058956508068956)),
+    "BINOM.DIST.RANGE": Sample(
+      formula: "BINOM.DIST.RANGE(60,0.75,48)",
+      expect: .numberBetween(0.08397496734407253, 0.08397496751402247)),
+    "BINOM.INV": Sample(
+      formula: "BINOM.INV(6,0.5,0.75)", expect: .numberBetween(3.999999995999, 4.000000004001)),
+    "CRITBINOM": Sample(
+      formula: "CRITBINOM(100,0.2,0.9)",
+      expect: .numberBetween(24.999999974999003, 25.000000025000997)),
+    "NEGBINOM.DIST": Sample(
+      formula: "NEGBINOM.DIST(10,5,0.25,TRUE)",
+      expect: .numberBetween(0.31351405816366296, 0.313514058792691)),
+    "NEGBINOMDIST": Sample(
+      formula: "NEGBINOMDIST(10,5,0.25)",
+      expect: .numberBetween(0.05504866031912924, 0.05504866043122656)),
+    "HYPGEOM.DIST": Sample(
+      formula: "HYPGEOM.DIST(1,4,8,20,TRUE)",
+      expect: .numberBetween(0.46542827610735876, 0.4654282770402152)),
+    "HYPGEOMDIST": Sample(
+      formula: "HYPGEOMDIST(1,4,8,20)",
+      expect: .numberBetween(0.36326109354698793, 0.36326109427551007)),
+    "POISSON.DIST": Sample(
+      formula: "POISSON.DIST(2,5,TRUE)",
+      expect: .numberBetween(0.12465201935742896, 0.12465201960873303)),
+    "POISSON": Sample(
+      formula: "POISSON(0,0,FALSE)", expect: .numberBetween(0.999999998999, 1.0000000010010002)),
+    "EXPON.DIST": Sample(
+      formula: "EXPON.DIST(0.2,10,TRUE)",
+      expect: .numberBetween(0.8646647158977223, 0.8646647176290516)),
+    "EXPONDIST": Sample(
+      formula: "EXPONDIST(1,0.5,TRUE)",
+      expect: .numberBetween(0.39346933989289773, 0.3934693406818363)),
+    "WEIBULL.DIST": Sample(
+      formula: "WEIBULL.DIST(105,20,100,TRUE)",
+      expect: .numberBetween(0.9295813891386956, 0.9295813909998584)),
+    "WEIBULL": Sample(
+      formula: "WEIBULL(1,2,3,TRUE)",
+      expect: .numberBetween(0.10516068307946931, 0.1051606832917907)),
+    "GAMMA.DIST": Sample(
+      formula: "GAMMA.DIST(10.00001131,9,2,FALSE)",
+      expect: .numberBetween(0.03263913038465487, 0.032639130451933125)),
+    "GAMMADIST": Sample(
+      formula: "GAMMADIST(3,0.5,1,TRUE)",
+      expect: .numberBetween(0.985694120577876, 0.9856941225512641)),
+    "GAMMA.INV": Sample(
+      formula: "GAMMA.INV(0.068094,9,2)",
+      expect: .numberBetween(10.000011181436188, 10.00001120143821)),
+    "GAMMAINV": Sample(
+      formula: "GAMMAINV(0.5,0.5,1)",
+      expect: .numberBetween(0.22746821133131778, 0.22746821178825422)),
+    "CHISQ.DIST": Sample(
+      formula: "CHISQ.DIST(0.5,1,TRUE)",
+      expect: .numberBetween(0.5204998772915471, 0.5204998783345468)),
+    "CHISQ.DIST.RT": Sample(
+      formula: "CHISQ.DIST.RT(18.307,10)",
+      expect: .numberBetween(0.05000058904039752, 0.05000058914239869)),
+    "CHIDIST": Sample(
+      formula: "CHIDIST(3.84,1)", expect: .numberBetween(0.05004352119766158, 0.050043521299748615)),
+    "CHISQ.INV": Sample(
+      formula: "CHISQ.INV(0.93,1)", expect: .numberBetween(3.28302028347551, 3.28302029004355)),
+    "CHISQ.INV.RT": Sample(
+      formula: "CHISQ.INV.RT(0.050001,10)",
+      expect: .numberBetween(18.306973438653127, 18.30697347526907)),
+    "CHIINV": Sample(
+      formula: "CHIINV(0.05,1)", expect: .numberBetween(3.8414588168516612, 3.841458824536579)),
+    "F.DIST": Sample(
+      formula: "F.DIST(15.2069,6,4,TRUE)",
+      expect: .numberBetween(0.990000042011763, 0.9900000439937631)),
+    "F.DIST.RT": Sample(
+      formula: "F.DIST.RT(15.2069,6,4)",
+      expect: .numberBetween(0.009999956986237351, 0.009999957008237267)),
+    "FDIST": Sample(
+      formula: "FDIST(2,3,10)", expect: .numberBetween(0.1780074071961686, 0.17800740755418343)),
+    "F.INV": Sample(
+      formula: "F.INV(0.01,6,4)", expect: .numberBetween(0.10930991401426908, 0.10930991423488891)),
+    "F.INV.RT": Sample(
+      formula: "F.INV.RT(0.01,6,4)", expect: .numberBetween(15.206864845949635, 15.206864876365366)),
+    "FINV": Sample(
+      formula: "FINV(0.05,2,20)", expect: .numberBetween(3.492828473241801, 3.4928284802294587)),
+    "LOGNORM.DIST": Sample(
+      formula: "LOGNORM.DIST(4,3.5,1.2,TRUE)",
+      expect: .numberBetween(0.039083555666716945, 0.039083555746884054)),
+    "LOGNORMDIST": Sample(
+      formula: "LOGNORMDIST(4,3.5,1.2)",
+      expect: .numberBetween(0.039083555666716945, 0.039083555746884054)),
+    "LOGNORM.INV": Sample(
+      formula: "LOGNORM.INV(0.039084,3.5,1.2)",
+      expect: .numberBetween(4.0000252146796145, 4.000025222681665)),
+    "LOGINV": Sample(
+      formula: "LOGINV(0.5,0,1)", expect: .numberBetween(0.999999998999, 1.0000000010010002)),
+    "T.DIST": Sample(
+      formula: "T.DIST(60,1,TRUE)", expect: .numberBetween(0.9946953253716817, 0.9946953273630723)),
+    "T.DIST.2T": Sample(
+      formula: "T.DIST.2T(1.959999998,60)",
+      expect: .numberBetween(0.05464492992027607, 0.054644930031565925)),
+    "T.DIST.RT": Sample(
+      formula: "T.DIST.RT(1.959999998,60)",
+      expect: .numberBetween(0.027322464959638037, 0.02732246501628296)),
+    "TDIST": Sample(
+      formula: "TDIST(1.96,60,2)", expect: .numberBetween(0.05464492968088437, 0.054644929792174224)
+    ),
+    "T.INV": Sample(
+      formula: "T.INV(0.75,2)", expect: .numberBetween(0.8164965801102295, 0.8164965817452225)),
+    "T.INV.2T": Sample(
+      formula: "T.INV.2T(0.546449,60)", expect: .numberBetween(0.606533075218226, 0.606533076433292)
+    ),
+    "TINV": Sample(
+      formula: "TINV(0.05,3)", expect: .numberBetween(3.1824463021002636, 3.1824463084671564)),
+    "CONFIDENCE.NORM": Sample(
+      formula: "CONFIDENCE.NORM(0.05,2.5,50)",
+      expect: .numberBetween(0.6929519114808871, 0.6929519128687909)),
+    "CONFIDENCE": Sample(
+      formula: "CONFIDENCE(0.05,2.5,50)",
+      expect: .numberBetween(0.6929519114808871, 0.6929519128687909)),
+    "CONFIDENCE.T": Sample(
+      formula: "CONFIDENCE.T(0.05,1,50)",
+      expect: .numberBetween(0.2841968552105332, 0.2841968557809268)),
+    "MDETERM": Sample(
+      formula: "MDETERM({3,6,1;1,1,0;3,10,2})",
+      expect: .numberBetween(0.999999998999, 1.0000000010010002)),
+    "CHISQ.TEST": Sample(
+      formula: "CHISQ.TEST({10,20}, {15,15})", expect: .numberBetween(0.0678, 0.0680)),
+    "CHITEST": Sample(formula: "CHITEST({10,20}, {15,15})", expect: .numberBetween(0.0678, 0.0680)),
+    "F.TEST": Sample(formula: "F.TEST({1,2,3,4}, {2,4,6,9})", expect: .numberBetween(0.0, 1.0)),
+    "FTEST": Sample(formula: "FTEST({1,2,3,4}, {2,4,6,9})", expect: .numberBetween(0.0, 1.0)),
+    "T.TEST": Sample(
+      formula: "T.TEST({1,2,3,4}, {2,4,6,9}, 2, 2)", expect: .numberBetween(0.0, 1.0)),
+    "TTEST": Sample(formula: "TTEST({1,2,3,4}, {2,4,6,9}, 2, 2)", expect: .numberBetween(0.0, 1.0)),
+    "Z.TEST": Sample(formula: "Z.TEST({1,2,3,4}, 2.5)", expect: .numberBetween(0.4999, 0.5001)),
+    "ZTEST": Sample(formula: "ZTEST({1,2,3,4}, 2.5)", expect: .numberBetween(0.4999, 0.5001)),
+    "PROB": Sample(
+      formula: "PROB({0,1,2,3}, {0.2,0.3,0.1,0.4}, 2)", expect: .numberBetween(0.0999, 0.1001)),
+    "STEYX": Sample(formula: "STEYX({2,4,5,9}, {1,2,3,4})", expect: .numberBetween(0.0, 10.0)),
+    "FREQUENCY": Sample(formula: "FREQUENCY({1,5,9}, {4})", expect: .value(.number(1))),
+    "MODE.MULT": Sample(formula: "MODE.MULT({1,2,2,3})", expect: .value(.number(2))),
+    "LINEST": Sample(
+      formula: "LINEST({2,4,6}, {1,2,3})", expect: .numberBetween(1.9999999, 2.0000001)),
+    "LOGEST": Sample(
+      formula: "LOGEST({2,4,8}, {1,2,3})", expect: .numberBetween(1.9999999, 2.0000001)),
+    "TREND": Sample(
+      formula: "TREND({2,4,6}, {1,2,3}, 4)", expect: .numberBetween(7.9999999, 8.0000001)),
+    "GROWTH": Sample(
+      formula: "GROWTH({2,4,8}, {1,2,3}, 4)", expect: .numberBetween(15.999999, 16.000001)),
+    "MMULT": Sample(formula: "MMULT({1,2}, {3;4})", expect: .value(.number(11))),
+    "MINVERSE": Sample(formula: "MINVERSE({2,0;0,4})", expect: .value(.number(0.5))),
+    "MUNIT": Sample(formula: "MUNIT(2)", expect: .value(.number(1))),
+    // 1.7 batch 4: answers from Excel 16.115 where the formula needs no cells.
+    "NETWORKDAYS.INTL": Sample(
+      formula: "NETWORKDAYS.INTL(45658,45688)",
+      expect: .numberBetween(22.999999976999003, 23.000000023000997)),
+    "WORKDAY.INTL": Sample(
+      formula: "WORKDAY.INTL(45658,10)", expect: .numberBetween(45671.999954328, 45672.000045672)),
+    "SHEET": Sample(formula: "SHEET()", expect: .numberBetween(0.999999998999, 1.0000000010010002)),
+    "SHEETS": Sample(
+      formula: "SHEETS()", expect: .value(.number(1))),
+    "COT": Sample(
+      formula: "COT(1)", expect: .numberBetween(0.6420926152912384, 0.6420926165774236)),
+    "CSC": Sample(
+      formula: "CSC(1)", expect: .numberBetween(1.1883951045887247, 1.1883951069675152)),
+    "SEC": Sample(formula: "SEC(1)", expect: .numberBetween(1.850815715829114, 1.8508157195327457)),
+    "COTH": Sample(
+      formula: "COTH(1)", expect: .numberBetween(1.3130352841852946, 1.3130352868133652)),
+    "CSCH": Sample(
+      formula: "CSCH(1)", expect: .numberBetween(0.8509181273874039, 0.8509181290912401)),
+    "SECH": Sample(
+      formula: "SECH(1)", expect: .numberBetween(0.6480542730148308, 0.6480542743129393)),
+    "ACOT": Sample(
+      formula: "ACOT(2)", expect: .numberBetween(0.4636476085361584, 0.4636476094654536)),
+    "ACOTH": Sample(
+      formula: "ACOTH(3)", expect: .numberBetween(0.3465735899323994, 0.34657359062754656)),
+    "CEILING.PRECISE": Sample(
+      formula: "CEILING.PRECISE(4.3)",
+      expect: .numberBetween(4.9999999949989995, 5.0000000050010005)),
+    "ISO.CEILING": Sample(
+      formula: "ISO.CEILING(-4.3,2)", expect: .numberBetween(-4.000000004001, -3.999999995999)),
+    "FLOOR.PRECISE": Sample(
+      formula: "FLOOR.PRECISE(4.3)", expect: .numberBetween(3.999999995999, 4.000000004001)),
+    "COMBINA": Sample(
+      formula: "COMBINA(4,3)", expect: .numberBetween(19.999999979999, 20.000000020001)),
+    "PERMUTATIONA": Sample(
+      formula: "PERMUTATIONA(3,2)", expect: .numberBetween(8.999999990999, 9.000000009001)),
+    "FACTDOUBLE": Sample(
+      formula: "FACTDOUBLE(6)", expect: .numberBetween(47.999999951999, 48.000000048001)),
+    "MULTINOMIAL": Sample(
+      formula: "MULTINOMIAL(2,3,4)", expect: .numberBetween(1259.999998739999, 1260.000001260001)),
+    "SERIESSUM": Sample(
+      formula: "SERIESSUM(2,1,2,{1,2,3})",
+      expect: .numberBetween(113.999999885999, 114.000000114001)),
+    "GAMMA": Sample(
+      formula: "GAMMA(5)", expect: .numberBetween(23.999999975999003, 24.000000024000997)),
+    "GAMMALN": Sample(
+      formula: "GAMMALN(10)", expect: .numberBetween(12.801827467278672, 12.801827492884327)),
+    "GAMMALN.PRECISE": Sample(
+      formula: "GAMMALN.PRECISE(0.5)",
+      expect: .numberBetween(0.5723649423513351, 0.5723649434980649)),
+    "GAUSS": Sample(
+      formula: "GAUSS(1)", expect: .numberBetween(0.3413447457261983, 0.3413447464108877)),
+    "PHI": Sample(
+      formula: "PHI(0.75)", expect: .numberBetween(0.30113743185266656, 0.3011374324569414)),
+    "ROMAN": Sample(formula: "ROMAN(499)", expect: .value(.string("CDXCIX"))),
+    "ARABIC": Sample(
+      formula: "ARABIC(\"MCMXCIV\")", expect: .numberBetween(1993.999998005999, 1994.000001994001)),
+    "BASE": Sample(formula: "BASE(255,16)", expect: .value(.string("FF"))),
+    "DECIMAL": Sample(
+      formula: "DECIMAL(\"FF\",16)", expect: .numberBetween(254.999999744999, 255.000000255001)),
+    "BIN2DEC": Sample(
+      formula: "BIN2DEC(1100100)", expect: .numberBetween(99.99999989999901, 100.00000010000099)),
+    "BIN2HEX": Sample(formula: "BIN2HEX(11111011,4)", expect: .value(.string("00FB"))),
+    "BIN2OCT": Sample(formula: "BIN2OCT(1001,3)", expect: .value(.string("011"))),
+    "OCT2BIN": Sample(formula: "OCT2BIN(3,3)", expect: .value(.string("011"))),
+    "OCT2DEC": Sample(
+      formula: "OCT2DEC(\"7777777533\")",
+      expect: .numberBetween(-165.00000016500098, -164.99999983499902)),
+    "OCT2HEX": Sample(formula: "OCT2HEX(100,4)", expect: .value(.string("0040"))),
+    "HEX2BIN": Sample(formula: "HEX2BIN(\"F\",8)", expect: .value(.string("00001111"))),
+    "HEX2DEC": Sample(
+      formula: "HEX2DEC(\"A5\")", expect: .numberBetween(164.99999983499902, 165.00000016500098)),
+    "HEX2OCT": Sample(formula: "HEX2OCT(\"3B4E\")", expect: .value(.string("35516"))),
+    "DEC2BIN": Sample(formula: "DEC2BIN(9,4)", expect: .value(.string("1001"))),
+    "DEC2HEX": Sample(formula: "DEC2HEX(100,4)", expect: .value(.string("0064"))),
+    "DEC2OCT": Sample(formula: "DEC2OCT(58,3)", expect: .value(.string("072"))),
+    "BITAND": Sample(
+      formula: "BITAND(13,25)", expect: .numberBetween(8.999999990999, 9.000000009001)),
+    "BITOR": Sample(
+      formula: "BITOR(23,10)", expect: .numberBetween(30.999999968999003, 31.000000031000997)),
+    "BITXOR": Sample(
+      formula: "BITXOR(5,3)", expect: .numberBetween(5.999999993999, 6.000000006001)),
+    "BITLSHIFT": Sample(
+      formula: "BITLSHIFT(4,2)", expect: .numberBetween(15.999999983999, 16.000000016001)),
+    "BITRSHIFT": Sample(
+      formula: "BITRSHIFT(13,2)", expect: .numberBetween(2.999999996999, 3.000000003001)),
+    "DELTA": Sample(formula: "DELTA(5,4)", expect: .numberBetween(-1e-12, 1e-12)),
+    "GESTEP": Sample(
+      formula: "GESTEP(5,4)", expect: .numberBetween(0.999999998999, 1.0000000010010002)),
+    "ERF": Sample(
+      formula: "ERF(0.745)", expect: .numberBetween(0.7079289193868091, 0.707928920804667)),
+    "ERF.PRECISE": Sample(
+      formula: "ERF.PRECISE(0.5)", expect: .numberBetween(0.5204998772915471, 0.5204998783345468)),
+    "ERFC": Sample(
+      formula: "ERFC(1)", expect: .numberBetween(0.1572992068919858, 0.1572992072085842)),
+    "ERFC.PRECISE": Sample(
+      formula: "ERFC.PRECISE(-1)", expect: .numberBetween(1.842700791106009, 1.8427007947934109)),
+    "LENB": Sample(
+      formula: "LENB(\"abc\")", expect: .numberBetween(2.999999996999, 3.000000003001)),
+    "LEFTB": Sample(formula: "LEFTB(\"abcdef\",2)", expect: .value(.string("ab"))),
+    "RIGHTB": Sample(formula: "RIGHTB(\"abcdef\",2)", expect: .value(.string("ef"))),
+    "MIDB": Sample(formula: "MIDB(\"abcdef\",2,3)", expect: .value(.string("bcd"))),
+    "FINDB": Sample(
+      formula: "FINDB(\"c\",\"abcdef\")", expect: .numberBetween(2.999999996999, 3.000000003001)),
+    "SEARCHB": Sample(
+      formula: "SEARCHB(\"C\",\"abcdef\")", expect: .numberBetween(2.999999996999, 3.000000003001)),
+    "REPLACEB": Sample(formula: "REPLACEB(\"abcdef\",2,3,\"X\")", expect: .value(.string("aXef"))),
+    "ASC": Sample(formula: "ASC(\"ＡＢＣ１２３\")", expect: .value(.string("ＡＢＣ１２３"))),
+    "DBCS": Sample(formula: "DBCS(\"ABC\")", expect: .value(.string("ABC"))),
+    "VALUETOTEXT": Sample(formula: "VALUETOTEXT(\"abc\")", expect: .value(.string("abc"))),
+    "ARRAYTOTEXT": Sample(
+      formula: "ARRAYTOTEXT({1,2;3,\"x\"},1)", expect: .value(.string("{1,2;3,\"x\"}"))),
+    "BAHTTEXT": Sample(
+      formula: "BAHTTEXT(1234.5)", expect: .value(.string("หนึ่งพันสองร้อยสามสิบสี่บาทห้าสิบสตางค์"))),
+    "SUBTOTAL": Sample(
+      formula: "SUBTOTAL(9, A1:A3)", expect: .value(.number(6)),
+      numbers: ["A1": 1, "A2": 2, "A3": 3]),
+    "DAVERAGE": Sample(
+      formula: "DAVERAGE({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(4))),
+    "DCOUNT": Sample(
+      formula: "DCOUNT({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(2))),
+    "DCOUNTA": Sample(
+      formula: "DCOUNTA({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, , {\"N\";\"b\"})",
+      expect: .value(.number(1))),
+    "DGET": Sample(
+      formula: "DGET({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"b\"})",
+      expect: .value(.number(4))),
+    "DMAX": Sample(
+      formula: "DMAX({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(6))),
+    "DMIN": Sample(
+      formula: "DMIN({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(2))),
+    "DPRODUCT": Sample(
+      formula: "DPRODUCT({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(12))),
+    "DSTDEV": Sample(
+      formula: "DSTDEV({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, 2, {\"N\";\"a\"})",
+      expect: .numberBetween(2.8284, 2.8285)),
+    "DSTDEVP": Sample(
+      formula: "DSTDEVP({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, 2, {\"N\";\"a\"})",
+      expect: .value(.number(2))),
+    "DSUM": Sample(
+      formula: "DSUM({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, \"V\", {\"N\";\"a\"})",
+      expect: .value(.number(8))),
+    "DVAR": Sample(
+      formula: "DVAR({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, 2, {\"N\";\"a\"})",
+      expect: .value(.number(8))),
+    "DVARP": Sample(
+      formula: "DVARP({\"N\",\"V\";\"a\",2;\"b\",4;\"a\",6}, 2, {\"N\";\"a\"})",
+      expect: .value(.number(4))),
+    "FORMULATEXT": Sample(formula: "FORMULATEXT(A1)", expect: .value(.error(.na))),
+    "AREAS": Sample(formula: "AREAS(A1:B2)", expect: .value(.number(1))),
+    "ENCODEURL": Sample(formula: "ENCODEURL(\"a b\")", expect: .value(.string("a%20b"))),
+    "AGGREGATE": Sample(formula: "AGGREGATE(14, 6, {1,5,3}, 1)", expect: .value(.number(5))),
+    "SUMX2MY2": Sample(formula: "SUMX2MY2({1,2}, {3,4})", expect: .value(.number(-20))),
+    "SUMX2PY2": Sample(formula: "SUMX2PY2({1,2}, {3,4})", expect: .value(.number(30))),
+    "SUMXMY2": Sample(formula: "SUMXMY2({1,2}, {3,4})", expect: .value(.number(8))),
     "MIRR": Sample(formula: "MIRR({-100,110}, 0.1, 0.1)", expect: .numberBetween(0.09999, 0.10001)),
     "TRANSPOSE": Sample(formula: "TRANSPOSE({7,8})", expect: .value(.number(7))),
   ]

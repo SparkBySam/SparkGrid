@@ -171,7 +171,15 @@ extension XLSXCodec {
       ? chart.errorBarColumn.map { column in
         "'\(safeSheet)'!\(CellAddress(row: dataStartRow, col: column).a1):\(CellAddress(row: n.maxRow, col: column).a1)"
       } : nil
-    var seriesBody = seriesXML(chart, catRef: catRef, valRef: exportValRef, errorRef: errorRef)
+    // With more than one series, the first is named by its header as the others are.
+    let hasMoreSeries =
+      chart.valueMode == .values && chart.kind.allowsMoreSeries
+      && !chart.extraValueColumns.isEmpty
+    let firstNameRef =
+      hasHeader && hasMoreSeries
+      ? "'\(safeSheet)'!\(CellAddress(row: n.minRow, col: valCol).a1)" : nil
+    var seriesBody = seriesXML(
+      chart, catRef: catRef, valRef: exportValRef, errorRef: errorRef, nameRef: firstNameRef)
     // More series read the same rows from their own columns and take their header as a name.
     if chart.valueMode == .values, chart.kind.allowsMoreSeries {
       for (offset, column) in chart.extraValueColumns.enumerated() {
@@ -189,15 +197,24 @@ extension XLSXCodec {
       \(axisXML(tag: "c:valAx", id: "2", position: "l", cross: "1", title: chart.valueAxisTitle, gridlines: chart.showsGridlines))
       """
     switch chart.kind {
-    case .bar:
+    case .bar, .horizontalBar, .stackedBar, .stackedHorizontalBar:
+      let stacked = chart.kind.isStacked
       seriesInner = """
         <c:barChart>
-          <c:barDir val="col"/>
-          <c:grouping val="clustered"/>
+          <c:barDir val="\(chart.kind.isHorizontal ? "bar" : "col")"/>
+          <c:grouping val="\(stacked ? "stacked" : "clustered")"/>
           \(seriesBody)
+          \(stacked ? #"<c:overlap val="100"/>"# : "")
           <c:axId val="1"/><c:axId val="2"/>
         </c:barChart>
         """
+      if chart.kind.isHorizontal {
+        // Categories run down the left and values across the bottom.
+        axes = """
+          \(axisXML(tag: "c:catAx", id: "1", position: "l", cross: "2", title: chart.categoryAxisTitle, gridlines: false, reversed: true))
+          \(axisXML(tag: "c:valAx", id: "2", position: "b", cross: "1", title: chart.valueAxisTitle, gridlines: chart.showsGridlines, crossesAtMax: true))
+          """
+      }
     case .line:
       seriesInner = """
         <c:lineChart>
@@ -206,10 +223,10 @@ extension XLSXCodec {
           <c:axId val="1"/><c:axId val="2"/>
         </c:lineChart>
         """
-    case .area:
+    case .area, .stackedArea:
       seriesInner = """
         <c:areaChart>
-          <c:grouping val="standard"/>
+          <c:grouping val="\(chart.kind.isStacked ? "stacked" : "standard")"/>
           \(seriesBody)
           <c:axId val="1"/><c:axId val="2"/>
         </c:areaChart>
@@ -221,6 +238,16 @@ extension XLSXCodec {
           \(seriesBody)
           <c:firstSliceAng val="0"/>
         </c:pieChart>
+        """
+      axes = ""
+    case .doughnut:
+      seriesInner = """
+        <c:doughnutChart>
+          <c:varyColors val="1"/>
+          \(seriesBody)
+          <c:firstSliceAng val="0"/>
+          <c:holeSize val="50"/>
+        </c:doughnutChart>
         """
       axes = ""
     case .scatter:
@@ -255,7 +282,8 @@ extension XLSXCodec {
   }
 
   private static func seriesXML(
-    _ chart: SheetChart, catRef: String, valRef: String, errorRef: String? = nil
+    _ chart: SheetChart, catRef: String, valRef: String, errorRef: String? = nil,
+    nameRef: String? = nil
   ) -> String {
     let seriesName = chart.title.trimmingCharacters(in: .whitespacesAndNewlines)
     let name = seriesName.isEmpty ? chart.kind.title : seriesName
@@ -268,10 +296,13 @@ extension XLSXCodec {
         <c:spPr><a:ln w="19050">\(fill)</a:ln></c:spPr>
         <c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr>\(fill)</c:spPr></c:marker>
         """
-    case .bar, .area, .pie:
-      shape = "<c:spPr>\(fill)</c:spPr>"
     case .scatter:
       shape = scatterShapeXML(fill)
+    case .pie, .doughnut:
+      // No series color: other apps then give each slice its own, as Spark Grid draws them.
+      shape = ""
+    default:
+      shape = "<c:spPr>\(fill)</c:spPr>"
     }
     let points = chart.pointColors.keys.sorted().compactMap { index -> String? in
       guard let point = chart.pointColors[index] else { return nil }
@@ -283,12 +314,34 @@ extension XLSXCodec {
     return """
       <c:ser>
         <c:idx val="0"/><c:order val="0"/>
-        <c:tx><c:v>\(escapeXML(name))</c:v></c:tx>
+        \(nameRef.map { "<c:tx><c:strRef><c:f>\(escapeXML($0))</c:f></c:strRef></c:tx>" } ?? "<c:tx><c:v>\(escapeXML(name))</c:v></c:tx>")
         \(shape)
         \(points)
+        \(chart.drawsTrendline ? chart.trendline.map(trendlineXML) ?? "" : "")
         \(errorRef.map(errorBarsXML) ?? "")
         \(pointsXML(chart.kind, catRef: catRef, valRef: valRef))
       </c:ser>
+      """
+  }
+
+  /// A trendline, dashed in grey, with its equation and R² labels if asked for. It comes after
+  /// the points and before error bars, as the chart schema orders them.
+  static func trendlineXML(_ trendline: ChartTrendline) -> String {
+    let period =
+      trendline.kind == .movingAverage ? "<c:period val=\"\(trendline.period)\"/>" : ""
+    let labels =
+      trendline.kind == .movingAverage
+      ? ""
+      : "<c:dispRSqr val=\"\(trendline.showsRSquared ? 1 : 0)\"/>"
+        + "<c:dispEq val=\"\(trendline.showsEquation ? 1 : 0)\"/>"
+    let label =
+      trendline.kind != .movingAverage && (trendline.showsEquation || trendline.showsRSquared)
+      ? "<c:trendlineLbl><c:numFmt formatCode=\"General\" sourceLinked=\"0\"/></c:trendlineLbl>"
+      : ""
+    return """
+      <c:trendline><c:spPr><a:ln w="19050"><a:solidFill><a:srgbClr val="595959"/></a:solidFill>\
+      <a:prstDash val="sysDash"/></a:ln></c:spPr>\
+      <c:trendlineType val="\(trendline.kind.fileName)"/>\(period)\(labels)\(label)</c:trendline>
       """
   }
 
@@ -322,7 +375,7 @@ extension XLSXCodec {
         """
     case .scatter:
       shape = scatterShapeXML(fill)
-    case .bar, .area, .pie:
+    default:
       shape = "<c:spPr>\(fill)</c:spPr>"
     }
     return """
@@ -373,10 +426,10 @@ extension XLSXCodec {
     case .line:
       return
         "<c:marker><c:symbol val=\"circle\"/><c:spPr>\(fill)</c:spPr></c:marker><c:spPr><a:ln>\(fill)</a:ln></c:spPr>"
-    case .bar, .area, .pie:
-      return "<c:spPr>\(fill)</c:spPr>"
     case .scatter:
       return "<c:marker><c:symbol val=\"circle\"/><c:spPr>\(fill)</c:spPr></c:marker>"
+    default:
+      return "<c:spPr>\(fill)</c:spPr>"
     }
   }
 
@@ -409,7 +462,9 @@ extension XLSXCodec {
     position: String,
     cross: String,
     title: String,
-    gridlines: Bool
+    gridlines: Bool,
+    reversed: Bool = false,
+    crossesAtMax: Bool = false
   ) -> String {
     let grid = gridlines ? "<c:majorGridlines/>" : ""
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -425,11 +480,14 @@ extension XLSXCodec {
     return """
       <\(tag)>
         <c:axId val="\(id)"/>
-        <c:scaling><c:orientation val="minMax"/></c:scaling>
+        <c:scaling><c:orientation val="\(reversed ? "maxMin" : "minMax")"/></c:scaling>
+        <c:delete val="0"/>
         <c:axPos val="\(position)"/>
         \(grid)
         \(titleXML)
+        <c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>
         <c:crossAx val="\(cross)"/>
+        <c:crosses val="\(crossesAtMax ? "max" : "autoZero")"/>
       </\(tag)>
       """
   }

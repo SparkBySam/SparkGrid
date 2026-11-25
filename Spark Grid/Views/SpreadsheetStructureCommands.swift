@@ -64,14 +64,14 @@ struct SpreadsheetStructureCommands: Commands {
       } label: {
         Text(outlineAxis == .rows ? "Group Rows" : "Group Columns")
       }
-      .keyboardShortcut("k", modifiers: [.command, .shift])
+      .hotkey(.groupRowsOrColumns, settings)
       .disabled(viewModel == nil)
       Button {
         viewModel?.ungroupSelection(outlineAxis)
       } label: {
         Text(outlineAxis == .rows ? "Ungroup Rows" : "Ungroup Columns")
       }
-      .keyboardShortcut("j", modifiers: [.command, .shift])
+      .hotkey(.ungroupRowsOrColumns, settings)
       .disabled(outlineAxis == .rows ? !outline.rows : !outline.columns)
       Button("Collapse or Expand Group") {
         viewModel?.toggleOutlineGroupAtSelection(outlineAxis)
@@ -221,6 +221,16 @@ struct SpreadsheetStructureCommands: Commands {
       Button("Table") { viewModel?.createTable() }
         .disabled(viewModel?.newTableRange == nil)
 
+      // Off in Settings › AI: no Formula Help in the menu.
+      if settings.usesAppleIntelligence {
+        Button("Formula Help…") {
+          guard let viewModel else { return }
+          FormulaHelpPresenter.present(from: viewModel)
+        }
+        .hotkey(.formulaHelp, settings)
+        .disabled(viewModel == nil)
+      }
+
       Button("Picture…") {
         Self.insertPicture(viewModel: viewModel)
       }
@@ -236,7 +246,7 @@ struct SpreadsheetStructureCommands: Commands {
         guard let viewModel else { return }
         LinkPresenter.present(from: viewModel)
       }
-      .keyboardShortcut("k", modifiers: .command)
+      .hotkey(.insertLink, settings)
       .disabled(viewModel == nil)
 
       if viewModel?.selectedHyperlink != nil {
@@ -253,13 +263,26 @@ struct SpreadsheetStructureCommands: Commands {
         Button("Area Chart…") { viewModel?.beginInsertChart(preferredKind: .area) }
       }
       .disabled(viewModel == nil)
+
+      Menu("Sparklines") {
+        Button("Sparklines…") {
+          guard let viewModel else { return }
+          SparklinesPresenter.present(from: viewModel)
+        }
+        Button("Clear Sparklines") {
+          guard let viewModel else { return }
+          viewModel.clearSparklines(in: viewModel.selectionRange)
+        }
+        .disabled(viewModel.map { !$0.hasSparklines(in: $0.selectionRange) } ?? true)
+      }
+      .disabled(viewModel == nil)
     }
 
     CommandGroup(replacing: .printItem) {
       Button("Print…") {
         SparkGridAppDelegate.current?.printDocument(nil)
       }
-      .keyboardShortcut("p", modifiers: .command)
+      .hotkey(.print, settings)
 
       Button("Export as PDF…") {
         SparkGridAppDelegate.current?.exportPDF(nil)

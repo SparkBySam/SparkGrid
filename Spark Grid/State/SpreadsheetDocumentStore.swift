@@ -29,6 +29,9 @@ final class SpreadsheetDocumentStore {
   private(set) var externalWorkbookToken: UInt64 = 0
   private(set) var isDirty = false
   private(set) var isAutosaving = false
+  /// When autosave last kept a version, and the file whose opened state is already kept.
+  private var lastVersionKept: Date?
+  private var keptOpenedVersionFor: URL?
 
   /// Edits since the last load, save, or new document. Not a content hash.
   private var changeCount: UInt64 = 0
@@ -51,6 +54,8 @@ final class SpreadsheetDocumentStore {
   var onTerminationSaveFinished: ((Bool) -> Void)?
   /// Close asked to dismiss this window once the save in flight finishes.
   private weak var windowWaitingForSave: NSWindow?
+  /// Close or Quit is waiting for a save to finish writing; the window says so.
+  var isSavingBeforeClosing: Bool { waitingToTerminate || windowWaitingForSave != nil }
   /// Quit delivers `applicationShouldTerminate` and `windowShouldClose` for the same close.
   /// The second call reuses this answer so the save prompt appears once.
   private var answeredCloseAttempt: Bool?
@@ -113,6 +118,18 @@ final class SpreadsheetDocumentStore {
     return fileURL.pathExtension.lowercased() == "xlsx"
   }
 
+  /// CSV and tab-separated text hold one sheet; .xlsx, .ods and a web page keep them all.
+  nonisolated static func keepsOneSheet(_ url: URL) -> Bool {
+    let ext = url.pathExtension.lowercased()
+    return !["xlsx", "ods", "html", "htm"].contains(ext)
+  }
+
+  /// Formats Spark Grid writes but doesn't open as a workbook again: a web page keeps only what
+  /// the cells show.
+  nonisolated static func isExportOnly(_ url: URL) -> Bool {
+    ["html", "htm"].contains(url.pathExtension.lowercased())
+  }
+
   func showStartScreen() {
     startScreenReturnsToDocument = fileURL != nil || !document.workbook.isEffectivelyEmpty
     showsStartScreen = true
@@ -153,7 +170,7 @@ final class SpreadsheetDocumentStore {
   /// Imports every sheet before returning. The first paint must not run while
   /// another sheet is still absent, or cross-sheet formulas show `#REF!` and a
   /// tile thread can read column offsets for the wrong sheet.
-  func load(from url: URL, finishesInBackground: Bool = true) throws {
+  func load(from url: URL, finishesInBackground: Bool = true, copyNamed: String? = nil) throws {
     _ = finishesInBackground
     guard confirmReplaceCurrentDocument() else { return }
     let accessing = url.startAccessingSecurityScopedResource()
@@ -202,14 +219,20 @@ final class SpreadsheetDocumentStore {
     isLoadingRemainder = false
     dismissStartScreen()
     document = loaded
-    let imported = Self.isImportedFile(url)
+    // A copy of an earlier version opens as a new workbook, as an imported file does.
+    let imported = Self.isImportedFile(url) || copyNamed != nil
     fileURL = imported ? nil : url
-    importedName = imported ? url.deletingPathExtension().lastPathComponent : nil
+    importedName = imported ? (copyNamed ?? url.deletingPathExtension().lastPathComponent) : nil
     externalWorkbookToken &+= 1
+    lastVersionKept = nil
+    keptOpenedVersionFor = nil
     markClean()
     isAutosaving = false
-    noteRecent(url)
+    if copyNamed == nil { noteRecent(url) }
     onActiveSheetReady?(loaded.workbook)
+    if copyNamed == nil {
+      checkForUncalculatedFormulas(in: loaded.workbook, from: url, imported: imported)
+    }
     let loadedURL: URL? = imported ? nil : url
     DispatchQueue.main.async { [weak self] in
       guard let self, self.fileURL == loadedURL else { return }
@@ -328,7 +351,7 @@ final class SpreadsheetDocumentStore {
     }
 
     if let url = fileURL {
-      if !isXLSXFile, hasMultipleSheets, !confirmActiveSheetOnlySave() {
+      if Self.keepsOneSheet(url), hasMultipleSheets, !confirmActiveSheetOnlySave() {
         return false
       }
       do {
@@ -341,17 +364,24 @@ final class SpreadsheetDocumentStore {
     }
 
     let panel = NSSavePanel()
-    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
+    panel.allowedContentTypes = [
+      .spreadsheetML, .openDocumentSpreadsheet, .commaSeparatedText, .tabSeparatedText, .html,
+    ]
     panel.nameFieldStringValue = suggestedSaveFilename()
     panel.canCreateDirectories = true
     panel.allowsOtherFileTypes = false
     panel.isExtensionHidden = false
     panel.title = "Save Spreadsheet"
+    if #available(macOS 15.0, *) {
+      // A Format menu with .xlsx, .ods and CSV, so the choice shows (1.7).
+      panel.showsContentTypes = true
+    }
     panel.message =
-      "Choose Excel Workbook (.xlsx) to keep all sheets, or CSV for the active sheet only."
+      "Excel Workbook (.xlsx) and OpenDocument (.ods) keep all sheets. CSV and tab-separated text "
+      + "keep the active sheet. A web page (.html) shows every sheet as it looks, for reading."
     guard panel.runModal() == .OK, let url = panel.url else { return false }
 
-    if url.pathExtension.lowercased() != "xlsx", hasMultipleSheets, !confirmActiveSheetOnlySave() {
+    if Self.keepsOneSheet(url), hasMultipleSheets, !confirmActiveSheetOnlySave() {
       return false
     }
 
@@ -478,7 +508,7 @@ final class SpreadsheetDocumentStore {
   }
 
   /// A CSV document is shared as CSV.
-  var sharesAsCSV: Bool { fileURL != nil && !isXLSXFile }
+  var sharesAsCSV: Bool { fileURL?.pathExtension.lowercased() == "csv" }
 
   /// The name the shared file gets, shown in the share preview.
   var shareFilename: String {
@@ -545,10 +575,14 @@ final class SpreadsheetDocumentStore {
     var workbook: Workbook
     var destination: URL
     var xlsx: Bool
+    var ods = false
     var changeCount: UInt64
     var workbookToken: UInt64
     var accessingSecurityScope: Bool
     var formulaStamp: FormulaSaveStamp
+    /// Keep the file as it was before this write (the first save after opening) and after it.
+    var keepsPreviousVersion = false
+    var keepsVersion = false
   }
 
   private func makeSaveSnapshot(to url: URL?) -> WorkbookSaveSnapshot? {
@@ -565,6 +599,7 @@ final class SpreadsheetDocumentStore {
       workbook: document.workbook,
       destination: destination,
       xlsx: destination.pathExtension.lowercased() == "xlsx",
+      ods: destination.pathExtension.lowercased() == "ods",
       changeCount: changeCount,
       workbookToken: externalWorkbookToken,
       accessingSecurityScope: accessing,
@@ -586,6 +621,20 @@ final class SpreadsheetDocumentStore {
   }
 
   private func beginBackgroundWrite(_ snapshot: WorkbookSaveSnapshot, reportErrors: Bool) {
+    var snapshot = snapshot
+    let now = Date()
+    snapshot.keepsVersion =
+      reportErrors
+      || lastVersionKept.map { now.timeIntervalSince($0) >= WorkbookVersions.autosaveInterval }
+        ?? true
+    snapshot.keepsPreviousVersion = keptOpenedVersionFor != snapshot.destination
+    let exportOnly = Self.isExportOnly(snapshot.destination)
+    if !AppSettings.shared.keepVersions || exportOnly {
+      snapshot.keepsVersion = false
+      snapshot.keepsPreviousVersion = false
+    }
+    if snapshot.keepsVersion { lastVersionKept = now }
+    if !exportOnly { keptOpenedVersionFor = snapshot.destination }
     saveInFlight = true
     inFlightChangeCount = snapshot.changeCount
     inFlightWorkbookToken = snapshot.workbookToken
@@ -645,6 +694,10 @@ final class SpreadsheetDocumentStore {
             userInfo: [NSLocalizedDescriptionKey: failure]
           ))
       }
+    } else if stillThisDocument, !superseded, Self.isExportOnly(destination) {
+      // A web page is a copy to read: the window keeps its own file and unsaved changes, so
+      // the next Save doesn't write HTML in place of the workbook. Not in Open Recent either:
+      // Spark Grid doesn't open web pages.
     } else if stillThisDocument, !superseded {
       fileURL = destination
       importedName = nil
@@ -697,11 +750,28 @@ final class SpreadsheetDocumentStore {
 
   nonisolated private static func write(_ snapshot: WorkbookSaveSnapshot) throws {
     try BackgroundWriteGuard.requireBackgroundThread()
+    if snapshot.keepsPreviousVersion {
+      WorkbookVersions.keep(snapshot.destination, unlessAlreadyKept: true)
+    }
+    defer { if snapshot.keepsVersion { WorkbookVersions.keep(snapshot.destination) } }
     if snapshot.xlsx {
       let workbook = FormulaCacheWriter.prepare(
         snapshot.workbook, stamp: snapshot.formulaStamp)
       let data = try XLSXCodec.exportWorkbook(workbook, includeFormulaCaches: true)
       try data.write(to: snapshot.destination, options: .atomic)
+    } else if snapshot.ods {
+      let workbook = FormulaCacheWriter.prepare(
+        snapshot.workbook, stamp: snapshot.formulaStamp)
+      try ODSExporter.exportWorkbook(workbook).write(to: snapshot.destination, options: .atomic)
+    } else if isExportOnly(snapshot.destination) {
+      let workbook = FormulaCacheWriter.prepare(
+        snapshot.workbook, stamp: snapshot.formulaStamp)
+      let title = snapshot.destination.deletingPathExtension().lastPathComponent
+      try HTMLExporter.export(workbook, title: title)
+        .write(to: snapshot.destination, atomically: true, encoding: .utf8)
+    } else if ["tsv", "tab", "txt"].contains(snapshot.destination.pathExtension.lowercased()) {
+      let text = CSVCodec.exportTSV(from: snapshot.workbook.activeSheet)
+      try text.write(to: snapshot.destination, atomically: true, encoding: .utf8)
     } else {
       let csv = CSVCodec.exportCSV(from: snapshot.workbook.activeSheet)
       try csv.write(to: snapshot.destination, atomically: true, encoding: .utf8)

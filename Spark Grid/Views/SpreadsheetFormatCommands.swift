@@ -26,6 +26,8 @@ struct SpreadsheetFormatCommands: Commands {
         .disabled(viewModel == nil)
       Button("Strikethrough") { viewModel?.toggleStrikethrough() }
         .disabled(viewModel == nil)
+      Button("Clear Formats") { viewModel?.clearFormats() }
+        .disabled(viewModel == nil)
       Toggle(
         "Locked",
         isOn: Binding(

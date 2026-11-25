@@ -668,7 +668,7 @@ extension FormulaEvaluator {
   }
 
   /// A date such as `1/5/2026`, `2026-01-05` or `5-Jan-2026`, a time after it left out.
-  static func dateSerial(_ text: String) -> Double? {
+  public static func dateSerial(_ text: String) -> Double? {
     let t = text.trimmingCharacters(in: .whitespaces)
     if let serial = ColumnFilterRules.dateSerial(t) { return serial }
     // Drop a time after the date: the last space-separated part with a colon, and AM/PM.

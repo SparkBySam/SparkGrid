@@ -71,6 +71,22 @@ public nonisolated enum CSVCodec {
     return lines.joined(separator: "\n")
   }
 
+  /// Tab-separated text of what is typed in each cell, for Save As › Tab-Separated Text. A tab,
+  /// return or quote in a cell puts the field in quotes, as other apps read it.
+  public static func exportTSV(from sheet: Sheet) -> String {
+    let maxRow = sheet.maxPopulatedRow
+    let maxCol = sheet.maxPopulatedColumn
+    guard maxRow >= 0, maxCol >= 0 else { return "" }
+    return (0...maxRow).map { row in
+      (0...maxCol).map { col -> String in
+        let value = sheet.cell(at: CellAddress(row: row, col: col)).raw
+        guard value.contains(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" || $0 == "\"" })
+        else { return value }
+        return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+      }.joined(separator: "\t")
+    }.joined(separator: "\n")
+  }
+
   /// CSV text from rows of text as given, such as each cell as it is shown.
   public static func exportCSV(rows: [[String]]) -> String {
     rows.map { $0.map(escapeField).joined(separator: ",") }.joined(separator: "\n")

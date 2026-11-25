@@ -15,6 +15,8 @@ final class WorkbookWindows {
     case blank
     case startScreen
     case open(URL)
+    /// An earlier version, opened as a new workbook with this name.
+    case copy(URL, String)
   }
 
   private var stores: [UUID: SpreadsheetDocumentStore] = [:]
@@ -40,6 +42,9 @@ final class WorkbookWindows {
       store.showsStartScreen = false
       // After the window is on screen, so an error alert has a window to sit over.
       DispatchQueue.main.async { Self.load(url, into: store) }
+    case .copy(let url, let name)?:
+      store.showsStartScreen = false
+      DispatchQueue.main.async { Self.load(url, into: store, copyNamed: name) }
     case .startScreen?:
       store.showsStartScreen = true
     case .blank?:
@@ -98,6 +103,11 @@ final class WorkbookWindows {
     return windows[id]?.window
   }
 
+  /// The window whose workbook `viewModel` is.
+  func window(showing viewModel: SpreadsheetViewModel) -> NSWindow? {
+    allStores.first { $0.activeViewModel === viewModel }.flatMap { window(of: $0) }
+  }
+
   // MARK: Opening
 
   /// A store with nothing in it yet: no file, no changes, an empty workbook.
@@ -133,9 +143,11 @@ final class WorkbookWindows {
     }
   }
 
-  private static func load(_ url: URL, into store: SpreadsheetDocumentStore) {
+  private static func load(
+    _ url: URL, into store: SpreadsheetDocumentStore, copyNamed: String? = nil
+  ) {
     do {
-      try store.load(from: url)
+      try store.load(from: url, copyNamed: copyNamed)
     } catch {
       let alert = NSAlert()
       alert.messageText = "Couldn't Open \u{201C}\(url.lastPathComponent)\u{201D}"

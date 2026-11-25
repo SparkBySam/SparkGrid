@@ -75,7 +75,7 @@ extension SpreadsheetViewModel {
     }
     pasteGrid(
       grid, at: CellAddress(row: n.minRow, col: n.minCol), adjustFormulas: false,
-      actionName: "Text to Columns")
+      actionName: "Text to Columns", readsAsTyped: true)
     selectRange(
       from: CellAddress(row: n.minRow, col: n.minCol),
       to: CellAddress(row: n.maxRow, col: n.minCol + width - 1))

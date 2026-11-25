@@ -24,6 +24,21 @@ public nonisolated enum SparkTheme {
     set { systemAccentFlag = newValue }
   }
 
+  /// UserDefaults key for Settings › Readable text on filled cells (Nov 23).
+  public static let readableTextDefaultsKey = "readableTextOnFills"
+
+  /// Written on the main thread only; drawing code reads it.
+  nonisolated(unsafe) private static var readableTextFlag =
+    UserDefaults.standard.object(forKey: readableTextDefaultsKey) as? Bool ?? true
+
+  /// On (the default): text with no color of its own, and text under a conditional fill, turns
+  /// light or dark so it can be read on the cell's fill. Off: it keeps the theme's text color
+  /// (or the rule's), as other spreadsheet apps show it. Only the screen changes; files don't.
+  public static var readableTextOnFills: Bool {
+    get { readableTextFlag }
+    set { readableTextFlag = newValue }
+  }
+
   public static func isDark(_ appearance: NSAppearance) -> Bool {
     appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
   }

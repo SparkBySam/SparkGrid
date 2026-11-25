@@ -12,6 +12,8 @@ Compatibility first: never lose what is in a file, then let people edit it. Each
 - 1.3 (Nov 6, 2026): charts from files drawn on the sheet, then moved, resized and edited; pie, scatter and multi-series charts; the Charts panel; Find Duplicates; tables you can make and style; tab colors; AutoSum and the selection sum; icon set thresholds; a new Settings window with shortcuts you can change
 - 1.4 (live Nov 18, 2026; build 8 uploaded Nov 17): everything in the 1.4 list below
 - 1.5 (build 10 submitted for review Nov 18, 2026; build 9 uploaded the same day has a comparison bug and was not submitted): everything in the 1.5 list below
+- 1.6 (build 12 submitted Nov 19, 2026): the Reddit list below, auto number formats, references, the AI connector (Settings › AI)
+- 1.7 (finished Nov 21, 2026; build 13 not uploaded yet): everything in the 1.7 list below
 
 **1.4: Pivot tables, links, and the everyday tools** (all done; live Nov 18, 2026)
 
@@ -68,7 +70,34 @@ Agreed with Sam on Nov 17, 2026; added to the same day and on Nov 18:
 - Also done Nov 19: error bars on bar and line charts with one series, from a column of plus-or-minus amounts; saved as the chart's own error bars, which Excel 16.115 reads.
 - Also done Nov 19 (Sam: "why not add them"): SEM, MEAN, MEAN.ARITH, MEAN.GEOM and MEAN.HARM. Files store the formula other apps calculate (SEM as STDEV.S/SQRT(COUNT), MEAN as AVERAGE); what was typed is kept in xl/sparkGrid/formulasN.json and shown again on open. Checked in Excel 16.115
 
-**Ideas for 1.6 and later** (Sam, Nov 18, 2026; not ordered yet)
+**1.7: Functions, help and polish** (all done Nov 20–21, 2026; PRs #141–#163)
+
+- 228 more functions (SUBTOTAL, AGGREGATE, LAMBDA and its family called in place too, GROUPBY, PIVOTBY, statistics tests and distributions, bonds, CONVERT, complex numbers, D-functions), each checked against Excel's answers; criteria ranges in SUMIFS and the rest spill one answer each
+- Version history (File › Browse Versions: open a copy or restore)
+- Data validation you can make, with Stop, Warning and Information alerts
+- Typing: 3/4 and 15-Mar as dates, 1 1/2 as a fraction, #N/A as the error; click other sheets while writing a formula
+- Big workbooks keep their results after a sort; "Saving…" while a save finishes on Quit
+- Formula Help and chart suggestions with Apple Intelligence on the Mac (a switch in Settings › AI)
+- Goal Seek; sparklines; horizontal, stacked and doughnut charts; trendlines with equation and R²
+- Save as .ods, tab-separated text and web page
+- A note when a file uses functions Spark Grid can't calculate, with a copy of the original
+- Every shortcut can be changed, each with its own reset
+- The app's own look for every dialog, the toolbar's drop-downs, Help and the autosave pop-up; "i" buttons that explain choices; rotation shown as pictures
+
+**Ideas for 1.8 and later** (Sam, Nov 21, 2026: "more visual themes", "always can use more formulas", "what else?"; not ordered yet)
+
+- More visual themes: whole-app themes beyond Spark amber (accent, grid line and header colors, a few dark and light variants), cell styles (Title, Heading, Good, Bad, Neutral, Input, Total) to apply in one click, more table styles, and chart color themes
+- More formulas: the rest of docs/function-parity.md, Excel's newest ones (REGEXTEST, REGEXEXTRACT, REGEXREPLACE, TRIMRANGE, PERCENTOF), and structured references to tables (Table1[Sales]). Skip cube, web, RTD and STOCKHISTORY functions, which need a data connection
+- Formula auditing: trace precedents and dependents with arrows, and Evaluate Formula step by step (goes well with Formula Help's Explain)
+- What-if tools after Goal Seek: Data Tables, Scenarios and a Solver for several inputs and limits
+- Checkboxes in cells (Excel's checkbox cells), and slicers for tables and pivot tables
+- Chart types still missing: waterfall, combo (bars and a line), histogram, box and whisker, funnel, radar
+- General numbers rounded to fit the column, as Excel shows them (471.7808411 in a narrow column), not always 15 digits
+- Goal Seek and other big recalculations off the main thread, so the window never pauses
+- Headers and footers when printing (page numbers, file name, date)
+- An undo history list to step back several changes at once
+
+**Earlier ideas for 1.6 and later** (Sam, Nov 18, 2026; not ordered yet)
 
 - Live collaboration over iCloud (CloudKit `CKShare`). Sam chose this on Nov 18: no Spark Grid accounts and no server; people share a workbook by Apple ID, as Notes and Numbers do, and edits go across as cell changes within a second or two, with each person's selection in a color. The app works without it, as now. Using iCloud is a change to "the app never uses the network": the privacy policy and App Store privacy answers need updating with it. Likely a release of its own (2.0)
 - AI connectors: let assistants such as Claude, Cursor and ChatGPT read and change an open workbook through a local MCP server. It runs on the Mac and talks only to apps on it. One way that keeps the sandboxed app off the network: a small helper the assistant starts, which drives the app through AppleScript; the AppleScript commands grow to cover sheets, ranges, formulas and formats. Starting points: `SparkGrid.sdef`, the `spark-grid-cli` commands and the engine's command list (Sam, Nov 11 and Nov 18). Nov 18: `spark-grid-mcp` built (ten tools: list, read values and formulas, write cells, used range, add sheet, save, open, export) with six new AppleScript commands; see `docs/mcp.md`. Sam chose to ship it inside the app (Nov 18): Contents/Helpers, its own sandbox (Apple Events to Spark Grid only, files in Downloads only), and Settings › AI with copy buttons for Claude Desktop, Cursor and Claude Code
@@ -77,9 +106,9 @@ Agreed with Sam on Nov 17, 2026; added to the same day and on Nov 18:
   - For power users: connect a model they already run on the Mac (Ollama, LM Studio). Covers heavier sheet building and scripting, and Macs that cannot run Apple's model
   - No bundled model: it would not run well on every Mac, and would be a new dependency and a 1–2 GB download
   - Talking to a local model means connecting to `localhost`, which a sandboxed app needs the outgoing-connections entitlement for. Privacy policy and App Store answers: "connects only to a model running on your own Mac, if you set one up". Do this in the same privacy pass as iCloud collaboration
-- Version history: local snapshots while you work, Revert To and Browse All Versions
+- Version history: local snapshots while you work, Revert To and Browse All Versions. Done in 1.7 (File › Browse Versions)
 - iPad version: the engine and file code are already a separate package
-- Sparklines and more chart types (waterfall, combo)
+- Sparklines and more chart types (waterfall, combo). Sparklines done in 1.7; the chart types are in the 1.8 ideas
 - Data cleanup tools: trim spaces, split names, turn text-numbers into numbers, remove blank rows
 - Better CSV import: preview, delimiter, encoding and column types; paste tables straight from web pages
 - Find and Replace across every sheet, and Go To Special (formulas, errors; blanks done Nov 19)

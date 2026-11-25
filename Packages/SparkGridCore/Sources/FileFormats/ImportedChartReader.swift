@@ -95,7 +95,20 @@ public nonisolated enum ImportedChartReader {
       series.values = element("f", in: val).flatMap(reference)
       series.cachedValues = cachedStrings(val).map { Double($0) }
     }
-    if let fill = element("spPr", in: body),
+    if let line = element("trendline", in: body),
+      let kind = attribute("val", ofEmpty: "trendlineType", in: line).flatMap(
+        ChartTrendline.Kind.init(fileName:))
+    {
+      series.trendline = ChartTrendline(
+        kind: kind,
+        period: attribute("val", ofEmpty: "period", in: line).flatMap(Int.init) ?? 2,
+        showsEquation: attribute("val", ofEmpty: "dispEq", in: line) == "1",
+        showsRSquared: attribute("val", ofEmpty: "dispRSqr", in: line) == "1")
+    }
+    // The series' own fill, not its trendline's.
+    let ownBody =
+      body.range(of: "<trendline").map { String(body[..<$0.lowerBound]) } ?? body
+    if let fill = element("spPr", in: ownBody),
       let rgb = attribute("val", ofEmpty: "srgbClr", in: fill)
     {
       series.colorHex = rgb.uppercased()

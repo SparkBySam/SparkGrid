@@ -42,11 +42,11 @@ extension FormulaEvaluator {
     return false
   }
 
-  fileprivate enum CriteriaOp {
+  enum CriteriaOp {
     case eq, ne, lt, le, gt, ge
   }
 
-  fileprivate struct CriteriaTest {
+  struct CriteriaTest {
     public var op: CriteriaOp
     public var number: Double?
     public var text: String
@@ -65,6 +65,7 @@ extension FormulaEvaluator {
   public func evalCOUNTIF(_ args: [FormulaExpr]) -> CellValue {
     guard args.count == 2 else { return .error(.value) }
     guard let anchor = rangeAnchor(args[0]) else { return .error(.value) }
+    if let missing = missingSheetError([anchor]) { return missing }
     let criterion = evaluate(args[1])
     if case .error = criterion { return criterion }
     let test = criteriaTest(from: criterion)
@@ -111,6 +112,7 @@ extension FormulaEvaluator {
       tests.append((anchor, criteriaTest(from: criterion), criterion))
       index += 2
     }
+    if let missing = missingSheetError(tests.map(\.0)) { return missing }
     var memo: [LookupMemoKey: CellValue] = [:]
     if let cache = aggregateRangeCache,
       let lookupKeys = aggregateLookupKeys(
@@ -154,6 +156,7 @@ extension FormulaEvaluator {
 
   public func evalCOUNTBLANK(_ args: [FormulaExpr]) -> CellValue {
     guard args.count == 1, let anchor = rangeAnchor(args[0]) else { return .error(.value) }
+    if let missing = missingSheetError([anchor]) { return missing }
     var count = 0
     for row in 0..<anchor.rows {
       for col in 0..<anchor.cols {
@@ -359,6 +362,7 @@ extension FormulaEvaluator {
     } else {
       sumAnchor = criteria
     }
+    if let missing = missingSheetError([criteria, sumAnchor]) { return missing }
     return reduceMatches(
       criteria: criteria, test: test, criterion: criterion, values: sumAnchor, kind: kind)
   }
@@ -377,6 +381,7 @@ extension FormulaEvaluator {
       tests.append((anchor, criteriaTest(from: criterion)))
       index += 2
     }
+    if let missing = missingSheetError([target] + tests.map(\.0)) { return missing }
     var memo: [LookupMemoKey: CellValue] = [:]
     let values = snapshotValues(anchor: target, memo: &memo)
     let columns = tests.map { snapshotValues(anchor: $0.0, memo: &memo) }
@@ -413,6 +418,7 @@ extension FormulaEvaluator {
       tests.append((anchor, criteriaTest(from: criterion), criterion))
       index += 2
     }
+    if let missing = missingSheetError([sum] + tests.map(\.0)) { return missing }
     var memo: [LookupMemoKey: CellValue] = [:]
     if kind == .average {
       return averageOfMatchingRows(sum: sum, tests: tests, memo: &memo)
@@ -653,7 +659,7 @@ extension FormulaEvaluator {
 
   // MARK: - Criteria
 
-  private func criteriaTest(from value: CellValue) -> CriteriaTest {
+  func criteriaTest(from value: CellValue) -> CriteriaTest {
     switch value {
     case .number(let number):
       return CriteriaTest(op: .eq, number: number, text: "", wildcard: false, blank: false)
@@ -701,7 +707,7 @@ extension FormulaEvaluator {
     return CriteriaTest(op: op, number: nil, text: rest, wildcard: wildcard, blank: false)
   }
 
-  private func criteriaMatch(_ value: CellValue, _ test: CriteriaTest) -> Bool {
+  func criteriaMatch(_ value: CellValue, _ test: CriteriaTest) -> Bool {
     let blank = isBlankForCount(value)
     if test.wildcard && (test.op == .eq || test.op == .ne) {
       if blank { return test.op == .ne }
@@ -876,6 +882,22 @@ extension FormulaEvaluator {
     default:
       return nil
     }
+  }
+
+  /// #REF! when a range is on a sheet the workbook doesn't have. Each of its cells reads
+  /// #REF!, which the conditional counts and sums skip, so =SUMIF(Sheet1!B2:B5,1) on a book
+  /// with no Sheet1 showed 0 where other apps show #REF! (found Nov 20 in Formula Help, whose
+  /// model wrote Sheet1 for a sheet named Report). A real sheet's last cell reads blank.
+  private func missingSheetError(_ anchors: [RangeAnchor]) -> CellValue? {
+    for anchor in anchors {
+      guard let name = anchor.sheet,
+        name.caseInsensitiveCompare(formulaSheetName ?? "") != .orderedSame
+      else { continue }
+      let probe = FormulaRef(
+        sheet: name, row: 1_048_575, col: 16_383, absRow: false, absCol: false)
+      if case .error(.ref) = lookup(probe) { return .error(.ref) }
+    }
+    return nil
   }
 
   private func cellRef(_ anchor: RangeAnchor, row: Int, col: Int) -> FormulaRef {

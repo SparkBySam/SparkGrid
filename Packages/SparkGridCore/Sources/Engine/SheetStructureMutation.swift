@@ -306,6 +306,28 @@ public enum SheetStructureMutation {
       }
       return moved == nil ? nil : next
     }
+    // A sparkline moves with its cell and reads its moved data; one whose cell or data is
+    // deleted goes. Data on another sheet stays where it is.
+    extras.sparklines = extras.sparklines.compactMap { group in
+      var next = group
+      next.sparklines = group.sparklines.compactMap { line in
+        var moved = line
+        switch axis {
+        case .row:
+          guard let row = shift(line.location.row) else { return nil }
+          moved.location = CellAddress(row: row, col: line.location.col)
+        case .column:
+          guard let col = shift(line.location.col) else { return nil }
+          moved.location = CellAddress(row: line.location.row, col: col)
+        }
+        if line.dataSheet == nil {
+          guard let data = keep(line.data) else { return nil }
+          moved.data = data
+        }
+        return moved
+      }
+      return next.sparklines.isEmpty ? nil : next
+    }
     extras.tables = extras.tables.compactMap { table in
       guard let range = keep(table.range) else { return nil }
       var next = table

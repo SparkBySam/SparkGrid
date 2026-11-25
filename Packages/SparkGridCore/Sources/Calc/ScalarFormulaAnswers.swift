@@ -196,7 +196,8 @@ public enum ScalarFormulaAnswers {
     }
 
     private func namedRangeExpression(_ name: String) -> FormulaExpr? {
-      guard let named = workbook.namedRange(named: name), named.resolvesToRange else { return nil }
+      guard let named = workbook.namedRange(named: name) else { return nil }
+      guard named.resolvesToRange else { return NamedFormulas.expression(for: named) }
       let start = FormulaRef(
         sheet: named.sheetName,
         row: named.startRow,

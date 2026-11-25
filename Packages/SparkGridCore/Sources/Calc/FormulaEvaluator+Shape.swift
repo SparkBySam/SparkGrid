@@ -72,6 +72,8 @@ extension FormulaEvaluator {
     switch expr {
     case .cellRef, .range, .namedRange, .missing: return false
     case .call(let name, _):
+      // A LAMBDA is kept to be called, not worked out (alone it is #CALC!).
+      if FormulaParser.isLambda(expr) { return false }
       let plain = plainFunctionName(name)
       return !["INDEX", "OFFSET", "INDIRECT", "CHOOSE", "IF", "IFS", "SWITCH", "XLOOKUP"]
         .contains(plain) && !spills(expr)
@@ -80,7 +82,7 @@ extension FormulaEvaluator {
     }
   }
 
-  private static func literal(_ value: CellValue) -> FormulaExpr? {
+  static func literal(_ value: CellValue) -> FormulaExpr? {
     switch value {
     case .number(let n): return .number(n)
     case .string(let s): return .string(s)
@@ -106,7 +108,24 @@ extension FormulaEvaluator {
       return .unary(op, substitute(inner, bindings))
     case .binary(let op, let lhs, let rhs):
       return .binary(op, substitute(lhs, bindings), substitute(rhs, bindings))
+    case .call(let name, let args) where plainFunctionName(name) == "LAMBDA":
+      // A LAMBDA's own parameters hide outer names of the same spelling inside its body.
+      var inner = bindings
+      for arg in args.dropLast() {
+        if case .namedRange(let raw) = arg, let name = letName(raw) {
+          inner.removeAll { $0.name == name }
+        }
+      }
+      guard let body = args.last else { return expr }
+      return .call(name, args.dropLast() + [substitute(body, inner)])
     case .call(let name, let args):
+      // `LET(f,LAMBDA(x,x+1),f(9))`: a name given a LAMBDA, called like a function.
+      if let key = letName(name), let bound = bindings.last(where: { $0.name == key }),
+        FormulaParser.isLambda(bound.value)
+      {
+        return .call(
+          FormulaExpr.lambdaCallFunction, [bound.value] + args.map { substitute($0, bindings) })
+      }
       guard isLet(name) else { return .call(name, args.map { substitute($0, bindings) }) }
       var inner = bindings
       var out: [FormulaExpr] = []
@@ -173,7 +192,7 @@ extension FormulaEvaluator {
     return .value(array)
   }
 
-  private static func fail(_ error: FormulaError) -> ArrayResult { ArrayResult(.error(error)) }
+  static func fail(_ error: FormulaError) -> ArrayResult { ArrayResult(.error(error)) }
 
   /// The rows `rows` and columns `cols` of `array`, in that order.
   private static func pick(_ array: ArrayResult, rows: [Int], cols: [Int]) -> ArrayResult {

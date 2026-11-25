@@ -14,6 +14,8 @@ struct InsertChartSheet: View {
   @State private var extraValueColumns: [Int] = []
   /// Column of plus-or-minus amounts for error bars; nil for none.
   @State private var errorBarColumn: Int?
+  /// A trendline through the first series; nil draws none.
+  @State private var trendline: ChartTrendline?
   @State private var hasHeaderRow = true
   @State private var valueMode: SheetChart.ValueMode = .values
   @State private var didConfigure = false
@@ -37,6 +39,9 @@ struct InsertChartSheet: View {
   @State private var pointColors: [Int: CodableColor] = [:]
   @State private var frameIsCustom = false
   @FocusState private var rangeFieldFocused: Bool
+  @State private var chartRequest = ""
+  @State private var describing = false
+  @State private var describeNote: String?
 
   private struct KeptAnchor {
     var row: Int
@@ -97,7 +102,8 @@ struct InsertChartSheet: View {
       frameIsCustom: frameIsCustom,
       errorBarColumn: errorBarColumn.flatMap {
         $0 == valueColumn || extraValueColumns.contains($0) ? nil : $0
-      }
+      },
+      trendline: kind.allowsTrendline && valueMode == .values ? trendline : nil
     )
   }
 
@@ -153,6 +159,11 @@ struct InsertChartSheet: View {
         dismiss()
       }
     ) {
+      if AppSettings.shared.usesAppleIntelligence, FormulaHelper.availability == .available,
+        dataRange != nil
+      {
+        describeRow
+      }
       typeTiles
       HStack(alignment: .top, spacing: 12) {
         ScrollView {
@@ -229,11 +240,119 @@ struct InsertChartSheet: View {
     case .area: return "chart.line.uptrend.xyaxis"
     case .pie: return "chart.pie.fill"
     case .scatter: return "chart.dots.scatter"
+    case .horizontalBar: return "align.horizontal.left.fill"
+    case .stackedBar: return "square.split.1x2.fill"
+    case .stackedHorizontalBar: return "square.split.2x1.fill"
+    case .stackedArea: return "mountain.2.fill"
+    case .doughnut: return "circle.circle"
+    }
+  }
+
+  /// Describe the chart in words and Apple Intelligence fills in the choices below.
+  private var describeRow: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        Image(systemName: "sparkles").foregroundStyle(SparkStyle.accent)
+        TextField(
+          "Describe it, such as \u{201C}units by month as a line with a trend\u{201D}",
+          text: $chartRequest
+        )
+        .textFieldStyle(.roundedBorder)
+        .onSubmit(describe)
+        if describing {
+          ProgressView().controlSize(.small)
+        }
+        Button("Suggest", action: describe)
+          .disabled(describing || chartRequest.trimmingCharacters(in: .whitespaces).isEmpty)
+        SparkInfoButton(
+          title: "Describe a chart",
+          text: "Apple Intelligence on this Mac reads the column headers and your sentence, then "
+            + "picks the chart kind, columns, trendline and title below. Nothing leaves the Mac. "
+            + "Check the preview before inserting: the model can be wrong. Turn it off in "
+            + "Settings › AI.")
+      }
+      if let describeNote {
+        Text(describeNote)
+          .font(.system(size: 11))
+          .foregroundStyle(SparkStyle.secondaryLabel)
+      }
+    }
+  }
+
+  private func describe() {
+    let text = chartRequest.trimmingCharacters(in: .whitespaces)
+    guard !text.isEmpty, !describing else { return }
+    let columns = columnOptions.map { option in
+      ChartHelper.Column(
+        index: option.column,
+        letter: CellAddress(row: 0, col: option.column).a1.filter(\.isLetter),
+        header: option.header, numeric: option.isMostlyNumeric)
+    }
+    describing = true
+    describeNote = nil
+    Task { @MainActor in
+      defer { describing = false }
+      do {
+        let suggestion = try await ChartHelper.suggest(text, columns: columns)
+        apply(suggestion)
+      } catch {
+        describeNote = "Couldn't suggest a chart: \(error.localizedDescription)"
+      }
+    }
+  }
+
+  private func apply(_ suggestion: ChartHelper.Suggestion) {
+    var changed: [String] = []
+    if let chosen = suggestion.kind {
+      kind = chosen
+      changed.append(chosen.title)
+    }
+    if let category = suggestion.categoryColumn {
+      categoryColumn = category
+    }
+    let values = suggestion.valueColumns.filter { $0 != categoryColumn }
+    if let first = values.first {
+      valueColumn = first
+      extraValueColumns = kind.isRound ? [] : Array(values.dropFirst())
+      changed.append(values.map { header(for: $0) }.filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+    if kind.allowsTrendline, let line = suggestion.trendline {
+      trendline = ChartTrendline(kind: line)
+      changed.append("\(line.title.lowercased()) trendline")
+    } else if suggestion.trendline == nil {
+      trendline = nil
+    }
+    if let title = suggestion.title {
+      titleText = title
+      titleEdited = true
+    }
+    describeNote =
+      changed.isEmpty
+      ? "No suggestion fit these columns. Try naming them."
+      : "Suggested: " + changed.filter { !$0.isEmpty }.joined(separator: " · ")
+        + ". Check the preview."
+  }
+
+  /// What each kind is for, behind its tile's "i".
+  private static func purpose(of kind: SheetChart.Kind) -> String {
+    switch kind {
+    case .bar: return "Compares amounts across a few categories, side by side."
+    case .line: return "Shows how values change over time or in order. Good with a trendline."
+    case .area: return "A line chart filled below: change over time with a sense of size."
+    case .pie: return "Parts of one whole. Best with a handful of slices."
+    case .scatter: return "Two number columns against each other, to see a relationship."
+    case .horizontalBar: return "Bars running across: easier to read with long category names."
+    case .stackedBar: return "Each bar split into series, so totals and their parts both show."
+    case .stackedHorizontalBar: return "Stacked bars running across, for long names."
+    case .stackedArea: return "Series piled on each other over time: the total and its parts."
+    case .doughnut: return "A pie with a hole in the middle; parts of one whole."
     }
   }
 
   private var typeTiles: some View {
-    HStack(spacing: 8) {
+    LazyVGrid(
+      columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8
+    ) {
       ForEach(SheetChart.Kind.allCases) { item in
         let selected = kind == item
         Button {
@@ -244,10 +363,12 @@ struct InsertChartSheet: View {
               .font(.system(size: 18))
             Text(item.title)
               .font(.system(size: 12, weight: selected ? .semibold : .regular))
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
           }
           .foregroundStyle(selected ? SparkStyle.label : SparkStyle.secondaryLabel)
           .frame(maxWidth: .infinity)
-          .frame(height: 56)
+          .frame(height: 52)
           .background(
             RoundedRectangle(cornerRadius: 8)
               .fill(selected ? SparkStyle.accent.opacity(0.14) : SparkStyle.chrome)
@@ -261,6 +382,10 @@ struct InsertChartSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
+        .overlay(alignment: .topTrailing) {
+          SparkInfoButton(title: item.title, text: Self.purpose(of: item), size: 11)
+            .padding(4)
+        }
       }
     }
   }
@@ -326,6 +451,9 @@ struct InsertChartSheet: View {
                 errorBarPicker
               }
             }
+            if kind.allowsTrendline {
+              trendlineRows
+            }
           } else {
             SparkDialogRow(label: "Values") {
               Picker("Value column", selection: $valueColumn) {
@@ -337,6 +465,74 @@ struct InsertChartSheet: View {
               .fixedSize()
             }
           }
+        }
+      }
+    }
+  }
+
+  /// None, or a line fitted through the first series, with its equation and R² if wanted.
+  @ViewBuilder
+  private var trendlineRows: some View {
+    SparkDialogDivider()
+    SparkDialogRow(label: "Trendline") {
+      SparkInfoButton(
+        title: "Trendlines",
+        text: "A line fitted through the points to show the trend. Linear is a straight line. "
+          + "Exponential suits values that grow by a steady percentage; logarithmic, ones that "
+          + "rise fast then level off; power, ones that grow in proportion to a power of x. A "
+          + "moving average follows the average of the last few points. R² near 1 means a "
+          + "close fit.")
+      Picker(
+        "Trendline",
+        selection: Binding(
+          get: { trendline?.kind },
+          set: { newKind in
+            if let newKind {
+              var next = trendline ?? ChartTrendline()
+              next.kind = newKind
+              trendline = next
+            } else {
+              trendline = nil
+            }
+          })
+      ) {
+        Text("None").tag(ChartTrendline.Kind?.none)
+        ForEach(ChartTrendline.Kind.allCases) { item in
+          Text(item.title).tag(ChartTrendline.Kind?.some(item))
+        }
+      }
+      .labelsHidden()
+      .fixedSize()
+      .help("A line fitted through the first series, as other spreadsheet apps draw one.")
+    }
+    if let line = trendline {
+      SparkDialogDivider()
+      if line.kind == .movingAverage {
+        SparkDialogRow(label: "Period") {
+          Stepper(
+            "\(line.period) points",
+            value: Binding(
+              get: { line.period },
+              set: { trendline?.period = max(2, $0) }),
+            in: 2...50
+          )
+          .controlSize(.small)
+          .font(.system(size: 12))
+        }
+      } else {
+        SparkDialogRow(label: "Show") {
+          HStack(spacing: 10) {
+            Toggle(
+              "Equation",
+              isOn: Binding(
+                get: { line.showsEquation }, set: { trendline?.showsEquation = $0 }))
+            Toggle(
+              "R²",
+              isOn: Binding(
+                get: { line.showsRSquared }, set: { trendline?.showsRSquared = $0 }))
+          }
+          .toggleStyle(.checkbox)
+          .controlSize(.small)
         }
       }
     }
@@ -503,6 +699,7 @@ struct InsertChartSheet: View {
     kind = chart.kind
     extraValueColumns = chart.extraValueColumns
     errorBarColumn = chart.errorBarColumn
+    trendline = chart.trendline
     keptAnchor = KeptAnchor(
       row: chart.anchorRow,
       col: chart.anchorCol,

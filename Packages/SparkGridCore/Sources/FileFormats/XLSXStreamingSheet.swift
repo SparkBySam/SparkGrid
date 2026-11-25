@@ -156,6 +156,11 @@ public nonisolated enum StreamingWorksheet {
           conditionalFormatting.append(captureElement(tag, name: "conditionalFormatting"))
           continue
         }
+        // Sparklines live in the worksheet's extension list as `<x14:sparklineGroups>`.
+        if localIs(tag, "sparklineGroups"), !tag.isClose {
+          keptElements.append(("sparklineGroups", captureElement(tag, name: "sparklineGroups")))
+          continue
+        }
         if localIs(tag, "autoFilter"), !tag.isClose {
           if capturedFilter {
             _ = captureElement(tag, name: "autoFilter")

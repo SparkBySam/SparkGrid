@@ -31,7 +31,7 @@ final class FutureFunctionPrefixTests: XCTestCase {
     let unchanged = [
       #""_xlfn.XLOOKUP("&A1"#,
       "'_xlfn.IFS(x'!A1+1",
-      "_xlfn.LAMBDA(x,x+1)(2)",
+      "_xlfn.STOCKHISTORY(\"MSFT\",1)",
       "_xlfn.ANCHORARRAY(A1:B2)",
       "_xlfn.ANCHORARRAY(INDEX(A:A,1))",
       "my_xlookup+SUM(A1:A3)",
@@ -50,7 +50,7 @@ final class FutureFunctionPrefixTests: XCTestCase {
       "COUNTA(_xlfn.UNIQUE(A1:A3))&_xlfn.TEXTJOIN(\",\",TRUE,A1:A3)",
       "ROWS(_xlfn.ANCHORARRAY(G1))",
       "SUM(_xlfn.ANCHORARRAY('My ''Q'' Data'!A10))",
-      "_xlfn.LAMBDA(x,x+1)(2)",
+      "_xlfn.STOCKHISTORY(\"MSFT\",1)",
     ]
     for text in stored {
       let typed = ExcelFutureFunctions.unprefixed(text)
@@ -155,5 +155,28 @@ final class FutureFunctionPrefixTests: XCTestCase {
       "=TEXTJOIN(\",\",TRUE,SORT(A1:A3))")
     // Quoted text keeps its prefix-like words.
     XCTAssertEqual(ExcelFutureFunctions.unprefixed("=\"_xlpm.x\"&A1"), "=\"_xlpm.x\"&A1")
+  }
+  /// LAMBDA parameters go out as `_xlpm.` names and a function given by name to BYROW and the
+  /// like as `_xlfn._xleta.SUM`, as Excel 16.115 saves them; opening takes both away again.
+  func testLambdaParametersAndFunctionsByName() {
+    let cases: [(typed: String, saved: String)] = [
+      (
+        "BYROW(A1:B2,LAMBDA(r,SUM(r)))",
+        "_xlfn.BYROW(A1:B2,_xlfn.LAMBDA(_xlpm.r,SUM(_xlpm.r)))"
+      ),
+      ("BYCOL(A1:B2,SUM)", "_xlfn.BYCOL(A1:B2,_xlfn._xleta.SUM)"),
+      (
+        "REDUCE(0,A1:A3,LAMBDA(acc,v,acc+v))",
+        "_xlfn.REDUCE(0,A1:A3,_xlfn.LAMBDA(_xlpm.acc,_xlpm.v,_xlpm.acc+_xlpm.v))"
+      ),
+      ("LAMBDA(x,[y],IF(ISOMITTED(y),x,y))(1)", "LAMBDA(x,[y],IF(ISOMITTED(y),x,y))(1)"),
+      (
+        "GROUPBY(A2:A9,C2:C9,SUM)", "_xlfn.GROUPBY(A2:A9,C2:C9,_xlfn._xleta.SUM)"
+      ),
+    ]
+    for (typed, saved) in cases.prefix(3) + cases.suffix(1) {
+      XCTAssertEqual(ExcelFutureFunctions.prefixed(typed), saved, typed)
+      XCTAssertEqual(ExcelFutureFunctions.unprefixed(saved), typed, saved)
+    }
   }
 }

@@ -100,13 +100,17 @@ struct ImportedChartPlot: View {
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
-      switch chart.kind {
-      case .pie, .doughnut:
-        pie(marks)
-      case .scatter:
-        scatter(marks)
-      default:
-        cartesian(marks)
+      // A trendline's equation and R² sit above the plot, clear of its axes.
+      VStack(alignment: .trailing, spacing: 2) {
+        trendCaption
+        switch chart.kind {
+        case .pie, .doughnut:
+          pie(marks)
+        case .scatter:
+          scatter(marks)
+        default:
+          cartesian(marks)
+        }
       }
     }
   }
@@ -210,7 +214,7 @@ struct ImportedChartPlot: View {
 
   @ViewBuilder
   private func cartesian(_ marks: [Mark]) -> some View {
-    let values = stackedExtremes(marks)
+    let values = stackedExtremes(marks) + trendPoints(scatter: false).map(\.y)
     if let domain = SheetChartView.plotValueDomain(values: values) {
       if chart.kind == .bar {
         horizontalBars(marks, domain: domain)
@@ -222,32 +226,43 @@ struct ImportedChartPlot: View {
 
   @ViewBuilder
   private func verticalPlot(_ marks: [Mark], domain: ClosedRange<Double>) -> some View {
-    Chart(marks) { mark in
-      switch chart.kind {
-      case .line:
-        LineMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
-          .foregroundStyle(by: .value("Series", mark.seriesName))
-        // Each series its own marker shape, so the lines read apart in grey too (Reddit, Nov 19).
-        PointMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
-          .foregroundStyle(by: .value("Series", mark.seriesName))
-          .symbol(by: .value("Series", mark.seriesName))
-          .symbolSize(28)
-      case .area:
-        // Areas stack unless told not to; a file's standard area chart overlaps them.
-        AreaMark(
-          x: .value("Category", mark.label), y: .value("Value", mark.value),
-          stacking: chart.isStacked ? .standard : .unstacked
-        )
-        .foregroundStyle(by: .value("Series", mark.seriesName))
-      default:
-        if chart.isStacked {
-          BarMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
+    let trend = trendPoints(scatter: false)
+    Chart {
+      ForEach(marks) { mark in
+        switch chart.kind {
+        case .line:
+          LineMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
             .foregroundStyle(by: .value("Series", mark.seriesName))
-        } else {
-          BarMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
+          // Each series its own marker shape, so the lines read apart in grey too (Reddit, Nov 19).
+          PointMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
             .foregroundStyle(by: .value("Series", mark.seriesName))
-            .position(by: .value("Series", mark.seriesName))
+            .symbol(by: .value("Series", mark.seriesName))
+            .symbolSize(28)
+        case .area:
+          // Areas stack unless told not to; a file's standard area chart overlaps them.
+          AreaMark(
+            x: .value("Category", mark.label), y: .value("Value", mark.value),
+            stacking: chart.isStacked ? .standard : .unstacked
+          )
+          .foregroundStyle(by: .value("Series", mark.seriesName))
+        default:
+          if chart.isStacked {
+            BarMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
+              .foregroundStyle(by: .value("Series", mark.seriesName))
+          } else {
+            BarMark(x: .value("Category", mark.label), y: .value("Value", mark.value))
+              .foregroundStyle(by: .value("Series", mark.seriesName))
+              .position(by: .value("Series", mark.seriesName))
+          }
         }
+      }
+      ForEach(trend) { point in
+        LineMark(
+          x: .value("Category", point.label), y: .value("Value", point.y),
+          series: .value("Trendline", point.line)
+        )
+        .foregroundStyle(point.color)
+        .lineStyle(Self.trendStroke)
       }
     }
     .modifier(ValueDomain(domain: domain, style: valueStyle))
@@ -261,12 +276,24 @@ struct ImportedChartPlot: View {
   @ViewBuilder
   private func scatter(_ marks: [Mark]) -> some View {
     let points = marks.compactMap { mark in mark.x.map { (mark, $0) } }
-    if let yDomain = SheetChartView.plotValueDomain(values: points.map(\.0.value)),
+    let trend = trendPoints(scatter: true)
+    if let yDomain = SheetChartView.plotValueDomain(
+      values: points.map(\.0.value) + trend.map(\.y)),
       let xDomain = SheetChartView.plotValueDomain(values: points.map(\.1))
     {
-      Chart(points, id: \.0.id) { mark, x in
-        PointMark(x: .value("X", x), y: .value("Y", mark.value))
-          .foregroundStyle(by: .value("Series", mark.seriesName))
+      Chart {
+        ForEach(points, id: \.0.id) { mark, x in
+          PointMark(x: .value("X", x), y: .value("Y", mark.value))
+            .foregroundStyle(by: .value("Series", mark.seriesName))
+        }
+        ForEach(trend) { point in
+          LineMark(
+            x: .value("X", point.x), y: .value("Y", point.y),
+            series: .value("Trendline", point.line)
+          )
+          .foregroundStyle(point.color)
+          .lineStyle(Self.trendStroke)
+        }
       }
       .chartXScale(domain: xDomain)
       .chartYScale(domain: yDomain)
@@ -294,6 +321,99 @@ struct ImportedChartPlot: View {
       }
       .chartLegend(.visible)
       .chartOverlay { proxy in hoverLayer(proxy, slices) }
+    }
+  }
+
+  // MARK: - Trendlines
+
+  /// One point on a trendline. Category charts place it on a category; scatter charts at x.
+  private struct TrendPoint: Identifiable {
+    let id: String
+    let line: String
+    let label: String
+    let x: Double
+    let y: Double
+    let color: Color
+  }
+
+  static let trendStroke = StrokeStyle(lineWidth: 1.6, dash: [5, 3])
+
+  /// The trendline a series draws, if the chart gives it one.
+  private func trendline(for line: SpreadsheetViewModel.ImportedChartSeriesData) -> ChartTrendline?
+  {
+    chart.series.indices.contains(line.id) ? chart.series[line.id].trendline : nil
+  }
+
+  /// Each series' trendline fitted through its points. Category charts fit against
+  /// x = 1, 2, 3…, as other spreadsheet apps do; scatter charts against their X values,
+  /// drawn as a smooth curve across the X range.
+  private func trendPoints(scatter: Bool) -> [TrendPoint] {
+    guard chart.kind != .bar, !chart.isStacked else { return [] }
+    var out: [TrendPoint] = []
+    let colors = seriesColors
+    for (index, line) in series.enumerated() {
+      guard let trend = trendline(for: line) else { continue }
+      let name = "trend-\(line.id)"
+      let color = colors.indices.contains(index) ? colors[index] : .gray
+      let points = scatter ? line.points.filter { $0.x != nil } : line.points
+      let xs = scatter ? points.map { $0.x ?? 0 } : points.indices.map { Double($0 + 1) }
+      guard let fit = trend.fit(x: xs, y: points.map(\.value)) else { continue }
+      if trend.kind == .movingAverage {
+        for (offset, average) in fit.averages.enumerated() {
+          let label = scatter ? "" : points[Int(average.x) - 1].label
+          out.append(
+            TrendPoint(
+              id: "\(name)-\(offset)", line: name, label: label, x: average.x, y: average.y,
+              color: color))
+        }
+      } else if scatter {
+        guard let low = xs.min(), let high = xs.max(), high > low else { continue }
+        let steps = 48
+        for step in 0...steps {
+          let x = low + (high - low) * Double(step) / Double(steps)
+          guard let y = fit.value(at: x) else { continue }
+          out.append(
+            TrendPoint(id: "\(name)-\(step)", line: name, label: "", x: x, y: y, color: color))
+        }
+      } else {
+        for (offset, point) in points.enumerated() {
+          guard let y = fit.value(at: xs[offset]) else { continue }
+          out.append(
+            TrendPoint(
+              id: "\(name)-\(offset)", line: name, label: point.label, x: xs[offset], y: y,
+              color: color))
+        }
+      }
+    }
+    return out
+  }
+
+  /// The equation and R² of each trendline that asks to show them.
+  @ViewBuilder
+  private var trendCaption: some View {
+    let lines: [String] = series.compactMap { line in
+      guard let trend = trendline(for: line), trend.showsEquation || trend.showsRSquared
+      else { return nil }
+      let scatter = chart.kind == .scatter
+      let points = scatter ? line.points.filter { $0.x != nil } : line.points
+      let xs = scatter ? points.map { $0.x ?? 0 } : points.indices.map { Double($0 + 1) }
+      guard let fit = trend.fit(x: xs, y: points.map(\.value)) else { return nil }
+      var parts: [String] = []
+      if trend.showsEquation, let equation = fit.equation { parts.append(equation) }
+      if trend.showsRSquared, let r2 = fit.rSquared {
+        parts.append("R² = \(String(format: "%.4f", r2))")
+      }
+      return parts.isEmpty ? nil : parts.joined(separator: "   ")
+    }
+    if !lines.isEmpty {
+      VStack(alignment: .trailing, spacing: 1) {
+        ForEach(lines, id: \.self) { Text($0) }
+      }
+      .font(.system(size: 10).monospacedDigit())
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+      .minimumScaleFactor(0.8)
+      .allowsHitTesting(false)
     }
   }
 

@@ -26,6 +26,17 @@ final class SpreadsheetGridNSView: NSView {
     didSet {
       guard viewModel !== oldValue else { return }
       oldValue?.onGridInvalidation = nil
+      oldValue?.onEditMovesToFormulaBar = nil
+      viewModel?.onEditMovesToFormulaBar = { [weak self] in
+        // The formula goes on in the formula bar while another sheet shows; the cell editor
+        // closes without finishing it.
+        guard let self, self.isEditorActive else { return nil }
+        let text = self.editor.stringValue
+        self.isEditorActive = false
+        self.editor.isHidden = true
+        self.needsDisplay = true
+        return text
+      }
       viewModel?.onGridInvalidation = { [weak self] invalidation in
         guard let self else { return }
         switch invalidation {
@@ -525,6 +536,8 @@ final class SpreadsheetGridNSView: NSView {
     }
   }
 
+  /// Sparklines, drawn in their cells under the charts.
+  private let sparklineLayerView = SparklineLayerView()
   private let chartLayerView: ChartLayerView = {
     let view = ChartLayerView()
     view.wantsLayer = true
@@ -994,6 +1007,7 @@ final class SpreadsheetGridNSView: NSView {
       name: NSColor.systemColorsDidChangeNotification, object: nil)
     configureEditor()
     addSubview(chartLayerView, positioned: .below, relativeTo: editorClip)
+    chartLayerView.addSubview(sparklineLayerView)
     for overlay in frozenPaneOverlays {
       overlay.grid = self
       addSubview(overlay, positioned: .above, relativeTo: chartLayerView)
@@ -1526,7 +1540,8 @@ final class SpreadsheetGridNSView: NSView {
       },
       evaluateFormula: { raw, sample, origin in
         engine.evaluateConditionalFormula(raw, at: sample, relativeTo: origin, sheet: sheet)
-      }
+      },
+      readableText: SparkTheme.readableTextOnFills
     )
   }
 
@@ -2438,7 +2453,13 @@ final class SpreadsheetGridNSView: NSView {
     let n = range.normalized
     let start = CellAddress(row: n.minRow, col: n.minCol)
     let end = CellAddress(row: n.maxRow, col: n.maxCol)
-    let text = start == end ? start.a1 : "\(start.a1):\(end.a1)"
+    var text = start == end ? start.a1 : "\(start.a1):\(end.a1)"
+    // Pointing at another sheet than the formula's own names that sheet.
+    if let viewModel, let home = viewModel.formulaHome,
+      home.sheetIndex != viewModel.workbook.activeSheetIndex
+    {
+      text = Self.sheetPrefix(viewModel.activeSheet.name) + text
+    }
     let length = (textView.string as NSString).length
     let target = NSRange(
       location: min(pointing.range.location, length),
@@ -2452,6 +2473,15 @@ final class SpreadsheetGridNSView: NSView {
     if textView.window?.firstResponder !== textView {
       textView.window?.makeFirstResponder(textView)
     }
+  }
+
+  /// `Sales!` or `'Q3 Pipeline'!`, as a formula names a sheet.
+  static func sheetPrefix(_ name: String) -> String {
+    let plain =
+      name.first.map { $0.isLetter || $0 == "_" } == true
+      && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
+      && !(name.range(of: #"^[A-Za-z]{1,3}[0-9]+$"#, options: .regularExpression) != nil)
+    return plain ? name + "!" : "'" + name.replacingOccurrences(of: "'", with: "''") + "'!"
   }
 
   /// True when the character before `location` (spaces aside) starts a place for a reference.
@@ -6721,6 +6751,39 @@ final class SpreadsheetGridNSView: NSView {
       }
     }
     layoutImportedCharts(viewModel)
+    layoutSparklines(viewModel)
+  }
+
+  /// The sparklines of the cells in view, placed over their cells.
+  private func layoutSparklines(_ viewModel: SpreadsheetViewModel) {
+    let groups = viewModel.activeSheet.fileExtras.sparklines
+    let bounds = chartLayerView.bounds
+    if sparklineLayerView.frame != bounds { sparklineLayerView.frame = bounds }
+    guard !groups.isEmpty else {
+      sparklineLayerView.items = []
+      return
+    }
+    let layer = chartLayerView.frame
+    let hiddenRows = viewModel.activeSheet.fileExtras.hiddenRows
+    let hiddenColumns = viewModel.activeSheet.fileExtras.hiddenColumns
+    var items: [SparklineLayerView.Item] = []
+    for group in groups {
+      for line in group.sparklines {
+        guard !hiddenRows.contains(line.location.row), !hiddenColumns.contains(line.location.col)
+        else { continue }
+        let cell = rectForCell(row: line.location.row, col: line.location.col)
+        let local = cell.offsetBy(dx: -layer.minX, dy: -layer.minY)
+        guard local.width >= 6, local.height >= 6, local.intersects(bounds) else { continue }
+        items.append(
+          SparklineLayerView.Item(
+            rect: local, values: viewModel.sparklineValues(line), kind: group.kind,
+            colorHex: group.colorHex, negativeColorHex: group.negativeColorHex,
+            showsMarkers: group.showsMarkers, showsHighLow: group.showsHighLow,
+            showsNegative: group.showsNegative))
+      }
+    }
+    sparklineLayerView.scale = zoomScale
+    sparklineLayerView.items = items
   }
 
   /// Places charts from other apps where the file put them. They draw from the cells they name.
@@ -7719,7 +7782,9 @@ final class SpreadsheetGridNSView: NSView {
     {
       // Link blue is dim on the dark grid; the file keeps it, the screen shows it lighter.
       drawFormat.textColor = Self.darkModeLinkColor
-    } else if isDarkMode, drawFormat.textColor == nil, let fillColor {
+    } else if isDarkMode, SparkTheme.readableTextOnFills, drawFormat.textColor == nil,
+      let fillColor
+    {
       // Automatic text is white in dark mode. On a file's light fill, such as a totals row,
       // it was nearly invisible; it now follows the fill, as conditional fills already do.
       drawFormat.textColor = CodableColor.contrastingText(
@@ -10765,11 +10830,23 @@ final class SpreadsheetGridNSView: NSView {
     let paste = menu.addItem(
       withTitle: "Paste", action: #selector(handleMenuPaste(_:)), keyEquivalent: "")
     paste.target = self
+    _ = addMenuItem(menu, "Clear Contents", #selector(handleMenuClearContents(_:)))
+    _ = addMenuItem(menu, "Clear Formats", #selector(handleMenuClearFormats(_:)))
     menu.addItem(.separator())
     addPrimaryContextActions(to: menu)
     menu.addItem(.separator())
     addStructureSubmenus(to: menu)
     return menu
+  }
+
+  @objc private func handleMenuClearContents(_ sender: Any?) {
+    viewModel?.clearContents()
+    needsDisplay = true
+  }
+
+  @objc private func handleMenuClearFormats(_ sender: Any?) {
+    viewModel?.clearFormats()
+    needsDisplay = true
   }
 
   private func chartContextMenu() -> NSMenu {
@@ -11290,6 +11367,18 @@ final class SpreadsheetGridNSView: NSView {
       super.keyDown(with: event)
       return
     }
+    // Edit Cell (F2) and Open Dropdown List (⌥↓), as Settings › Shortcuts has them.
+    if AppSettings.shared.matches(.editCell, event: event) {
+      viewModel.beginEditing()
+      if viewModel.isEditing { showEditor(selectAll: false) }
+      return
+    }
+    if AppSettings.shared.matches(.openDropdown, event: event),
+      viewModel.hasDropdown(at: viewModel.selectionAnchor)
+    {
+      presentDropdownMenu()
+      return
+    }
 
     switch event.keyCode {
     case 51, 117:
@@ -11355,13 +11444,6 @@ final class SpreadsheetGridNSView: NSView {
         needsDisplay = true
         return
       }
-      // Option-Down opens the selected cell's dropdown list.
-      if event.keyCode == 125, event.modifierFlags.contains(.option),
-        viewModel.hasDropdown(at: viewModel.selectionAnchor)
-      {
-        presentDropdownMenu()
-        break
-      }
       if event.modifierFlags.contains(.command) {
         let rowStep = event.keyCode == 125 ? 1 : event.keyCode == 126 ? -1 : 0
         let colStep = event.keyCode == 124 ? 1 : event.keyCode == 123 ? -1 : 0
@@ -11384,10 +11466,6 @@ final class SpreadsheetGridNSView: NSView {
           rowDelta: -1, colDelta: 0, extending: event.modifierFlags.contains(.shift))
       default: break
       }
-    case 120:
-      // F2 edits the selected cell with the caret at the end, as other spreadsheet apps do.
-      viewModel.beginEditing()
-      if viewModel.isEditing { showEditor(selectAll: false) }
     case 36:
       if viewModel.isFindBarVisible {
         super.keyDown(with: event)

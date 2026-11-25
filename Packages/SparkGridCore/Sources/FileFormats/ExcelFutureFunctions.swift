@@ -11,8 +11,31 @@ public nonisolated enum ExcelFutureFunctions {
     "FORECAST.LINEAR", "TEXTBEFORE", "TEXTAFTER", "UNICHAR", "UNICODE", "SORTBY", "UNIQUE",
     "LET", "TEXTSPLIT", "VSTACK", "HSTACK", "TAKE", "DROP", "CHOOSECOLS", "CHOOSEROWS",
     "WRAPROWS", "WRAPCOLS", "TOCOL", "TOROW", "RANDARRAY",
+    "REGEXTEST", "REGEXEXTRACT", "REGEXREPLACE",
     "COVARIANCE.P", "COVARIANCE.S", "NORM.DIST", "NORM.INV", "NORM.S.DIST", "NORM.S.INV",
     "NUMBERVALUE", "PERCENTRANK.EXC", "PERCENTRANK.INC", "RANK.AVG", "SKEW.P",
+    // 1.7 batch 4
+    "AGGREGATE", "NETWORKDAYS.INTL", "WORKDAY.INTL", "SHEET", "SHEETS", "FORMULATEXT", "COT",
+    "CSC", "SEC", "COTH", "CSCH", "SECH", "ACOT", "ACOTH", "CEILING.PRECISE", "FLOOR.PRECISE",
+    "COMBINA", "PERMUTATIONA", "GAMMA", "GAMMALN.PRECISE", "GAUSS", "PHI", "ARABIC", "BASE",
+    "DECIMAL", "BITAND", "BITOR", "BITXOR", "BITLSHIFT", "BITRSHIFT", "ERF.PRECISE",
+    "ERFC.PRECISE", "VALUETOTEXT", "ARRAYTOTEXT", "ENCODEURL",
+    // 1.7 batch 5
+    "BETA.DIST", "BETA.INV", "BINOM.DIST", "BINOM.DIST.RANGE", "BINOM.INV", "CHISQ.DIST",
+    "CHISQ.DIST.RT", "CHISQ.INV", "CHISQ.INV.RT", "CHISQ.TEST", "CONFIDENCE.NORM", "CONFIDENCE.T",
+    "EXPON.DIST", "F.DIST", "F.DIST.RT", "F.INV", "F.INV.RT", "F.TEST", "GAMMA.DIST", "GAMMA.INV",
+    "HYPGEOM.DIST", "LOGNORM.DIST", "LOGNORM.INV", "MODE.MULT", "NEGBINOM.DIST", "POISSON.DIST",
+    "T.DIST", "T.DIST.2T", "T.DIST.RT", "T.INV", "T.INV.2T", "T.TEST", "WEIBULL.DIST", "Z.TEST",
+    "MUNIT",
+    // 1.7 batch 6
+    "LAMBDA", "MAP", "REDUCE", "SCAN", "BYROW", "BYCOL", "MAKEARRAY", "ISOMITTED", "EXPAND",
+    "GROUPBY", "PIVOTBY",
+    // 1.7 batch 7
+    "IMCOSH", "IMCOT", "IMCSC", "IMCSCH", "IMSEC", "IMSECH", "IMSINH", "IMTAN", "PDURATION", "RRI",
+  ]
+  /// Functions that take a LAMBDA, or a built-in function by name.
+  static let lambdaTakers: Set<String> = [
+    "MAP", "REDUCE", "SCAN", "BYROW", "BYCOL", "MAKEARRAY", "GROUPBY", "PIVOTBY",
   ]
   /// Saved as `_xlfn._xlws.FILTER` rather than `_xlfn.FILTER`.
   static let worksheetNames: Set<String> = ["FILTER", "SORT"]
@@ -146,6 +169,14 @@ public nonisolated enum ExcelFutureFunctions {
         continue
       }
       let fn = prefixLength("_xlfn.", at: i, end: j)
+      // `_xlfn._xleta.SUM`, a function given by name to BYROW and the like, reads as `SUM`.
+      let eta = fn > 0 ? prefixLength("_xleta.", at: i + fn, end: j) : 0
+      if eta > 0, j > i + fn + eta, j >= bytes.count || bytes[j] != UInt8(ascii: "(") {
+        out.append(contentsOf: bytes[(i + fn + eta)..<j])
+        changed = true
+        i = j
+        continue
+      }
       if fn > 0, j < bytes.count, bytes[j] == UInt8(ascii: "(") {
         let ws = prefixLength("_xlws.", at: i + fn, end: j)
         let bare = String(decoding: bytes[(i + fn + ws)..<j], as: UTF8.self)
@@ -223,9 +254,12 @@ public nonisolated enum ExcelFutureFunctions {
     func isNameChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "." || c == "_" }
     /// Each open parenthesis: whether it is a LET, which argument is being read, and the names
     /// it has given so far.
-    var frames: [(isLet: Bool, argument: Int, names: Set<String>)] = []
+    /// `takesLambda`: BYROW, MAP and the others, where a bare function name is a function.
+    var frames:
+      [(isLet: Bool, isLambda: Bool, takesLambda: Bool, argument: Int, names: Set<String>)] =
+        []
     func letNameInScope(_ upper: String) -> Bool {
-      frames.contains { $0.isLet && $0.names.contains(upper) }
+      frames.contains { ($0.isLet || $0.isLambda) && $0.names.contains(upper) }
     }
     while i < chars.count {
       let c = chars[i]
@@ -260,7 +294,12 @@ public nonisolated enum ExcelFutureFunctions {
             out += "_xlfn._xlws."
           }
           out += token
-          frames.append((isLet: upper == "LET" || upper == "_XLFN.LET", argument: 0, names: []))
+          let plain = upper.hasPrefix("_XLFN.") ? String(upper.dropFirst(6)) : upper
+          frames.append(
+            (
+              isLet: plain == "LET", isLambda: plain == "LAMBDA",
+              takesLambda: lambdaTakers.contains(plain), argument: 0, names: []
+            ))
           out.append("(")
           i = j + 1
           continue
@@ -270,8 +309,10 @@ public nonisolated enum ExcelFutureFunctions {
         if startsName, !afterSheet, !upper.hasPrefix("_XLPM."), !isCellReference(token) {
           var k = j
           while k < chars.count, chars[k] == " " { k += 1 }
-          // A LET names a value in each even argument followed by another argument.
-          if var frame = frames.last, frame.isLet, frame.argument % 2 == 0,
+          // A LET names a value in each even argument followed by another argument; a LAMBDA
+          // names a parameter in each argument but the last.
+          if var frame = frames.last,
+            (frame.isLet && frame.argument % 2 == 0) || frame.isLambda,
             k < chars.count, chars[k] == ","
           {
             frame.names.insert(upper)
@@ -279,6 +320,10 @@ public nonisolated enum ExcelFutureFunctions {
             out += "_xlpm."
           } else if letNameInScope(upper) {
             out += "_xlpm."
+          } else if let frame = frames.last, frame.takesLambda,
+            FormulaFunctions.all.contains(upper), !upper.hasPrefix("_XLFN.")
+          {
+            out += "_xlfn._xleta."
           }
         }
         out += token
@@ -286,7 +331,8 @@ public nonisolated enum ExcelFutureFunctions {
         continue
       }
       switch c {
-      case "(": frames.append((isLet: false, argument: 0, names: []))
+      case "(":
+        frames.append((isLet: false, isLambda: false, takesLambda: false, argument: 0, names: []))
       case ")": if !frames.isEmpty { frames.removeLast() }
       case ",": if !frames.isEmpty { frames[frames.count - 1].argument += 1 }
       default: break

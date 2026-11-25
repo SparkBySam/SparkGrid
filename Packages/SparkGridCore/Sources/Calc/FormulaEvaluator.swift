@@ -48,6 +48,16 @@ public nonisolated struct FormulaEvaluator {
   public var spillRange: (String, CellAddress) -> CellRange? = { _, _ in nil }
   /// Whether a cell holds a formula, by sheet name and address, for ISFORMULA.
   public var holdsFormula: (String, CellAddress) -> Bool = { _, _ in false }
+  /// A cell's formula as typed, by sheet name and address, or nil when it holds none
+  /// (FORMULATEXT, and SUBTOTAL and AGGREGATE leaving out the subtotals in their ranges).
+  public var formulaText: (String, CellAddress) -> String? = { _, _ in nil }
+  /// Whether a row is hidden by hand or from the file, by sheet name and row index
+  /// (SUBTOTAL 101 to 111, AGGREGATE's options that leave out hidden rows).
+  public var rowHidden: (String, Int) -> Bool = { _, _ in false }
+  /// Whether the sheet's filter hides a row (every SUBTOTAL leaves those out).
+  public var rowFiltered: (String, Int) -> Bool = { _, _ in false }
+  /// The workbook's sheet names in tab order (SHEET, SHEETS).
+  public var sheetNames: () -> [String] = { [] }
   /// Defaults to a modest grid so open ranges don't explode when extent isn't wired.
   public var sheetExtent: SheetExtentLookup = { _ in (maxRow: 999, maxCol: 25) }
   /// Cell being evaluated (`COLUMN()` / `ROW()` with no argument). Held in a class cell so batch strip eval can set origin without mutating the evaluator struct.
@@ -709,6 +719,9 @@ public nonisolated struct FormulaEvaluator {
     case "LET":
       return evaluate(letCalculation(args))
     case _ where Self.shapeFunctionNames.contains(name),
+      _ where Self.statArrayFunctionNames.contains(name),
+      _ where Self.regexArrayFunctionNames.contains(name),
+      _ where Self.lambdaArrayFunctionNames.contains(name),
       "SEQUENCE", "FILTER", "SORT", "SORTBY", "UNIQUE", FormulaExpr.anchorArrayFunction:
       // The cell shows the first value; the rest spill into the cells below and beside it.
       if spillIsBlocked { return .error(.spill) }
@@ -720,7 +733,11 @@ public nonisolated struct FormulaEvaluator {
       guard args.isEmpty else { return .error(.value) }
       return .bool(true)
     default:
-      if let value = evalBatch1(name, args) ?? evalBatch2(name, args) ?? evalBatch3(name, args) {
+      if let value = evalRegex(name, args) ?? evalBatch1(name, args) ?? evalBatch2(name, args)
+        ?? evalBatch3(name, args)
+        ?? evalBatch4(name, args) ?? evalBatch5(name, args)
+        ?? evalBatch7(name, args) ?? evalBatch6(name, args)
+      {
         return value
       }
       UnknownFunctions.note(name)

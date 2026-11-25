@@ -379,7 +379,9 @@ final class SGPutValuesCommand: SparkGridScriptCommand {
         "That is \(count) cells; put \(WorkbookScripting.maxCells) or fewer at a time.")
     }
     WorkbookScripting.onSheet(place.sheet, of: viewModel) {
-      viewModel.pasteGrid(rows, at: place.address, adjustFormulas: false, actionName: "Put Values")
+      viewModel.pasteGrid(
+        rows, at: place.address, adjustFormulas: false, actionName: "Put Values", readsAsTyped: true
+      )
     }
     store.documentDidChange()
     return nil
