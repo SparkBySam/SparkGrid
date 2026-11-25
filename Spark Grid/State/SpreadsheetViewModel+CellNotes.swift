@@ -80,6 +80,7 @@ extension SpreadsheetViewModel {
   /// Text shown when the pointer rests on a cell with a comment or a link.
   func noteToolTip(at address: CellAddress) -> String? {
     var parts: [String] = []
+    if let prompt = validationPrompt(at: address) { parts.append(prompt) }
     if let comment = comment(at: address) {
       parts.append(comment.author.isEmpty ? comment.text : "\(comment.author): \(comment.text)")
     }
@@ -87,9 +88,9 @@ extension SpreadsheetViewModel {
       var line = "Command-click to open."
       if let tip = link.tooltip, !tip.isEmpty {
         line = tip + "\n" + line
-      } else if let target = link.target {
+      } else if let target = link.outsideTarget {
         line = (target.hasPrefix("mailto:") ? String(target.dropFirst(7)) : target) + "\n" + line
-      } else if let location = link.location {
+      } else if let location = link.place {
         line = "Go to \(location)\n" + line
       }
       parts.append(line)

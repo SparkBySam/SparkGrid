@@ -53,6 +53,8 @@ public nonisolated struct ImportedChart: Equatable, Sendable {
     public var cachedValues: [Double?]
     /// `RRGGBB` from the series' own fill or line, when the file sets one.
     public var colorHex: String?
+    /// The first trendline the file draws through this series.
+    public var trendline: ChartTrendline?
 
     public init(
       nameReference: Reference? = nil,
@@ -61,7 +63,8 @@ public nonisolated struct ImportedChart: Equatable, Sendable {
       values: Reference? = nil,
       cachedCategories: [String] = [],
       cachedValues: [Double?] = [],
-      colorHex: String? = nil
+      colorHex: String? = nil,
+      trendline: ChartTrendline? = nil
     ) {
       self.nameReference = nameReference
       self.name = name
@@ -70,6 +73,7 @@ public nonisolated struct ImportedChart: Equatable, Sendable {
       self.cachedCategories = cachedCategories
       self.cachedValues = cachedValues
       self.colorHex = colorHex
+      self.trendline = trendline
     }
   }
 

@@ -135,15 +135,27 @@ struct SettingsView: View {
 /// inside the app. The helper drives Spark Grid with AppleScript; nothing goes over the network.
 private struct AssistantSettingsTab: View {
   @State private var copied: String?
+  @Bindable private var settings = AppSettings.shared
 
   private static var helperPath: String {
     Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/spark-grid-mcp").path
   }
 
+  /// A complete config file, so someone with no config yet can paste it as is. Someone who
+  /// already has one adds the "spark-grid" entry to its mcpServers (Sam, Nov 20).
   private static var desktopConfig: String {
-    """
-    "spark-grid": { "command": "\(helperPath)" }
-    """
+    let path = helperPath.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    return """
+      {
+        "mcpServers": {
+          "spark-grid": {
+            "command": "\(path)"
+          }
+        }
+      }
+
+      """
   }
 
   private static var claudeCodeLine: String {
@@ -152,6 +164,31 @@ private struct AssistantSettingsTab: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
+      SparkDialogSection(title: "Apple Intelligence")
+      SparkDialogGroup {
+        SparkDialogRow(label: "Use Apple Intelligence") {
+          HStack(spacing: 8) {
+            Text(appleIntelligenceStatus)
+              .font(.system(size: 11))
+              .foregroundStyle(SparkStyle.secondaryLabel)
+            Toggle("", isOn: $settings.usesAppleIntelligence)
+              .toggleStyle(.switch)
+              .controlSize(.small)
+              .labelsHidden()
+              .tint(SparkStyle.accent)
+          }
+        }
+      }
+      Text(
+        "Formula Help (Insert › Formula Help) and chart suggestions (Insert › Chart, Describe it) "
+          + "use the model built into your Mac. Your cells and questions stay on this Mac and "
+          + "are never sent anywhere. Off: both leave the menus."
+      )
+      .font(.system(size: 11))
+      .foregroundStyle(SparkStyle.secondaryLabel)
+      .fixedSize(horizontal: false, vertical: true)
+
+      SparkDialogSection(title: "Assistants")
       Text(
         "AI assistants on this Mac can read and change your open workbooks: list sheets, read "
           + "values and formulas, write cells, add sheets, save and export. Everything stays on "
@@ -164,7 +201,7 @@ private struct AssistantSettingsTab: View {
       SparkDialogSection(title: "Connect")
       SparkDialogGroup {
         copyRow(
-          "Claude Desktop, Cursor and others", detail: "Server entry for mcpServers",
+          "Claude Desktop, Cursor and others", detail: "Whole config file",
           text: Self.desktopConfig)
         SparkDialogDivider()
         copyRow("Claude Code", detail: "Terminal command", text: Self.claudeCodeLine)
@@ -172,7 +209,9 @@ private struct AssistantSettingsTab: View {
         copyRow("Helper path", detail: "For any other assistant", text: Self.helperPath)
       }
       Text(
-        "The first time an assistant uses Spark Grid, macOS asks whether it may. To change that "
+        "The config file can be pasted as is into an assistant with no MCP servers yet. If it "
+          + "already has some, add the spark-grid entry inside its mcpServers. "
+          + "The first time an assistant uses Spark Grid, macOS asks whether it may. To change that "
           + "later, open System Settings › Privacy & Security › Automation."
       )
       .font(.system(size: 11))
@@ -181,7 +220,15 @@ private struct AssistantSettingsTab: View {
       Spacer(minLength: 0)
     }
     .padding(20)
-    .frame(height: 320, alignment: .top)
+    .frame(height: 520, alignment: .top)
+  }
+
+  private var appleIntelligenceStatus: String {
+    switch FormulaHelper.availability {
+    case .available: return "Ready on this Mac"
+    case .needsAppleIntelligence: return "Turn on in System Settings"
+    case .unsupported: return "Not on this Mac"
+    }
   }
 
   private func copyRow(_ title: String, detail: String, text: String) -> some View {
@@ -222,6 +269,16 @@ private struct GeneralSettingsTab: View {
             options: [(false, "Spark amber"), (true, "macOS accent")])
         }
         SparkDialogDivider()
+        SparkDialogRow(label: "Readable text on filled cells") {
+          SparkInfoButton(
+            title: "Readable text on filled cells",
+            text: "On: text with no color of its own turns light or dark so it can be read on "
+              + "the cell's fill, in dark mode and on conditional formatting colors. Off: text "
+              + "keeps its own color, as other spreadsheet apps show it, so it can be hard to "
+              + "read on some fills. Only the screen changes; your files don't.")
+          toggle($settings.readableTextOnFills)
+        }
+        SparkDialogDivider()
         SparkDialogRow(label: "Names under toolbar buttons") {
           toggle($settings.showToolbarLabels)
         }
@@ -240,6 +297,11 @@ private struct GeneralSettingsTab: View {
         }
         SparkDialogDivider()
         SparkDialogRow(label: "Bar length") {
+          SparkInfoButton(
+            title: "Bar length",
+            text: "Rows in use: the scroll bars cover the rows and columns with something in them "
+              + "and a little more, so a short sheet has a big thumb. Whole grid: they cover every "
+              + "row and column, as far as the sheet goes.")
           SparkSegmentedPicker(
             selection: $settings.scrollBarLength,
             options: ScrollBarLength.allCases.map { ($0, $0.title) }, equalWidths: true)
@@ -268,10 +330,30 @@ private struct GeneralSettingsTab: View {
           .fixedSize()
           .disabled(!settings.autosaveEnabled)
         }
+        SparkDialogDivider()
+        SparkDialogRow(label: "Keep earlier versions") {
+          SparkInfoButton(
+            title: "Earlier versions",
+            text: "Each save keeps the version before it, and autosave keeps one every ten "
+              + "minutes. File › Browse Versions opens or restores them. Turn it off to save "
+              + "space with very large files.")
+          toggle($settings.keepVersions)
+        }
+        SparkDialogDivider()
+        SparkDialogRow(label: "Warn about formulas it can't calculate") {
+          SparkInfoButton(
+            title: "Formulas Spark Grid can't calculate",
+            text: "When a file uses a function Spark Grid doesn't have, a note says which when it "
+              + "opens. Those cells keep the results saved in the file, and saving keeps their "
+              + "formulas for the app that made it.")
+          toggle($settings.warnsAboutUncalculatedFormulas)
+        }
       }
       Text(
         "Only files that have been saved once are saved automatically. A new workbook waits for "
-          + "Save."
+          + "Save. Earlier versions show in File › Browse Versions; turn them off to save space "
+          + "with very large files. A file with functions Spark Grid doesn't have opens with a "
+          + "note saying which."
       )
       .font(.system(size: 11))
       .foregroundStyle(SparkStyle.secondaryLabel)
@@ -279,7 +361,7 @@ private struct GeneralSettingsTab: View {
       Spacer(minLength: 0)
     }
     .padding(20)
-    .frame(height: 502, alignment: .top)
+    .frame(height: 600, alignment: .top)
   }
 
   private func toggle(_ binding: Binding<Bool>) -> some View {
@@ -348,9 +430,12 @@ private struct ShortcutSettingsTab: View {
           }
         }
       }
-      Text("Click a shortcut, then press the new keys. Esc cancels.")
-        .font(.system(size: 11))
-        .foregroundStyle(SparkStyle.secondaryLabel)
+      Text(
+        "Click a shortcut, then press the new keys. Esc cancels. Arrows, Return, Tab and Delete "
+          + "move and edit as usual and aren't listed."
+      )
+      .font(.system(size: 11))
+      .foregroundStyle(SparkStyle.secondaryLabel)
     }
     .padding(20)
     .frame(height: 460, alignment: .top)
@@ -382,16 +467,23 @@ private struct ShortcutSettingsTab: View {
           }
         }
         Spacer(minLength: 8)
-        if settings.shortcut(for: action) != settings.defaultShortcut(for: action) {
-          Button {
-            settings.resetShortcut(for: action)
-            notice = nil
-          } label: {
-            Image(systemName: "arrow.uturn.backward")
-          }
-          .buttonStyle(.borderless)
-          .help("Back to \(settings.defaultShortcut(for: action).displayString)")
+        // On every row, so each shortcut can go back on its own; greyed out while it is the
+        // default (Sam, Nov 20).
+        let changed = settings.shortcut(for: action) != settings.defaultShortcut(for: action)
+        Button {
+          settings.resetShortcut(for: action)
+          notice = nil
+          conflict = nil
+        } label: {
+          Image(systemName: "arrow.uturn.backward")
+            .foregroundStyle(changed ? SparkStyle.accent : SparkStyle.secondaryLabel.opacity(0.4))
         }
+        .buttonStyle(.borderless)
+        .disabled(!changed)
+        .help(
+          changed
+            ? "Reset to \(settings.defaultShortcut(for: action).displayString)"
+            : "Already the default")
         keyButton(action)
       }
       if let conflict, conflict.action == action {
@@ -459,10 +551,12 @@ private struct ShortcutSettingsTab: View {
   private func record(_ event: NSEvent, for action: HotkeyAction) {
     let needed: NSEvent.ModifierFlags = [.command, .option, .control]
     guard let shortcut = StoredShortcut.from(event: event),
-      !NSEvent.ModifierFlags(rawValue: shortcut.modifiers).intersection(needed).isEmpty
+      shortcut.isFunctionKey
+        || !NSEvent.ModifierFlags(rawValue: shortcut.modifiers).intersection(needed).isEmpty
     else {
       notice = ShortcutNotice(
-        action: action, text: "Include ⌘, ⌥ or ⌃ so the keys don't type into a cell.")
+        action: action,
+        text: "Include ⌘, ⌥ or ⌃ (or use a function key) so the keys don't type into a cell.")
       return
     }
     stopRecording()

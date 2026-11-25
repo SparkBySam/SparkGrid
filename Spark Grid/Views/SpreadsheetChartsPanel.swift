@@ -636,8 +636,9 @@ struct SheetChartView: View {
     // including on the 440×200 Insert Chart preview.
     Chart(points) { point in
       switch chart.kind {
-      case .bar, .pie, .scatter:
-        // Pie and scatter draw in the series plot; this path only sees bar, line and area.
+      case .bar, .pie, .scatter, .horizontalBar, .stackedBar, .stackedHorizontalBar, .doughnut:
+        // Only bar, line and area charts with one series and no trendline draw here; the
+        // rest draw in the series plot.
         BarMark(
           x: .value("Category", Double(point.id)),
           y: .value("Value", point.value)
@@ -668,7 +669,7 @@ struct SheetChartView: View {
         if let error = point.error, error > 0 {
           errorBar(at: point, error: error)
         }
-      case .area:
+      case .area, .stackedArea:
         AreaMark(
           x: .value("Category", Double(point.id)),
           y: .value("Value", point.value)

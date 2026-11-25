@@ -116,7 +116,7 @@ public nonisolated enum FormulaCacheWriter {
   /// Most formulas a save calculates afresh after every result went stale.
   public static let recalculateOnSaveLimit = 40_000
 
-  static func formulaCount(_ workbook: Workbook) -> Int {
+  public static func formulaCount(_ workbook: Workbook) -> Int {
     workbook.sheets.reduce(0) { total, sheet in
       total + sheet.cells.values.reduce(0) { $0 + (FormulaSyntax.isFormula($1.raw) ? 1 : 0) }
     }

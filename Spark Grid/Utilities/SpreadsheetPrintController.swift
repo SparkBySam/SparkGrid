@@ -406,7 +406,8 @@ final class SpreadsheetPrintNSView: NSView {
       },
       evaluateFormula: { [formulaEngine, sheet] raw, addr, origin in
         formulaEngine.evaluateConditionalFormula(raw, at: addr, relativeTo: origin, sheet: sheet)
-      }
+      },
+      readableText: SparkTheme.readableTextOnFills
     )
   }
 

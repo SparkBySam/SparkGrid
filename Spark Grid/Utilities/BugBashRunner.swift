@@ -91,6 +91,8 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { spillReferencesFollowTheSpill() })
       results.append(MainActor.assumeIsolated { spillReadersWithoutWaiting() })
       results.append(MainActor.assumeIsolated { scrollFollowsTheMac() })
+      results.append(MainActor.assumeIsolated { formulaHelpReadsAnswers() })
+      results.append(MainActor.assumeIsolated { formulaPointsAtAnotherSheet() })
       results.append(MainActor.assumeIsolated { selectBlankCellsAndRegexReplace() })
       results.append(MainActor.assumeIsolated { moveCellsAndAddFonts() })
       results.append(MainActor.assumeIsolated { newArrayFunctionsWhenTyped() })
@@ -124,6 +126,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { chartMoveResizeAndColorRoundTrip() })
       results.append(legacyChartLandsUnderData())
       results.append(cfFillTextContrast())
+      results.append(build14Additions())
       results.append(formulaEvalRegressionGate())
       results.append(everydayFormulas())
       results.append(sumproductBooleanFastPathSelfCheck())
@@ -159,6 +162,7 @@ typealias Cell = SparkGridCore.Cell
       results.append(MainActor.assumeIsolated { kpiWorkbookMultiSheetScroll() })
       results.append(MainActor.assumeIsolated { conditionalFormatPaste() })
       results.append(editorSpellChecking())
+      results.append(contentsOf: MainActor.assumeIsolated { nov21Checks() })
       return results
     }
 
@@ -2178,6 +2182,83 @@ typealias Cell = SparkGridCore.Cell
         detail:
           "only the fill under the editor (pictures showing before typing: \(picturesBeforeTyping))"
       )
+    }
+
+    /// Formula help takes the formula line and the sentence after it from the model's answer,
+    /// and names functions Spark Grid does not have before the formula goes in.
+    @MainActor
+    private static func formulaHelpReadsAnswers() -> Result {
+      let name = "formula help reads answers"
+      let answer = "```excel\n=SUMIFS(D4:D15,F4:F15,\"West\")\n```\nSums the ARR on West rows."
+      let parsed = FormulaHelper.parse(answer)
+      guard parsed.formula == "=SUMIFS(D4:D15,F4:F15,\"West\")",
+        parsed.explanation == "Sums the ARR on West rows."
+      else {
+        return Result(
+          name: name, passed: false, detail: "parsed \(parsed.formula) | \(parsed.explanation)")
+      }
+      let unknown = FormulaHelper.unknownFunctions(in: "=SUM(A1:A3)+MADEUP(1)")
+      guard FormulaHelper.unknownFunctions(in: "=SUM(A1:B2 B1:B3)+A1:INDEX(A:A,2)") == [],
+        unknown?.contains("MADEUP") == true, unknown?.contains("SUM") == false,
+        FormulaHelper.unknownFunctions(in: "=SUM(") == nil
+      else {
+        return Result(name: name, passed: false, detail: "unknown functions \(unknown ?? [])")
+      }
+      return Result(name: name, passed: true, detail: "formula and sentence read; MADEUP named")
+    }
+
+    /// Clicking another sheet's tab while a formula waits for a reference keeps the formula open
+    /// there, and Return finishes it in the cell it was typed in, back on its own sheet (1.7).
+    @MainActor
+    private static func formulaPointsAtAnotherSheet() -> Result {
+      let name = "formula points at another sheet"
+      let home = Sheet(name: "Home")
+      var data = Sheet(name: "Q3 Data")
+      for row in 1...3 {
+        data.setCell(Cell(raw: "\(row)"), at: CellAddress(row: row, col: 1))
+      }
+      let viewModel = SpreadsheetViewModel(workbook: Workbook(sheets: [home, data]))
+      let target = CellAddress(row: 9, col: 11)
+      viewModel.selection = target
+      _ = viewModel.beginTyping("=SUM(")
+      viewModel.selectSheet(at: 1)
+      guard viewModel.workbook.activeSheetIndex == 1, viewModel.isEditing,
+        viewModel.formulaHome?.address == target
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "after the tab: sheet \(viewModel.workbook.activeSheetIndex), editing "
+            + "\(viewModel.isEditing), text \(viewModel.editText)")
+      }
+      let prefix = SpreadsheetGridNSView.sheetPrefix("Q3 Data")
+      guard prefix == "'Q3 Data'!", SpreadsheetGridNSView.sheetPrefix("Sales") == "Sales!" else {
+        return Result(name: name, passed: false, detail: "sheet prefix \(prefix)")
+      }
+      viewModel.editText += prefix + "B2:B4)"
+      viewModel.commitEdit()
+      let raw = viewModel.workbook.sheets[0].cell(at: target).raw
+      guard viewModel.workbook.activeSheetIndex == 0, raw == "=SUM('Q3 Data'!B2:B4)",
+        viewModel.displayValue(at: target) == .number(6)
+      else {
+        return Result(
+          name: name, passed: false,
+          detail: "after Return: sheet \(viewModel.workbook.activeSheetIndex), L10 \(raw), "
+            + "\(viewModel.displayValue(at: target))")
+      }
+      // Escape goes back without writing anything.
+      let other = CellAddress(row: 10, col: 11)
+      viewModel.selection = other
+      _ = viewModel.beginTyping("=")
+      viewModel.selectSheet(at: 1)
+      viewModel.cancelEdit()
+      guard viewModel.workbook.activeSheetIndex == 0, !viewModel.isEditing,
+        viewModel.workbook.sheets[0].cell(at: other).raw.isEmpty
+      else {
+        return Result(name: name, passed: false, detail: "Escape left sheet or text behind")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "=SUM( then the Q3 Data tab keeps the formula; Return writes \(raw) = 6 on Home")
     }
 
     /// A scroll event the Mac sends for "show what is below" moves the grid down, and right for
@@ -5841,6 +5922,62 @@ typealias Cell = SparkGridCore.Cell
       return Result(name: name, passed: true, detail: "covering chart opens under A3:F9")
     }
 
+    /// 1.7 build 14 (Nov 23): regular expressions spill on the grid, the readable-text setting
+    /// changes conditional fills at once, and a `#Sheet!A1` link jumps to its place.
+    private static func build14Additions() -> Result {
+      let name = "build 14: regex, readable text, # links"
+      var data = Sheet(name: "Data")
+      data.setCell(Cell(raw: "Order 12-B, ship 2026-11-23"), at: .origin)
+      data.setCell(Cell(raw: "5"), at: CellAddress(row: 4, col: 2))
+      let dark = CodableColor(red: 0.1, green: 0.1, blue: 0.2, alpha: 1)
+      let c5 = CellAddress(row: 4, col: 2)
+      data.conditionalFormats = [
+        ConditionalFormatRule(
+          range: CellRange(start: c5, end: c5), predicate: .greaterThan(0),
+          style: ConditionalFormatStyle(fillColor: dark))
+      ]
+      let vm = SpreadsheetViewModel(workbook: Workbook(sheets: [data, Sheet(name: "Orders")]))
+      func address(_ a1: String) -> CellAddress {
+        A1Reference.parseRange(a1 + ":" + a1)?.0 ?? .origin
+      }
+      func text(_ labels: [String]) -> [String] {
+        vm.formulaEngine.finishPendingCrossSheet()
+        return labels.map { vm.displayString(at: address($0)) }
+      }
+      vm.setCellValue("=REGEXEXTRACT(A1,\"\\d+\",1)", at: address("B1"))
+      vm.setCellValue("=REGEXREPLACE(A1,\"\\d\",\"#\")", at: address("B2"))
+      vm.setCellValue("=REGEXTEST(A1,\"order\",1)", at: address("B3"))
+      let shown = text(["B1", "C1", "D1", "E1", "B2", "B3"])
+      guard shown == ["12", "2026", "11", "23", "Order ##-B, ship ####-##-##", "TRUE"] else {
+        return Result(name: name, passed: false, detail: "regex \(shown)")
+      }
+
+      let was = SparkTheme.readableTextOnFills
+      defer { SparkTheme.readableTextOnFills = was }
+      SparkTheme.readableTextOnFills = true
+      let readable = vm.resolvedPaint(at: c5).format?.textColor
+      SparkTheme.readableTextOnFills = false
+      let own = vm.resolvedPaint(at: c5).format?.textColor
+      guard (readable?.relativeLuminance ?? 0) > 0.8, own == nil else {
+        return Result(
+          name: name, passed: false,
+          detail: "readable text on \(String(describing: readable)), off \(String(describing: own))"
+        )
+      }
+
+      vm.openHyperlink(
+        CellHyperlink(range: CellRange(start: .origin, end: .origin), target: "#'Orders'!B2"))
+      guard vm.activeSheet.name == "Orders", vm.selectionAnchor == address("B2") else {
+        return Result(
+          name: name, passed: false,
+          detail: "link went to \(vm.activeSheet.name)!\(vm.selectionAnchor.a1)")
+      }
+      return Result(
+        name: name, passed: true,
+        detail: "REGEXEXTRACT spilled 12, 2026, 11, 23; text light on a dark rule, own color with "
+          + "the setting off; #'Orders'!B2 selected Orders B2")
+    }
+
     private static func cfFillTextContrast() -> Result {
       let name = "cf fill text contrast"
       let yellow = CodableColor(red: 1, green: 0.953, blue: 0.804, alpha: 1)
@@ -5946,8 +6083,10 @@ typealias Cell = SparkGridCore.Cell
         )
       }
       let titles = groups.map(\.kind.title)
-      if titles != ["Math", "Statistical", "Logical", "Text", "Lookup", "Date & Time", "Financial"]
-      {
+      if titles != [
+        "Math", "Statistical", "Logical", "Text", "Lookup", "Date & Time", "Financial",
+        "Engineering", "Database", "Information",
+      ] {
         return Result(name: name, passed: false, detail: "groups \(titles.joined(separator: ", "))")
       }
 
@@ -5989,7 +6128,10 @@ typealias Cell = SparkGridCore.Cell
 
       let sumNames = Set(
         FormulaFunctionCatalog.groups(matching: "sum").flatMap { $0.entries.map(\.name) })
-      if sumNames != ["SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "SUMSQ"] {
+      if sumNames != [
+        "DSUM", "IMSUM", "SERIESSUM", "SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "SUMSQ", "SUMX2MY2",
+        "SUMX2PY2", "SUMXMY2",
+      ] {
         return Result(name: name, passed: false, detail: "sum search \(sumNames.sorted())")
       }
       let lookup = Set(
@@ -7330,7 +7472,8 @@ typealias Cell = SparkGridCore.Cell
           at: CellAddress(row: 1, col: 2), sheet: withFormula.activeSheet)
         let offsetValue = patchedEngine.displayValue(
           at: CellAddress(row: 3, col: 0), sheet: withFormula.activeSheet)
-        if total != .number(30) || rateValue != .number(4) || offsetValue != .error(.name) {
+        // Since 1.7 a name that is a formula calculates: OFFSET('Q3 Sales'!$A$1,0,0) is A1.
+        if total != .number(30) || rateValue != .number(4) || offsetValue != .number(10) {
           return Result(
             name: name,
             passed: false,
@@ -7348,7 +7491,7 @@ typealias Cell = SparkGridCore.Cell
         return Result(name: name, passed: false, detail: error.localizedDescription)
       }
       return Result(
-        name: name, passed: true, detail: "Sales and Rate resolve; OFFSET stays unresolved")
+        name: name, passed: true, detail: "Sales, Rate and the OFFSET formula name resolve")
     }
 
     private static func nameManagerEditsSheet() -> Result {
@@ -7397,9 +7540,12 @@ typealias Cell = SparkGridCore.Cell
       else {
         return Result(name: name, passed: false, detail: "OFFSET was stored as a range")
       }
-      viewModel.setCellValue("=Grow", at: CellAddress(row: 3, col: 0))
-      if viewModel.displayValue(at: CellAddress(row: 3, col: 0)) != .error(.name) {
-        return Result(name: name, passed: false, detail: "OFFSET name resolved")
+      viewModel.setCellValue("=SUM(Grow)", at: CellAddress(row: 3, col: 0))
+      // Since 1.7 a name that is a formula calculates: Grow is A1:A2.
+      if viewModel.displayValue(at: CellAddress(row: 3, col: 0)) != .number(30) {
+        return Result(
+          name: name, passed: false,
+          detail: "SUM(Grow) \(viewModel.displayValue(at: CellAddress(row: 3, col: 0)))")
       }
       viewModel.deleteDefinedName(named: "Revenue")
       if viewModel.workbook.namedRange(named: "Revenue") != nil
@@ -7408,7 +7554,7 @@ typealias Cell = SparkGridCore.Cell
         return Result(name: name, passed: false, detail: "delete left Revenue in use")
       }
       return Result(
-        name: name, passed: true, detail: "add, retarget, rename, unresolved formula, delete")
+        name: name, passed: true, detail: "add, retarget, rename, formula name, delete")
     }
 
     private static func cellFormatApplyCloses() -> Result {

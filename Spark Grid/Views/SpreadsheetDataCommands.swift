@@ -33,6 +33,18 @@ struct SpreadsheetDataCommands: Commands {
       }
       .disabled(viewModel == nil)
 
+      Button("Data Validation…") {
+        guard let viewModel else { return }
+        CellNotePresenter.presentValidation(from: viewModel)
+      }
+      .disabled(viewModel == nil)
+
+      Button("Goal Seek…") {
+        guard let viewModel else { return }
+        GoalSeekPresenter.present(from: viewModel)
+      }
+      .disabled(viewModel == nil)
+
       Divider()
 
       Button("Create Table") { viewModel?.createTable() }

@@ -41,6 +41,9 @@ extension XLSXCodec {
     extras.rowBreaks = split.rows
     extras.columnBreaks = split.columns
 
+    if let blocks = kept["sparklineGroups"] {
+      extras.sparklines = blocks.flatMap { sparklineGroups(in: $0, sheetName: sheet.name) }
+    }
     if let xml = kept["dataValidations"]?.first {
       extras.dataValidations = dataValidationRules(in: xml)
     }

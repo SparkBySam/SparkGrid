@@ -25,10 +25,11 @@ struct LinkSheet: View {
     existing = link
     let cell = viewModel.activeSheet.cell(at: viewModel.selectionAnchor).raw
     _text = State(initialValue: FormulaSyntax.isFormula(cell) ? "" : cell)
-    if let location = link?.location {
+    // A jump saved as an outside address starting with # (`#'Orders'!A1`) is a place too.
+    if let location = link?.place {
       _mode = State(initialValue: .place)
       _place = State(initialValue: location)
-    } else if let target = link?.target {
+    } else if let target = link?.outsideTarget {
       _address = State(
         initialValue: target.hasPrefix("mailto:") ? String(target.dropFirst(7)) : target)
     }

@@ -154,7 +154,8 @@ extension SpreadsheetViewModel {
 
   /// Writes the grid from `selectionAnchor` as typed text, one undo step.
   private func pasteText(_ grid: [[String]], actionName: String) {
-    pasteGrid(grid, at: selectionAnchor, adjustFormulas: false, actionName: actionName)
+    pasteGrid(
+      grid, at: selectionAnchor, adjustFormulas: false, actionName: actionName, readsAsTyped: true)
     syncEditTextFromSelection()
   }
 }

@@ -120,7 +120,8 @@ extension SpreadsheetViewModel {
     alert.informativeText = "The cells you are moving onto have contents. Moving replaces them."
     alert.addButton(withTitle: "Replace")
     alert.addButton(withTitle: "Cancel")
-    if let window = NSApp.keyWindow {
+    // The workbook's window, also when another app is in front.
+    if let window = NSApp.keyWindow ?? NSApp.mainWindow {
       alert.beginSheetModal(for: window) { answer($0 == .alertFirstButtonReturn) }
     } else {
       answer(alert.runModal() == .alertFirstButtonReturn)

@@ -14,7 +14,7 @@ struct SpreadsheetFileCommands: Commands {
       Button("New Spreadsheet") {
         WorkbookWindows.shared.newWindow(.blank)
       }
-      .keyboardShortcut("n", modifiers: .command)
+      .hotkey(.newWorkbook, settings)
 
       Button("New from Template…") {
         if let store, !store.showsStartScreen, store.fileURL == nil, store.importedName == nil,
@@ -26,7 +26,7 @@ struct SpreadsheetFileCommands: Commands {
           WorkbookWindows.shared.newWindow(.startScreen)
         }
       }
-      .keyboardShortcut("n", modifiers: [.command, .shift])
+      .hotkey(.newFromTemplate, settings)
       .disabled(store?.showsStartScreen == true)
     }
 
@@ -34,7 +34,7 @@ struct SpreadsheetFileCommands: Commands {
       Button("Open…") {
         SpreadsheetOpenPanel.run(preferring: store)
       }
-      .keyboardShortcut("o", modifiers: .command)
+      .hotkey(.open, settings)
 
       Button("Save") {
         _ = store?.saveInteractively()
@@ -49,8 +49,18 @@ struct SpreadsheetFileCommands: Commands {
       Button("Save As…") {
         if let store { saveAsPanel(store) }
       }
-      .keyboardShortcut("s", modifiers: [.command, .shift])
+      .hotkey(.saveAs, settings)
       .disabled(store == nil)
+
+      Button("Browse Versions…") {
+        guard let store else { return }
+        SparkDialogPresenter.present(
+          title: "Versions", width: 420, in: WorkbookWindows.shared.window(of: store)
+        ) { close in
+          VersionsSheet(store: store, onDismiss: close)
+        }
+      }
+      .disabled(store?.fileURL == nil)
 
       Divider()
 
@@ -67,22 +77,34 @@ struct SpreadsheetFileCommands: Commands {
 
   private func saveAsPanel(_ store: SpreadsheetDocumentStore) {
     let panel = NSSavePanel()
-    panel.allowedContentTypes = [.spreadsheetML, .commaSeparatedText]
+    // Tab-separated text and a web page joined in 1.7 (Sam, Nov 20: "more save as formats").
+    panel.allowedContentTypes = [
+      .spreadsheetML, .openDocumentSpreadsheet, .commaSeparatedText, .tabSeparatedText, .html,
+    ]
+    panel.message =
+      "Excel Workbook (.xlsx) and OpenDocument (.ods) keep all sheets. CSV and tab-separated text "
+      + "keep the active sheet. A web page (.html) shows every sheet as it looks; the window "
+      + "keeps its own file."
     let baseName =
       store.fileURL?.deletingPathExtension().lastPathComponent
       ?? store.document.workbook.activeSheet.name
-    // A CSV stays a CSV unless the person picks .xlsx (a Reddit note, Nov 19); everything else
-    // defaults to .xlsx so formatting, rules and filters survive.
-    let keepsCSV = store.fileURL?.pathExtension.lowercased() == "csv"
-    panel.nameFieldStringValue = "\(baseName).\(keepsCSV ? "csv" : "xlsx")"
+    // A CSV stays a CSV and an .ods an .ods unless the person picks another type (a Reddit
+    // note, Nov 19); everything else defaults to .xlsx so formatting, rules and filters survive.
+    let currentExtension = store.fileURL?.pathExtension.lowercased()
+    let keepsCSV = currentExtension == "csv"
+    let keepsODS = currentExtension == "ods"
+    panel.nameFieldStringValue = "\(baseName).\(keepsCSV ? "csv" : keepsODS ? "ods" : "xlsx")"
     panel.canCreateDirectories = true
     panel.isExtensionHidden = false
     if #available(macOS 15.0, *) {
-      panel.currentContentType = keepsCSV ? .commaSeparatedText : .spreadsheetML
+      // A Format menu with .xlsx, .ods and CSV, so the choice shows (1.7).
+      panel.showsContentTypes = true
+      panel.currentContentType =
+        keepsCSV ? .commaSeparatedText : keepsODS ? .openDocumentSpreadsheet : .spreadsheetML
     }
     guard panel.runModal() == .OK, let url = panel.url else { return }
     let destination = normalizedSaveURL(url, panel: panel)
-    if destination.pathExtension.lowercased() != "xlsx",
+    if SpreadsheetDocumentStore.keepsOneSheet(destination),
       store.hasMultipleSheets,
       !confirmCSVOnly(store)
     {
@@ -108,6 +130,11 @@ struct SpreadsheetFileCommands: Commands {
       if destination.pathExtension.lowercased() != "xlsx" {
         destination = destination.deletingPathExtension().appendingPathExtension("xlsx")
       }
+    } else if #available(macOS 15.0, *),
+      panel.currentContentType?.identifier == UTType.openDocumentSpreadsheet.identifier,
+      destination.pathExtension.lowercased() != "ods"
+    {
+      destination = destination.deletingPathExtension().appendingPathExtension("ods")
     } else if destination.pathExtension.lowercased().isEmpty {
       destination = destination.appendingPathExtension("xlsx")
     }

@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Spark Grid changelog — 1.5 is out</title>
-  <meta name="description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
+  <title>Spark Grid changelog — 1.6 is out</title>
+  <meta name="description" content="Spark Grid 1.6 is out on the Mac App Store. Connect an AI assistant on your Mac, click cells into formulas, drag to move cells, and open .ods files." />
   <link rel="canonical" href="https://sparkgridapp.com/changelog" />
-  <meta property="og:title" content="Spark Grid changelog — 1.5 is out" />
-  <meta property="og:description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
+  <meta property="og:title" content="Spark Grid changelog — 1.6 is out" />
+  <meta property="og:description" content="Spark Grid 1.6 is out on the Mac App Store. Connect an AI assistant on your Mac, click cells into formulas, drag to move cells, and open .ods files." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Spark Grid" />
   <meta property="og:locale" content="en_US" />
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Spark Grid changelog — 1.5 is out" />
-  <meta name="twitter:description" content="Spark Grid 1.5 is out on the Mac App Store. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript." />
+  <meta name="twitter:title" content="Spark Grid changelog — 1.6 is out" />
+  <meta name="twitter:description" content="Spark Grid 1.6 is out on the Mac App Store. Connect an AI assistant on your Mac, click cells into formulas, drag to move cells, and open .ods files." />
   <meta name="twitter:image" content="https://sparkgridapp.com/images/og.jpg" />
   <meta name="twitter:image:alt" content="Spark Grid on the Mac, showing a pipeline workbook." />
   <link rel="icon" type="image/png" href="/favicon.png" />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/changelog">What’s in 1.5</a>
+      <a href="/changelog">What’s in 1.6</a>
       <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Legal</a>
@@ -44,10 +44,46 @@
   <article class="page">
     <h1>Changelog</h1>
     <p class="pitch">Spreadsheets. No account.</p>
-    <p>Spark Grid 1.5 is out on the Mac App Store. November 19, 2026.</p>
-    <p>A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript, and answers that match Excel in hundreds more cases.</p>
+    <p>Spark Grid 1.6 is out on the Mac App Store. November 23, 2026.</p>
+    <p>Connect an AI assistant on your Mac to your workbooks, click cells into a formula, drag cells to move them, open .ods files, and formulas that match Excel in more places.</p>
 
-    <h2>What’s new in 1.5</h2>
+    <h2>What’s new in 1.6</h2>
+    <ul>
+      <li>AI assistants on your Mac that support MCP, such as Claude Desktop, Cursor, and Claude Code, can read and change your open workbooks, with your permission. Settings &gt; AI shows how to connect one. The connection runs on your Mac; Spark Grid itself still doesn’t use the network.</li>
+      <li>While typing a formula, click or drag over cells to put them in it, on this sheet or another one.</li>
+      <li>Drag the edge of a selection to move cells. Formulas that use them follow.</li>
+      <li>Edit &gt; Go To (⌃G) jumps to any cell, range, or name. Edit &gt; Select Blank Cells selects the empty cells in a range.</li>
+      <li>Find and Replace can use regular expressions, with $1 groups in the replacement.</li>
+      <li>Open .ods spreadsheets: values, text, dates, times, formulas with their results, and merged cells.</li>
+      <li>Every font on your Mac in the font menu, and Format &gt; Add Fonts for font files of your own.</li>
+      <li>Error bars on bar and line charts, saved so Excel shows them. Copy or save a chart as an image. A simpler Series list when making a chart, and markers on line charts.</li>
+      <li>Ten more functions: SEM, MEAN, MEAN.ARITH, MEAN.GEOM, MEAN.HARM, ISREF, ISFORMULA, CELL, PERCENTILE.EXC, and QUARTILE.EXC. SEM and the MEAN functions are saved as formulas every spreadsheet app calculates.</li>
+      <li>Help &gt; Spark Grid Help, a guide that works without the internet.</li>
+    </ul>
+
+    <h2>Improved in 1.6</h2>
+    <ul>
+      <li>Ranges such as B1:INDEX(B:B,COUNTA(B:B)) and INDIRECT("B1"):INDIRECT("B3") work, and a space between two ranges gives the cells they share, as in Excel.</li>
+      <li>A formula typed into a plain cell gets the format Excel gives it: =DATE(2026,3,1) shows a date, and =PMT(…) shows money.</li>
+      <li>Formulas from a file show newer functions as you’d type them, without the _xlfn. prefix Excel stores them with.</li>
+      <li>A cell using a function Spark Grid doesn’t have yet shows the result saved in the file instead of #NAME?, and saving keeps the formula for the app that wrote it.</li>
+      <li>Moving and replacing large blocks of cells is quicker.</li>
+    </ul>
+
+    <h2>Fixed in 1.6</h2>
+    <ul>
+      <li>Scrolling follows your Mac’s trackpad and mouse setting. Settings &gt; General &gt; Reverse scroll direction turns it around for the grid, and a mouse wheel scrolls at a normal speed.</li>
+      <li>Text that looks like a number stays text: ZIP codes such as 02134 keep their zero, and long IDs stay whole.</li>
+      <li>Picking a function from the suggestions adds its opening bracket.</li>
+      <li>Row numbers above 9,999 show in full.</li>
+      <li>Saved files keep their formula results after sorting or undoing a paste.</li>
+      <li>Save As keeps a CSV file as CSV, and typing right after Go To goes into the cell.</li>
+    </ul>
+
+    <h2>1.5</h2>
+    <p>November 19, 2026. A start screen with templates, Numbers documents, a window for each workbook, Share, Shortcuts and AppleScript, and answers that match Excel in hundreds more cases.</p>
+
+    <h3>What’s new in 1.5</h3>
     <ul>
       <li>A start screen with ten templates (budget, invoice, loan calculator, timesheet and more) and your recent files. File &gt; New from Template (⇧⌘N) shows it over an open workbook.</li>
       <li>Open Numbers documents, with their formulas, formats, merged cells, borders, and frozen headers. Saving writes a new .xlsx and leaves the Numbers file alone.</li>
@@ -61,7 +97,7 @@
       <li>Formulas such as =SUM(LEN(A1:A8)) and =MAX(IF(B1:B8&lt;50,B1:B8)) work through the range, as in Excel.</li>
     </ul>
 
-    <h2>Improved in 1.5</h2>
+    <h3>Improved in 1.5</h3>
     <ul>
       <li>Typing 10:30, $1,234.50, 1,234, or (5) stores a time, money, a grouped number, or a negative number, as Excel does.</li>
       <li>TEXT and number formats match Excel in every case checked, 480 of them, including dates before March 1900.</li>
@@ -72,7 +108,7 @@
       <li>When Excel or another app removes something Spark Grid keeps in a file, Spark Grid says what was removed.</li>
     </ul>
 
-    <h2>Fixed in 1.5</h2>
+    <h3>Fixed in 1.5</h3>
     <ul>
       <li>A window made narrower no longer pushes the grid off to the right.</li>
       <li>A change on one sheet followed at once by a change on another no longer loses the first.</li>
@@ -274,7 +310,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/changelog">What’s in 1.5</a>
+      <a href="/changelog">What’s in 1.6</a>
       <a href="/privacy">Privacy</a>
       <a href="/legal">Terms &amp; licenses</a>
       <a href="/support">Support</a>

@@ -411,6 +411,26 @@ private nonisolated final class EvaluationContext {
       })
       return owner.map { FormulaSyntax.isFormula($0.cell(at: address).raw) } ?? false
     }
+    evaluator.formulaText = { [self] sheet, address in
+      let owner = self.workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheet) == .orderedSame
+      })
+      guard let raw = owner?.cell(at: address).raw, FormulaSyntax.isFormula(raw) else {
+        return nil
+      }
+      return raw
+    }
+    evaluator.rowHidden = { [self] sheet, row in
+      self.workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheet) == .orderedSame
+      })?.isRowHidden(row) ?? false
+    }
+    evaluator.rowFiltered = { [self] sheet, row in
+      self.workbook.sheets.first(where: {
+        $0.name.caseInsensitiveCompare(sheet) == .orderedSame
+      })?.isRowFiltered(row) ?? false
+    }
+    evaluator.sheetNames = { [self] in self.workbook.sheets.map(\.name) }
     evaluator.sheetExtent = { [self] sheetName in
       self.extent(for: sheetName)
     }
@@ -458,7 +478,8 @@ private nonisolated final class EvaluationContext {
   }
 
   func namedRangeExpr(named name: String) -> FormulaExpr? {
-    guard let named = workbook.namedRange(named: name), named.resolvesToRange else { return nil }
+    guard let named = workbook.namedRange(named: name) else { return nil }
+    guard named.resolvesToRange else { return NamedFormulas.expression(for: named) }
     let start = FormulaRef(
       sheet: named.sheetName,
       row: named.startRow,

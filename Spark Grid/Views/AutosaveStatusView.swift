@@ -15,24 +15,39 @@ struct AutosaveStatusView: View {
     .buttonStyle(.plain)
     .help(helpText)
     .popover(isPresented: $showSettings, arrowEdge: .bottom) {
-      VStack(alignment: .leading, spacing: 12) {
+      // The app's own look, as Settings › General › Saving, not system controls (Sam, Nov 20).
+      VStack(alignment: .leading, spacing: 10) {
         Text("Autosave")
-          .font(.headline)
-        Toggle("Enable autosave", isOn: $settings.autosaveEnabled)
-        if settings.autosaveEnabled {
-          Picker("Save interval", selection: $settings.autosaveIntervalSeconds) {
-            ForEach(AppSettings.autosaveIntervalOptions, id: \.self) { seconds in
-              Text(AppSettings.label(forInterval: seconds)).tag(seconds)
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(SparkStyle.label)
+        SparkDialogGroup {
+          SparkDialogRow(label: "Save automatically") {
+            Toggle("", isOn: $settings.autosaveEnabled)
+              .labelsHidden()
+              .toggleStyle(.switch)
+              .controlSize(.small)
+              .tint(SparkStyle.accent)
+          }
+          SparkDialogDivider()
+          SparkDialogRow(label: "How often") {
+            Picker("How often", selection: $settings.autosaveIntervalSeconds) {
+              ForEach(AppSettings.autosaveIntervalOptions, id: \.self) { seconds in
+                Text(AppSettings.label(forInterval: seconds)).tag(seconds)
+              }
             }
+            .labelsHidden()
+            .fixedSize()
+            .disabled(!settings.autosaveEnabled)
           }
         }
         Text(helpText)
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          .font(.system(size: 11))
+          .foregroundStyle(SparkStyle.secondaryLabel)
           .fixedSize(horizontal: false, vertical: true)
       }
       .padding(14)
-      .frame(width: 260)
+      .frame(width: 300)
+      .background(SparkStyle.window)
     }
   }
 

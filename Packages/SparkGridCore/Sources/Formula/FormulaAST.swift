@@ -59,6 +59,9 @@ public nonisolated indirect enum FormulaExpr: Equatable, Hashable {
   public static let rangeOperatorFunction = "SG.RANGE"
   /// `X Y`, two references with a space between: the cells they share.
   public static let intersectionFunction = "SG.INTERSECT"
+  /// `LAMBDA(x,x*3)(7)`, a LAMBDA given its values where it is written: the LAMBDA, then the
+  /// values.
+  public static let lambdaCallFunction = "SG.CALL"
 
   case number(Double)
   case string(String)

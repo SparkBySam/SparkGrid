@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>What works in Spark Grid — .xlsx, CSV, formulas, and charts</title>
-  <meta name="description" content="What Spark Grid 1.5 does with your .xlsx and CSV files: what opens and saves, which formulas calculate, what formatting comes through, and what is not there yet." />
+  <meta name="description" content="What Spark Grid 1.6 does with your .xlsx and CSV files: what opens and saves, which formulas calculate, what formatting comes through, and what is not there yet." />
   <link rel="canonical" href="https://sparkgridapp.com/what-works" />
   <meta property="og:title" content="What works in Spark Grid" />
   <meta property="og:description" content="What opens, what calculates, what comes through, and what is not there yet. Spark Grid 1.1 for Mac." />
@@ -35,7 +35,7 @@
     <a class="mark" href="/"><img src="/images/logo.png" width="28" height="28" alt="" /><span>Spark Grid</span></a>
     <nav>
       <a href="/">Home</a>
-      <a href="/changelog">What’s in 1.5</a>
+      <a href="/changelog">What’s in 1.6</a>
       <a href="/changelog">Changelog</a>
       <a href="/support">Support</a>
       <a href="/press">Press</a>
@@ -43,7 +43,7 @@
   </header>
   <article class="page">
     <h1>What works</h1>
-    <p>Last updated: November 19, 2026 · Spark Grid 1.5</p>
+    <p>Last updated: November 24, 2026 · Spark Grid 1.6</p>
     <p class="pitch">
       You have a workbook already. Here is what Spark Grid does with it, and what it doesn’t do yet.
     </p>
@@ -55,7 +55,7 @@
 
     <h2>Files</h2>
     <ul>
-      <li><strong>.xlsx</strong> opens and saves. So does <strong>CSV</strong>.</li>
+      <li><strong>.xlsx</strong> opens and saves. So does <strong>CSV</strong>. <strong>.ods</strong> spreadsheets open, with their values, formulas and results, dates, and merged cells.</li>
       <li><strong>Numbers documents</strong> open, with formulas, formats, merged cells, borders, and frozen headers. Save writes a new .xlsx and leaves the Numbers file alone.</li>
       <li>A start screen with ten templates and your recent files. Each workbook opens in its own window.</li>
       <li>File &gt; Share sends the workbook, unsaved changes included. Shortcuts actions open a workbook, read or set a cell, and export a PDF or CSV. AppleScript can open, read, write, save, and export.</li>
@@ -69,12 +69,12 @@
     </ul>
 
     <h2>Formulas</h2>
-    <p>A formula cell shows its result. The formula stays in the formula bar. These 259 functions calculate:</p>
+    <p>A formula cell shows its result. The formula stays in the formula bar. These 269 functions calculate:</p>
     <ul>
       <li><strong>Math:</strong> ABS, ROUND, ROUNDDOWN, ROUNDUP, SUM, SUMPRODUCT, SUMSQ, PRODUCT, INT, TRUNC, MROUND, MOD, QUOTIENT, SIGN, SQRT, SQRTPI, PI, POWER, EXP, LN, LOG, LOG10, FACT, GCD, LCM, EVEN, ODD, CEILING, CEILING.MATH, FLOOR, FLOOR.MATH, COMBIN, RAND, RANDBETWEEN, SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, SINH, COSH, TANH, ASINH, ACOSH, ATANH, DEGREES, RADIANS</li>
       <li><strong>Conditional totals:</strong> SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS, MAXIFS, MINIFS. Criteria can use wildcards.</li>
-      <li><strong>Statistics:</strong> AVERAGE, AVERAGEA, COUNT, COUNTA, COUNTBLANK, COUNTUNIQUE, MIN, MINA, MAX, MAXA, MEDIAN, MODE, MODE.SNGL, LARGE, SMALL, RANK, RANK.EQ, RANK.AVG, PERCENTRANK, PERCENTRANK.INC, PERCENTRANK.EXC, PERCENTILE, PERCENTILE.INC, QUARTILE, QUARTILE.INC, STDEV, STDEV.S, STDEV.P, STDEVP, STDEVA, STDEVPA, VAR, VAR.S, VAR.P, VARP, VARA, VARPA, GEOMEAN, HARMEAN, DEVSQ, AVEDEV, SKEW, SKEW.P, KURT, TRIMMEAN, STANDARDIZE, FISHER, FISHERINV, CORREL, PEARSON, RSQ, COVARIANCE.S, COVARIANCE.P, COVAR, SLOPE, INTERCEPT, FORECAST, FORECAST.LINEAR, PERMUT, NORM.DIST, NORMDIST, NORM.S.DIST, NORMSDIST, NORM.INV, NORMINV, NORM.S.INV, NORMSINV</li>
-      <li><strong>Logic and information:</strong> IF, IFS, IFERROR, IFNA, LET, AND, OR, NOT, XOR, SWITCH, TRUE, FALSE, NA, ISBLANK, ISNUMBER, ISTEXT, ISNONTEXT, ISLOGICAL, ISERROR, ISERR, ISNA, ISEVEN, ISODD, N, TYPE, ERROR.TYPE</li>
+      <li><strong>Statistics:</strong> AVERAGE, AVERAGEA, COUNT, COUNTA, COUNTBLANK, COUNTUNIQUE, MIN, MINA, MAX, MAXA, MEDIAN, MODE, MODE.SNGL, LARGE, SMALL, RANK, RANK.EQ, RANK.AVG, PERCENTRANK, PERCENTRANK.INC, PERCENTRANK.EXC, PERCENTILE, PERCENTILE.INC, PERCENTILE.EXC, QUARTILE, QUARTILE.INC, QUARTILE.EXC, SEM, MEAN, MEAN.ARITH, MEAN.GEOM, MEAN.HARM, STDEV, STDEV.S, STDEV.P, STDEVP, STDEVA, STDEVPA, VAR, VAR.S, VAR.P, VARP, VARA, VARPA, GEOMEAN, HARMEAN, DEVSQ, AVEDEV, SKEW, SKEW.P, KURT, TRIMMEAN, STANDARDIZE, FISHER, FISHERINV, CORREL, PEARSON, RSQ, COVARIANCE.S, COVARIANCE.P, COVAR, SLOPE, INTERCEPT, FORECAST, FORECAST.LINEAR, PERMUT, NORM.DIST, NORMDIST, NORM.S.DIST, NORMSDIST, NORM.INV, NORMINV, NORM.S.INV, NORMSINV</li>
+      <li><strong>Logic and information:</strong> IF, IFS, IFERROR, IFNA, LET, AND, OR, NOT, XOR, SWITCH, TRUE, FALSE, NA, ISBLANK, ISNUMBER, ISTEXT, ISNONTEXT, ISLOGICAL, ISERROR, ISERR, ISNA, ISEVEN, ISODD, ISREF, ISFORMULA, CELL, N, TYPE, ERROR.TYPE</li>
       <li><strong>Lookup and references:</strong> XLOOKUP, VLOOKUP, HLOOKUP, LOOKUP, INDEX, MATCH, XMATCH, INDIRECT, OFFSET, ADDRESS, CHOOSE, ROW, ROWS, COLUMN, COLUMNS, HYPERLINK, GETPIVOTDATA</li>
       <li><strong>Spilling results:</strong> FILTER, SORT, SORTBY, UNIQUE, SEQUENCE, RANDARRAY, TRANSPOSE, VSTACK, HSTACK, TAKE, DROP, CHOOSECOLS, CHOOSEROWS, WRAPROWS, WRAPCOLS, TOCOL, TOROW, TEXTSPLIT. Results fill the cells below and beside the formula; =SUM(C1#) uses all of them. A range, or a function given one, typed on its own spills too: =A1:A10, =LEN(A1:A10). Lists typed in a formula work: {1,2;3,4}.</li>
       <li><strong>Text:</strong> CONCAT, CONCATENATE, TEXTJOIN, TEXT, VALUE, NUMBERVALUE, LEFT, RIGHT, MID, LEN, TRIM, CLEAN, UPPER, LOWER, PROPER, SUBSTITUTE, REPLACE, FIND, SEARCH, EXACT, REPT, CHAR, CODE, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, FIXED, DOLLAR, T</li>
@@ -86,7 +86,7 @@
 
     <h2>Formatting</h2>
     <ul>
-      <li>Fonts, colors, borders, and alignment.</li>
+      <li>Fonts, colors, borders, and alignment. Every font on your Mac, and Format &gt; Add Fonts for your own.</li>
       <li>Number formats keep the file’s format code: thousands separators, the currency symbol, and the date and time pattern.</li>
       <li>Conditional formatting: highlights, color scales, data bars, and three icon sets.</li>
       <li>Formatting comes back the same when you save and reopen, including in files with conditional formatting.</li>
@@ -107,11 +107,13 @@
       <li>Hide and unhide rows, columns, and sheets.</li>
       <li>The name box takes an address or a defined name. F2 edits the selected cell.</li>
       <li>Copy, cut, and delete skip rows a filter hides, as in Excel.</li>
-      <li>Find and replace on the current sheet.</li>
+      <li>Find and replace on the current sheet, with regular expressions if you like. Edit &gt; Go To (⌃G) and Edit &gt; Select Blank Cells.</li>
+      <li>Click or drag over cells while typing a formula to put them in it, on any sheet. Drag a selection’s edge to move cells; formulas that use them follow.</li>
+      <li>AI assistants on your Mac that support MCP can read and change your open workbooks, with your permission. Settings &gt; AI shows how to connect one.</li>
       <li>⌘-arrow jumps to the edge of your data. Add Shift to select as you go.</li>
       <li>⌘-click or ⌘-drag removes cells, rows, or columns from a selection.</li>
       <li>Pictures you can move and resize.</li>
-      <li>Bar, column, line, area, pie, and scatter charts on the sheet, with more than one series, series and point colors, title, legend, axis titles, and gridlines.</li>
+      <li>Bar, column, line, area, pie, and scatter charts on the sheet, with more than one series, series and point colors, title, legend, axis titles, gridlines, and error bars. Copy or save a chart as a picture.</li>
       <li>Charts saved in your files show on the sheet and update as you edit their cells. Move, resize, and edit any chart; the Charts panel lists them all.</li>
       <li>Find Duplicates: pick the columns that must match, then highlight or remove repeated rows.</li>
       <li>Tables with a styled header and banded rows, made from Insert &gt; Table or kept from your files.</li>
@@ -160,7 +162,7 @@
   <footer>
     <div>
       <span>© 2026 Sam Parker</span>
-      <a href="/changelog">What’s in 1.5</a>
+      <a href="/changelog">What’s in 1.6</a>
       <a href="/what-works">What works</a>
       <a href="/changelog">Changelog</a>
       <a href="/press">Press kit</a>

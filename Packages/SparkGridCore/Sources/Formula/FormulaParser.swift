@@ -141,6 +141,23 @@ public nonisolated struct FormulaParser {
     return left
   }
 
+  /// A LAMBDA, or a LAMBDA already called that gives one (`LAMBDA(x,LAMBDA(y,x+y))(1)`).
+  public static func isLambda(_ expr: FormulaExpr) -> Bool {
+    switch expr {
+    case .call(let name, let args):
+      let upper = name.uppercased()
+      if upper == "LAMBDA" || upper.hasSuffix(".LAMBDA") { return true }
+      if name == FormulaExpr.lambdaCallFunction, let inner = args.first,
+        case .call(_, let innerArgs) = inner, let body = innerArgs.last
+      {
+        return isLambda(body)
+      }
+      return false
+    default:
+      return false
+    }
+  }
+
   static func isReferenceLike(_ expr: FormulaExpr) -> Bool {
     switch expr {
     case .cellRef, .range, .namedRange: return true
@@ -213,7 +230,27 @@ public nonisolated struct FormulaParser {
           } while current == .comma
         }
         try expect(.rParen, named: ")")
-        return .call(name, args)
+        var call = FormulaExpr.call(name, args)
+        // `LAMBDA(x,x*3)(7)`: values right after a LAMBDA call it there and then.
+        while current == .lParen, Self.isLambda(call) {
+          try advance()
+          var values: [FormulaExpr] = [call]
+          if current != .rParen {
+            var first = true
+            repeat {
+              if !first { try advance() }
+              first = false
+              if current == .comma || current == .rParen {
+                values.append(.missing)
+              } else {
+                values.append(try parseExpression())
+              }
+            } while current == .comma
+          }
+          try expect(.rParen, named: ")")
+          call = .call(FormulaExpr.lambdaCallFunction, values)
+        }
+        return call
       }
       return .namedRange(name)
     case .lParen:

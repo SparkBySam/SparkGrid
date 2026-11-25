@@ -61,6 +61,27 @@ struct ConditionalFormattingSheet: View {
     case dataBars = "Data Bars"
     case iconSets = "Icon Sets"
     var id: String { rawValue }
+
+    /// Behind the "i" beside the Type picker.
+    var explanation: String {
+      switch self {
+      case .highlightCells:
+        return "Colors cells whose value passes a test: greater than, between, equal to, text that "
+          + "contains something, dates, duplicates and so on."
+      case .formula:
+        return "Colors cells where a formula is TRUE. Write it for the top-left cell, such as "
+          + "=$C2>1000 to color whole rows; it moves along the range as other formulas do."
+      case .colorScale:
+        return "Shades every cell from one color to another by its value, lowest to highest, to "
+          + "show highs and lows at a glance."
+      case .dataBars:
+        return "Draws a bar in each cell, as long as its value is large, like a bar chart in "
+          + "the cells."
+      case .iconSets:
+        return "Puts an arrow, light or other symbol in each cell for the top, middle and "
+          + "bottom of the values."
+      }
+    }
   }
 
   enum HighlightKind: String, CaseIterable, Identifiable {
@@ -274,10 +295,13 @@ struct ConditionalFormattingSheet: View {
 
   private var newRulePane: some View {
     Form {
-      Picker("Type", selection: $ruleType) {
-        ForEach(RuleType.allCases) { type in
-          Text(type.rawValue).tag(type)
+      HStack(spacing: 6) {
+        Picker("Type", selection: $ruleType) {
+          ForEach(RuleType.allCases) { type in
+            Text(type.rawValue).tag(type)
+          }
         }
+        SparkInfoButton(title: ruleType.rawValue, text: ruleType.explanation)
       }
 
       switch ruleType {

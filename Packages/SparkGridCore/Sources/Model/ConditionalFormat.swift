@@ -458,7 +458,8 @@ public nonisolated enum ConditionalFormatEvaluator {
     displayString: String,
     numberFormat: CellFormat.NumberFormat?,
     numericValuesInRange: (CellRange) -> [Double],
-    evaluateFormula: (String, CellAddress, CellAddress) -> CellValue
+    evaluateFormula: (String, CellAddress, CellAddress) -> CellValue,
+    readableText: Bool = true
   ) -> ConditionalPaint {
     guard !rules.isEmpty else {
       return ConditionalPaint(format: base)
@@ -487,7 +488,9 @@ public nonisolated enum ConditionalFormatEvaluator {
           )
         else { continue }
         result.fillColor = fill
-        applyContrastingText(to: &result, fill: fill, ruleTextColor: rule.style.textColor)
+        if readableText {
+          applyContrastingText(to: &result, fill: fill, ruleTextColor: rule.style.textColor)
+        }
         paint.format = result.isDefault ? nil : result
         applied = true
         if rule.stopIfTrue { break ruleList }
@@ -537,7 +540,7 @@ public nonisolated enum ConditionalFormatEvaluator {
 
         let ruleTextColor = rule.style.textColor
         result = rule.style.applying(to: result)
-        if let fill = rule.style.fillColor {
+        if readableText, let fill = rule.style.fillColor {
           applyContrastingText(to: &result, fill: fill, ruleTextColor: ruleTextColor)
         }
         paint.format = result.isDefault ? nil : result
@@ -576,7 +579,8 @@ public nonisolated enum ConditionalFormatEvaluator {
     displayString: String,
     numberFormat: CellFormat.NumberFormat?,
     numericValuesInRange: (CellRange) -> [Double],
-    evaluateFormula: (String, CellAddress, CellAddress) -> CellValue
+    evaluateFormula: (String, CellAddress, CellAddress) -> CellValue,
+    readableText: Bool = true
   ) -> CellFormat? {
     resolvedPaint(
       at: address,
@@ -586,7 +590,8 @@ public nonisolated enum ConditionalFormatEvaluator {
       displayString: displayString,
       numberFormat: numberFormat,
       numericValuesInRange: numericValuesInRange,
-      evaluateFormula: evaluateFormula
+      evaluateFormula: evaluateFormula,
+      readableText: readableText
     ).format
   }
 

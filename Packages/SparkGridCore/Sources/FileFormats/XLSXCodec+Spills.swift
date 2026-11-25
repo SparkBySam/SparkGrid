@@ -11,7 +11,7 @@ extension XLSXCodec {
   static let spillingFunctionNames = [
     "FILTER(", "SORT(", "SORTBY(", "UNIQUE(", "SEQUENCE(", "VSTACK(", "HSTACK(", "TAKE(",
     "DROP(", "CHOOSECOLS(", "CHOOSEROWS(", "WRAPROWS(", "WRAPCOLS(", "TOCOL(", "TOROW(",
-    "TEXTSPLIT(", "RANDARRAY(", "TRANSPOSE(",
+    "TEXTSPLIT(", "RANDARRAY(", "TRANSPOSE(", "REGEXEXTRACT(",
   ]
 
   static func spills(_ raw: String) -> Bool {

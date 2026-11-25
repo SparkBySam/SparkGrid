@@ -23,16 +23,27 @@ struct SpreadsheetCommands: Commands {
     }
 
     CommandGroup(replacing: .pasteboard) {
-      Button("Cut") { viewModel?.cutSelection() }
-        .keyboardShortcut(
-          settings.keyEquivalent(for: .cut), modifiers: settings.eventModifiers(for: .cut)
-        )
-        .disabled(viewModel == nil)
-      Button("Copy") { viewModel?.copySelectionToPasteboard() }
-        .keyboardShortcut(
-          settings.keyEquivalent(for: .copy), modifiers: settings.eventModifiers(for: .copy)
-        )
-        .disabled(viewModel == nil)
+      // Text being typed (a dialog's field, the formula bar, a cell being edited) takes Cut,
+      // Copy and Paste itself, as Select All does; otherwise they act on the cells. Pasting into
+      // Formula Help's question went into the cell (Sam, Nov 20).
+      Button("Cut") {
+        if let text = FocusedText.current { text.cut(nil) } else { viewModel?.cutSelection() }
+      }
+      .keyboardShortcut(
+        settings.keyEquivalent(for: .cut), modifiers: settings.eventModifiers(for: .cut)
+      )
+      .disabled(viewModel == nil)
+      Button("Copy") {
+        if let text = FocusedText.current {
+          text.copy(nil)
+        } else {
+          viewModel?.copySelectionToPasteboard()
+        }
+      }
+      .keyboardShortcut(
+        settings.keyEquivalent(for: .copy), modifiers: settings.eventModifiers(for: .copy)
+      )
+      .disabled(viewModel == nil)
       Button("Paste") { SpreadsheetPaste.perform(on: viewModel) }
         .keyboardShortcut(
           settings.keyEquivalent(for: .paste), modifiers: settings.eventModifiers(for: .paste)
@@ -82,6 +93,7 @@ struct SpreadsheetCommands: Commands {
         Button("Clear All") { viewModel?.clearAll() }
         Button("Clear Contents") { viewModel?.clearContents() }
         Button("Clear Formats") { viewModel?.clearFormats() }
+          .hotkey(.clearFormats, settings)
       }
       .disabled(viewModel == nil)
 
@@ -103,29 +115,29 @@ struct SpreadsheetCommands: Commands {
           viewModel?.selectAll()
         }
       }
-      .keyboardShortcut("a", modifiers: .command)
+      .hotkey(.selectAll, settings)
       .disabled(viewModel == nil)
 
       Divider()
 
       Button("Find…") { viewModel?.toggleFindBar(replace: false) }
-        .keyboardShortcut("f", modifiers: .command)
+        .hotkey(.find, settings)
         .disabled(viewModel == nil)
       Button("Find and Replace…") { viewModel?.toggleFindBar(replace: true) }
-        .keyboardShortcut("f", modifiers: [.command, .option])
+        .hotkey(.findAndReplace, settings)
         .disabled(viewModel == nil)
       Button("Find Next") { viewModel?.findNext() }
-        .keyboardShortcut("g", modifiers: .command)
+        .hotkey(.findNext, settings)
         .disabled(viewModel == nil)
       Button("Find Previous") { viewModel?.findPrevious() }
-        .keyboardShortcut("g", modifiers: [.command, .shift])
+        .hotkey(.findPrevious, settings)
         .disabled(viewModel == nil)
 
       Divider()
 
       // Type a cell (U37), a range, Sheet2!A1 or a name in the name box and press Return.
       Button("Go To…") { viewModel?.nameBoxFocusRequests += 1 }
-        .keyboardShortcut("g", modifiers: .control)
+        .hotkey(.goTo, settings)
         .disabled(viewModel == nil)
       Button("Select Blank Cells") { viewModel?.selectBlankCells() }
         .disabled(viewModel == nil)

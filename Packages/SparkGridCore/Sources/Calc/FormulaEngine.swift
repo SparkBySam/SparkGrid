@@ -61,6 +61,13 @@ public final class FormulaEngine {
   private var freshFormulaValues: [String: [CellAddress: CellValue]] = [:]
   /// A structural rebuild replaced formulas. Imported caches from before that rebuild are stale.
   private var formulaCachesNeedRecalculation = false
+  /// Changes each time the workbook's formulas or values change; a background calculation of
+  /// stale results is kept only when it has not moved since the calculation began.
+  private var staleResultsGeneration = 0
+  /// True while a background calculation of stale results is waiting or running.
+  public private(set) var isCalculatingStaleResults = false
+  /// More formulas than a save calculates itself; counted once per structural step.
+  private var staleResultsNeedBackground = false
   /// The open sheet is on screen while the rest of the file is still being read.
   private var awaitingRemainder = false
 
@@ -301,6 +308,7 @@ public final class FormulaEngine {
     evaluator.holdsFormula = { [weak self] name, address in
       self?.holdsFormula(on: name, at: address, current: sheet) ?? false
     }
+    wireSheetQueries(&evaluator, current: sheet)
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -561,6 +569,7 @@ public final class FormulaEngine {
     evaluator.holdsFormula = { [weak self] name, address in
       self?.holdsFormula(on: name, at: address, current: sheet) ?? false
     }
+    wireSheetQueries(&evaluator, current: sheet)
     evaluator.pivotLookup = { [weak self] name, address in
       self?.sparkPivot(on: name, containing: address, current: sheet)
     }
@@ -576,11 +585,14 @@ public final class FormulaEngine {
     return result
   }
 
+  /// `replacing`: a value to read for one cell of `sheet` in place of what it holds, so a
+  /// validation rule can be checked against an entry before it is made.
   public func evaluateConditionalFormula(
     _ raw: String,
     at address: CellAddress,
     relativeTo origin: CellAddress,
-    sheet: Sheet
+    sheet: Sheet,
+    replacing: (address: CellAddress, value: CellValue)? = nil
   ) -> CellValue {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return .blank }
@@ -594,6 +606,11 @@ public final class FormulaEngine {
 
     var evaluator = FormulaEvaluator { [weak self] ref in
       guard let self else { return .blank }
+      if let replacing, ref.row == replacing.address.row, ref.col == replacing.address.col,
+        ref.sheet.map({ $0.caseInsensitiveCompare(sheet.name) == .orderedSame }) ?? true
+      {
+        return replacing.value
+      }
       return self.resolve(
         ref, activeSheet: sheet,
         localEval: { addr in
@@ -617,12 +634,14 @@ public final class FormulaEngine {
     evaluator.holdsFormula = { [weak self] name, address in
       self?.holdsFormula(on: name, at: address, current: sheet) ?? false
     }
+    wireSheetQueries(&evaluator, current: sheet)
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
     }
-    evaluator.aggregateRangeCache = aggregateRangeCache
-    evaluator.lookupTableCache = lookupTableCache
+    // Cached range reads do not know the value standing in for the cell.
+    evaluator.aggregateRangeCache = replacing == nil ? aggregateRangeCache : nil
+    evaluator.lookupTableCache = replacing == nil ? lookupTableCache : nil
     return evaluator.evaluate(expr)
   }
 
@@ -719,6 +738,8 @@ public final class FormulaEngine {
   ) {
     cancelCrossSheetWork()
     formulaCachesNeedRecalculation = !trustImportedCaches
+    staleResultsGeneration &+= 1
+    isCalculatingStaleResults = false
     freshFormulaValues.removeAll(keepingCapacity: true)
     valuesBySheet.removeValue(forKey: sheetKey(activeSheetName))
     if !trustImportedCaches {
@@ -743,6 +764,41 @@ public final class FormulaEngine {
       recalculateAll(sheet: sheet)
     }
     scheduleWorkbookDependencyGraph()
+    if !trustImportedCaches {
+      staleResultsNeedBackground =
+        FormulaCacheWriter.formulaCount(workbook) > FormulaCacheWriter.recalculateOnSaveLimit
+      scheduleStaleResultsCalculation()
+    }
+  }
+
+  /// A sort, a moved block or an Undo of a whole step makes every saved result stale. Up to
+  /// `FormulaCacheWriter.recalculateOnSaveLimit` formulas the save calculates them; above it that
+  /// took 8.7 s on the 115k-formula stress workbook, so the whole workbook is calculated here in
+  /// the background after the step instead, and the next save writes those results (gaps 8,
+  /// Nov 20). Any later edit before it finishes starts it again, two seconds after the edits stop.
+  private func scheduleStaleResultsCalculation() {
+    guard formulaCachesNeedRecalculation, staleResultsNeedBackground else { return }
+    let generation = staleResultsGeneration
+    isCalculatingStaleResults = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+      guard let self, self.staleResultsGeneration == generation,
+        self.formulaCachesNeedRecalculation
+      else { return }
+      let book = self.workbook
+      DispatchQueue.global(qos: .utility).async { [weak self] in
+        let outcome = CrossSheetBackground.calculateAllFormulas(in: book)
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          guard self.staleResultsGeneration == generation, self.formulaCachesNeedRecalculation
+          else { return }
+          var fresh: [String: [CellAddress: CellValue]] = [:]
+          for (key, values) in outcome.valuesBySheet { fresh[key.lowercased()] = values }
+          self.freshFormulaValues = fresh
+          self.formulaCachesNeedRecalculation = false
+          self.isCalculatingStaleResults = false
+        }
+      }
+    }
   }
 
   /// Convenience when only a single sheet is available (e.g. isolated print of one sheet).
@@ -822,6 +878,10 @@ public final class FormulaEngine {
     Set<CellAddress>]
   {
     guard !addresses.isEmpty else { return [:] }
+    if formulaCachesNeedRecalculation {
+      staleResultsGeneration &+= 1
+      scheduleStaleResultsCalculation()
+    }
     // The engine's copy of the sheet takes the edit too. Range reads go through that copy;
     // a range over cells just filled by a spilling formula read them as blank.
     if let index = workbook.sheets.firstIndex(where: {
@@ -1322,6 +1382,40 @@ public final class FormulaEngine {
       ? sheet
       : workbook.sheets.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     return owner.map { FormulaSyntax.isFormula($0.cell(at: address).raw) } ?? false
+  }
+
+  /// FORMULATEXT, SHEET and SHEETS, and the hidden rows SUBTOTAL and AGGREGATE leave out.
+  private func wireSheetQueries(_ evaluator: inout FormulaEvaluator, current sheet: Sheet) {
+    evaluator.formulaText = { [weak self] name, address in
+      guard let self else { return nil }
+      let owner =
+        name.caseInsensitiveCompare(sheet.name) == .orderedSame
+        ? sheet
+        : self.workbook.sheets.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+      guard let raw = owner?.cell(at: address).raw, FormulaSyntax.isFormula(raw) else {
+        return nil
+      }
+      return raw
+    }
+    evaluator.rowHidden = { [weak self] name, row in
+      guard let self else { return false }
+      let owner =
+        name.caseInsensitiveCompare(sheet.name) == .orderedSame
+        ? sheet
+        : self.workbook.sheets.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+      return owner?.isRowHidden(row) ?? false
+    }
+    evaluator.rowFiltered = { [weak self] name, row in
+      guard let self else { return false }
+      let owner =
+        name.caseInsensitiveCompare(sheet.name) == .orderedSame
+        ? sheet
+        : self.workbook.sheets.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+      return owner?.isRowFiltered(row) ?? false
+    }
+    evaluator.sheetNames = { [weak self] in
+      self?.workbook.sheets.map(\.name) ?? [sheet.name]
+    }
   }
 
   private func spillBlocked(on name: String, at address: CellAddress, current sheet: Sheet)
@@ -2141,6 +2235,7 @@ public final class FormulaEngine {
     evaluator.holdsFormula = { [weak self] name, address in
       self?.holdsFormula(on: name, at: address, current: sheet) ?? false
     }
+    wireSheetQueries(&evaluator, current: sheet)
     evaluator.sheetExtent = { [weak self] sheetName in
       guard let self else { return (999, 25) }
       return self.extent(for: sheetName ?? self.activeSheetName)
@@ -2344,6 +2439,7 @@ public final class FormulaEngine {
       evaluator.holdsFormula = { [weak self] name, address in
         self?.holdsFormula(on: name, at: address, current: sheet) ?? false
       }
+      wireSheetQueries(&evaluator, current: sheet)
       evaluator.sheetExtent = { [weak self] sheetName in
         guard let self else { return (999, 25) }
         return self.extent(for: sheetName ?? sheet.name)
@@ -2370,7 +2466,8 @@ public final class FormulaEngine {
   }
 
   private func namedRangeExpr(named name: String) -> FormulaExpr? {
-    guard let named = workbook.namedRange(named: name), named.resolvesToRange else { return nil }
+    guard let named = workbook.namedRange(named: name) else { return nil }
+    guard named.resolvesToRange else { return NamedFormulas.expression(for: named) }
     let start = FormulaRef(
       sheet: named.sheetName,
       row: named.startRow,

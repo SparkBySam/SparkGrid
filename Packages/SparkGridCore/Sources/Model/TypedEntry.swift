@@ -147,3 +147,95 @@ public enum TypedEntry {
 extension Character {
   fileprivate var isASCIIDigit: Bool { isASCII && isNumber }
 }
+
+// MARK: - Short dates and fractions
+
+extension TypedEntry {
+  /// A date typed without its year (`3/4`, `15-Mar`, `Mar 15`, `March 15`) is that day of
+  /// `year`, shown `d-mmm`. A day too large for the month makes the number a year instead:
+  /// `2/30` is February 1930, shown `mmm-yy`. As Excel 16.115 reads them (Nov 20).
+  public static func shortDate(_ text: String, year: Int) -> (serial: Int, formatCode: String)? {
+    let t = text.trimmingCharacters(in: .whitespaces)
+    guard t.count >= 3, t.count <= 14 else { return nil }
+    func date(_ y: Int, _ m: Int, _ d: Int) -> Int? {
+      var components = DateComponents()
+      components.year = y
+      components.month = m
+      components.day = d
+      var calendar = Calendar(identifier: .gregorian)
+      calendar.timeZone = .gmt
+      guard let day = calendar.date(from: components),
+        calendar.component(.month, from: day) == m
+      else { return nil }
+      return Int((day.timeIntervalSince1970 / 86_400).rounded()) + 25_569
+    }
+    func resolve(month: Int, number: Int) -> (serial: Int, formatCode: String)? {
+      guard (1...12).contains(month), number >= 0 else { return nil }
+      if number >= 1, let serial = date(year, month, number) { return (serial, "d-mmm") }
+      guard number <= 99 else { return nil }
+      let fullYear = number < 30 ? 2000 + number : 1900 + number
+      return date(fullYear, month, 1).map { ($0, "mmm-yy") }
+    }
+    // m/d, with spaces allowed around the slash.
+    let slash = t.split(separator: "/", omittingEmptySubsequences: false)
+    if slash.count == 2,
+      let m = Int(slash[0].trimmingCharacters(in: .whitespaces)),
+      let n = Int(slash[1].trimmingCharacters(in: .whitespaces))
+    {
+      return resolve(month: m, number: n)
+    }
+    // m-d, as m/d (`1-2` is 2 January, as in other apps).
+    let dash = t.split(separator: "-", omittingEmptySubsequences: false)
+    if dash.count == 2, let m = Int(dash[0]), let n = Int(dash[1]) {
+      return resolve(month: m, number: n)
+    }
+    // d-mmm, d mmm, mmm d, mmm-d, with a month's short or full English name.
+    let parts = t.split(whereSeparator: { $0 == "-" || $0 == " " })
+    guard parts.count == 2 else { return nil }
+    if let d = Int(parts[0]), let m = monthNumber(String(parts[1])) {
+      return resolve(month: m, number: d)
+    }
+    if let m = monthNumber(String(parts[0])), let d = Int(parts[1]) {
+      return resolve(month: m, number: d)
+    }
+    return nil
+  }
+
+  private static func monthNumber(_ name: String) -> Int? {
+    let names = [
+      "january", "february", "march", "april", "may", "june", "july", "august", "september",
+      "october", "november", "december",
+    ]
+    let lower = name.lowercased()
+    guard lower.count >= 3 else { return nil }
+    if let index = names.firstIndex(of: lower) { return index + 1 }
+    if lower.count == 3, let index = names.firstIndex(where: { $0.hasPrefix(lower) }) {
+      return index + 1
+    }
+    if lower == "sept" { return 9 }
+    return nil
+  }
+
+  /// `1 1/2`, `-1 1/2`, `0 1/2`, `3 10/16`: a whole number and a fraction, shown as a fraction
+  /// with as many digits as the denominator has (`# ?/?`, `# ??/??`, `# ???/???`).
+  public static func fraction(_ text: String) -> (value: Double, formatCode: String)? {
+    let t = text.trimmingCharacters(in: .whitespaces)
+    guard t.contains("/"), t.contains(" ") else { return nil }
+    var body = Substring(t)
+    var negative = false
+    if body.hasPrefix("-") {
+      negative = true
+      body = body.dropFirst()
+    }
+    let pieces = body.split(separator: " ", omittingEmptySubsequences: true)
+    guard pieces.count == 2, let whole = Int(pieces[0]) else { return nil }
+    let ratio = pieces[1].split(separator: "/", omittingEmptySubsequences: false)
+    guard ratio.count == 2, let numerator = Int(ratio[0]), let denominator = Int(ratio[1]),
+      denominator > 0, denominator <= 999, numerator >= 0, numerator < denominator
+    else { return nil }
+    let magnitude = Double(whole) + Double(numerator) / Double(denominator)
+    let digits = String(denominator).count
+    let marks = String(repeating: "?", count: digits)
+    return (negative ? -magnitude : magnitude, "# \(marks)/\(marks)")
+  }
+}

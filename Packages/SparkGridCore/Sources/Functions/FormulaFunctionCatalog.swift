@@ -11,6 +11,9 @@ public enum FormulaFunctionKind: String, CaseIterable, Hashable {
   case lookup = "Lookup"
   case dateTime = "Date & Time"
   case financial = "Financial"
+  case engineering = "Engineering"
+  case database = "Database"
+  case information = "Information"
 
   public var title: String { rawValue }
 }
@@ -318,6 +321,14 @@ public enum FormulaFunctionCatalog {
       name: "TEXTSPLIT", kind: .text,
       arguments:
         "text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with]"),
+    FormulaFunctionEntry(
+      name: "REGEXTEST", kind: .text, arguments: "text, pattern, [case_sensitivity]"),
+    FormulaFunctionEntry(
+      name: "REGEXEXTRACT", kind: .text,
+      arguments: "text, pattern, [return_mode], [case_sensitivity]"),
+    FormulaFunctionEntry(
+      name: "REGEXREPLACE", kind: .text,
+      arguments: "text, pattern, replacement, [occurrence], [case_sensitivity]"),
     FormulaFunctionEntry(name: "CLEAN", kind: .text, arguments: "text"),
     FormulaFunctionEntry(name: "CODE", kind: .text, arguments: "text"),
     FormulaFunctionEntry(name: "UNICODE", kind: .text, arguments: "text"),
@@ -445,6 +456,356 @@ public enum FormulaFunctionCatalog {
       name: "MIRR", kind: .financial,
       arguments: "values, finance_rate, reinvest_rate"),
     FormulaFunctionEntry(name: "TRANSPOSE", kind: .lookup, arguments: "array"),
+    // 1.7 batch 7
+    FormulaFunctionEntry(
+      name: "COUPDAYBS", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "COUPDAYS", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "COUPDAYSNC", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "COUPNCD", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "COUPNUM", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "COUPPCD", kind: .financial, arguments: "settlement, maturity, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "PRICE", kind: .financial,
+      arguments: "settlement, maturity, rate, yld, redemption, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "YIELD", kind: .financial,
+      arguments: "settlement, maturity, rate, pr, redemption, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "DURATION", kind: .financial,
+      arguments: "settlement, maturity, coupon, yld, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "MDURATION", kind: .financial,
+      arguments: "settlement, maturity, coupon, yld, frequency, [basis]"),
+    FormulaFunctionEntry(
+      name: "ACCRINT", kind: .financial,
+      arguments: "issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method]"),
+    FormulaFunctionEntry(
+      name: "ACCRINTM", kind: .financial, arguments: "issue, settlement, rate, par, [basis]"),
+    FormulaFunctionEntry(
+      name: "DISC", kind: .financial, arguments: "settlement, maturity, pr, redemption, [basis]"),
+    FormulaFunctionEntry(
+      name: "INTRATE", kind: .financial,
+      arguments: "settlement, maturity, investment, redemption, [basis]"),
+    FormulaFunctionEntry(
+      name: "RECEIVED", kind: .financial,
+      arguments: "settlement, maturity, investment, discount, [basis]"),
+    FormulaFunctionEntry(
+      name: "PRICEDISC", kind: .financial,
+      arguments: "settlement, maturity, discount, redemption, [basis]"),
+    FormulaFunctionEntry(
+      name: "YIELDDISC", kind: .financial,
+      arguments: "settlement, maturity, pr, redemption, [basis]"),
+    FormulaFunctionEntry(
+      name: "PRICEMAT", kind: .financial,
+      arguments: "settlement, maturity, issue, rate, yld, [basis]"),
+    FormulaFunctionEntry(
+      name: "YIELDMAT", kind: .financial,
+      arguments: "settlement, maturity, issue, rate, pr, [basis]"),
+    FormulaFunctionEntry(
+      name: "TBILLPRICE", kind: .financial, arguments: "settlement, maturity, discount"),
+    FormulaFunctionEntry(
+      name: "TBILLYIELD", kind: .financial, arguments: "settlement, maturity, pr"),
+    FormulaFunctionEntry(
+      name: "TBILLEQ", kind: .financial, arguments: "settlement, maturity, discount"),
+    FormulaFunctionEntry(
+      name: "VDB", kind: .financial,
+      arguments: "cost, salvage, life, start_period, end_period, [factor], [no_switch]"),
+    FormulaFunctionEntry(
+      name: "AMORLINC", kind: .financial,
+      arguments: "cost, date_purchased, first_period, salvage, period, rate, [basis]"),
+    FormulaFunctionEntry(
+      name: "AMORDEGRC", kind: .financial,
+      arguments: "cost, date_purchased, first_period, salvage, period, rate, [basis]"),
+    FormulaFunctionEntry(name: "FVSCHEDULE", kind: .financial, arguments: "principal, schedule"),
+    FormulaFunctionEntry(
+      name: "DOLLARDE", kind: .financial, arguments: "fractional_dollar, fraction"),
+    FormulaFunctionEntry(name: "DOLLARFR", kind: .financial, arguments: "decimal_dollar, fraction"),
+    FormulaFunctionEntry(name: "PDURATION", kind: .financial, arguments: "rate, pv, fv"),
+    FormulaFunctionEntry(name: "RRI", kind: .financial, arguments: "nper, pv, fv"),
+    FormulaFunctionEntry(
+      name: "CONVERT", kind: .engineering, arguments: "number, from_unit, to_unit"),
+    FormulaFunctionEntry(
+      name: "COMPLEX", kind: .engineering, arguments: "real_num, i_num, [suffix]"),
+    FormulaFunctionEntry(name: "BESSELJ", kind: .engineering, arguments: "x, n"),
+    FormulaFunctionEntry(name: "BESSELY", kind: .engineering, arguments: "x, n"),
+    FormulaFunctionEntry(name: "BESSELI", kind: .engineering, arguments: "x, n"),
+    FormulaFunctionEntry(name: "BESSELK", kind: .engineering, arguments: "x, n"),
+    FormulaFunctionEntry(name: "IMABS", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMAGINARY", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMARGUMENT", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCONJUGATE", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCOS", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCOSH", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCOT", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCSC", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMCSCH", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMEXP", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMLN", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMLOG10", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMLOG2", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMREAL", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMSEC", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMSECH", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMSIN", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMSINH", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMSQRT", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMTAN", kind: .engineering, arguments: "inumber"),
+    FormulaFunctionEntry(name: "IMDIV", kind: .engineering, arguments: "inumber1, inumber2"),
+    FormulaFunctionEntry(name: "IMSUB", kind: .engineering, arguments: "inumber1, inumber2"),
+    FormulaFunctionEntry(name: "IMPOWER", kind: .engineering, arguments: "inumber, number"),
+    FormulaFunctionEntry(
+      name: "IMPRODUCT", kind: .engineering, arguments: "inumber1, [inumber2], ..."),
+    FormulaFunctionEntry(name: "IMSUM", kind: .engineering, arguments: "inumber1, [inumber2], ..."),
+    // 1.7 batch 6
+    FormulaFunctionEntry(
+      name: "LAMBDA", kind: .logical, arguments: "[parameter1, ...], calculation"),
+    FormulaFunctionEntry(name: "MAP", kind: .logical, arguments: "array1, [array2, ...], lambda"),
+    FormulaFunctionEntry(
+      name: "REDUCE", kind: .logical, arguments: "[initial_value], array, lambda"),
+    FormulaFunctionEntry(name: "SCAN", kind: .logical, arguments: "[initial_value], array, lambda"),
+    FormulaFunctionEntry(name: "BYROW", kind: .logical, arguments: "array, lambda"),
+    FormulaFunctionEntry(name: "BYCOL", kind: .logical, arguments: "array, lambda"),
+    FormulaFunctionEntry(name: "MAKEARRAY", kind: .logical, arguments: "rows, columns, lambda"),
+    FormulaFunctionEntry(name: "ISOMITTED", kind: .information, arguments: "argument"),
+    FormulaFunctionEntry(
+      name: "EXPAND", kind: .lookup, arguments: "array, rows, [columns], [pad_with]"),
+    FormulaFunctionEntry(
+      name: "GROUPBY", kind: .lookup,
+      arguments:
+        "row_fields, values, function, [field_headers], [total_depth], [sort_order], [filter_array]"
+    ),
+    FormulaFunctionEntry(
+      name: "PIVOTBY", kind: .lookup,
+      arguments:
+        "row_fields, col_fields, values, function, [field_headers], [row_total_depth], [row_sort_order], [col_total_depth], [col_sort_order], [filter_array]"
+    ),
+    // 1.7 batch 5
+    FormulaFunctionEntry(
+      name: "BETA.DIST", kind: .statistical, arguments: "x, alpha, beta, cumulative, [A], [B]"),
+    FormulaFunctionEntry(
+      name: "BETA.INV", kind: .statistical, arguments: "probability, alpha, beta, [A], [B]"),
+    FormulaFunctionEntry(
+      name: "BETADIST", kind: .statistical, arguments: "x, alpha, beta, [A], [B]"),
+    FormulaFunctionEntry(
+      name: "BETAINV", kind: .statistical, arguments: "probability, alpha, beta, [A], [B]"),
+    FormulaFunctionEntry(
+      name: "BINOM.DIST", kind: .statistical,
+      arguments: "number_s, trials, probability_s, cumulative"),
+    FormulaFunctionEntry(
+      name: "BINOMDIST", kind: .statistical,
+      arguments: "number_s, trials, probability_s, cumulative"),
+    FormulaFunctionEntry(
+      name: "BINOM.DIST.RANGE", kind: .statistical,
+      arguments: "trials, probability_s, number_s, [number_s2]"),
+    FormulaFunctionEntry(
+      name: "BINOM.INV", kind: .statistical, arguments: "trials, probability_s, alpha"),
+    FormulaFunctionEntry(
+      name: "CRITBINOM", kind: .statistical, arguments: "trials, probability_s, alpha"),
+    FormulaFunctionEntry(
+      name: "NEGBINOM.DIST", kind: .statistical,
+      arguments: "number_f, number_s, probability_s, cumulative"),
+    FormulaFunctionEntry(
+      name: "NEGBINOMDIST", kind: .statistical, arguments: "number_f, number_s, probability_s"),
+    FormulaFunctionEntry(
+      name: "HYPGEOM.DIST", kind: .statistical,
+      arguments: "sample_s, number_sample, population_s, number_pop, cumulative"),
+    FormulaFunctionEntry(
+      name: "HYPGEOMDIST", kind: .statistical,
+      arguments: "sample_s, number_sample, population_s, number_pop"),
+    FormulaFunctionEntry(
+      name: "POISSON.DIST", kind: .statistical, arguments: "x, mean, cumulative"),
+    FormulaFunctionEntry(name: "POISSON", kind: .statistical, arguments: "x, mean, cumulative"),
+    FormulaFunctionEntry(
+      name: "EXPON.DIST", kind: .statistical, arguments: "x, lambda, cumulative"),
+    FormulaFunctionEntry(name: "EXPONDIST", kind: .statistical, arguments: "x, lambda, cumulative"),
+    FormulaFunctionEntry(
+      name: "WEIBULL.DIST", kind: .statistical, arguments: "x, alpha, beta, cumulative"),
+    FormulaFunctionEntry(
+      name: "WEIBULL", kind: .statistical, arguments: "x, alpha, beta, cumulative"),
+    FormulaFunctionEntry(
+      name: "GAMMA.DIST", kind: .statistical, arguments: "x, alpha, beta, cumulative"),
+    FormulaFunctionEntry(
+      name: "GAMMADIST", kind: .statistical, arguments: "x, alpha, beta, cumulative"),
+    FormulaFunctionEntry(
+      name: "GAMMA.INV", kind: .statistical, arguments: "probability, alpha, beta"),
+    FormulaFunctionEntry(
+      name: "GAMMAINV", kind: .statistical, arguments: "probability, alpha, beta"),
+    FormulaFunctionEntry(
+      name: "CHISQ.DIST", kind: .statistical, arguments: "x, deg_freedom, cumulative"),
+    FormulaFunctionEntry(name: "CHISQ.DIST.RT", kind: .statistical, arguments: "x, deg_freedom"),
+    FormulaFunctionEntry(name: "CHIDIST", kind: .statistical, arguments: "x, deg_freedom"),
+    FormulaFunctionEntry(
+      name: "CHISQ.INV", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(
+      name: "CHISQ.INV.RT", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(name: "CHIINV", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(
+      name: "CHISQ.TEST", kind: .statistical, arguments: "actual_range, expected_range"),
+    FormulaFunctionEntry(
+      name: "CHITEST", kind: .statistical, arguments: "actual_range, expected_range"),
+    FormulaFunctionEntry(
+      name: "F.DIST", kind: .statistical, arguments: "x, deg_freedom1, deg_freedom2, cumulative"),
+    FormulaFunctionEntry(
+      name: "F.DIST.RT", kind: .statistical, arguments: "x, deg_freedom1, deg_freedom2"),
+    FormulaFunctionEntry(
+      name: "FDIST", kind: .statistical, arguments: "x, deg_freedom1, deg_freedom2"),
+    FormulaFunctionEntry(
+      name: "F.INV", kind: .statistical, arguments: "probability, deg_freedom1, deg_freedom2"),
+    FormulaFunctionEntry(
+      name: "F.INV.RT", kind: .statistical, arguments: "probability, deg_freedom1, deg_freedom2"),
+    FormulaFunctionEntry(
+      name: "FINV", kind: .statistical, arguments: "probability, deg_freedom1, deg_freedom2"),
+    FormulaFunctionEntry(name: "F.TEST", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "FTEST", kind: .statistical, arguments: "array1, array2"),
+    FormulaFunctionEntry(
+      name: "LOGNORM.DIST", kind: .statistical, arguments: "x, mean, standard_dev, cumulative"),
+    FormulaFunctionEntry(
+      name: "LOGNORMDIST", kind: .statistical, arguments: "x, mean, standard_dev"),
+    FormulaFunctionEntry(
+      name: "LOGNORM.INV", kind: .statistical, arguments: "probability, mean, standard_dev"),
+    FormulaFunctionEntry(
+      name: "LOGINV", kind: .statistical, arguments: "probability, mean, standard_dev"),
+    FormulaFunctionEntry(
+      name: "T.DIST", kind: .statistical, arguments: "x, deg_freedom, cumulative"),
+    FormulaFunctionEntry(name: "T.DIST.2T", kind: .statistical, arguments: "x, deg_freedom"),
+    FormulaFunctionEntry(name: "T.DIST.RT", kind: .statistical, arguments: "x, deg_freedom"),
+    FormulaFunctionEntry(name: "TDIST", kind: .statistical, arguments: "x, deg_freedom, tails"),
+    FormulaFunctionEntry(name: "T.INV", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(
+      name: "T.INV.2T", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(name: "TINV", kind: .statistical, arguments: "probability, deg_freedom"),
+    FormulaFunctionEntry(
+      name: "T.TEST", kind: .statistical, arguments: "array1, array2, tails, type"),
+    FormulaFunctionEntry(
+      name: "TTEST", kind: .statistical, arguments: "array1, array2, tails, type"),
+    FormulaFunctionEntry(name: "Z.TEST", kind: .statistical, arguments: "array, x, [sigma]"),
+    FormulaFunctionEntry(name: "ZTEST", kind: .statistical, arguments: "array, x, [sigma]"),
+    FormulaFunctionEntry(
+      name: "CONFIDENCE.NORM", kind: .statistical, arguments: "alpha, standard_dev, size"),
+    FormulaFunctionEntry(
+      name: "CONFIDENCE", kind: .statistical, arguments: "alpha, standard_dev, size"),
+    FormulaFunctionEntry(
+      name: "CONFIDENCE.T", kind: .statistical, arguments: "alpha, standard_dev, size"),
+    FormulaFunctionEntry(
+      name: "PROB", kind: .statistical, arguments: "x_range, prob_range, lower_limit, [upper_limit]"
+    ),
+    FormulaFunctionEntry(name: "STEYX", kind: .statistical, arguments: "known_y's, known_x's"),
+    FormulaFunctionEntry(
+      name: "FREQUENCY", kind: .statistical, arguments: "data_array, bins_array"),
+    FormulaFunctionEntry(
+      name: "MODE.MULT", kind: .statistical, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(
+      name: "LINEST", kind: .statistical, arguments: "known_y's, [known_x's], [const], [stats]"),
+    FormulaFunctionEntry(
+      name: "LOGEST", kind: .statistical, arguments: "known_y's, [known_x's], [const], [stats]"),
+    FormulaFunctionEntry(
+      name: "TREND", kind: .statistical, arguments: "known_y's, [known_x's], [new_x's], [const]"),
+    FormulaFunctionEntry(
+      name: "GROWTH", kind: .statistical, arguments: "known_y's, [known_x's], [new_x's], [const]"),
+    FormulaFunctionEntry(name: "MMULT", kind: .math, arguments: "array1, array2"),
+    FormulaFunctionEntry(name: "MINVERSE", kind: .math, arguments: "array"),
+    FormulaFunctionEntry(name: "MDETERM", kind: .math, arguments: "array"),
+    FormulaFunctionEntry(name: "MUNIT", kind: .math, arguments: "dimension"),
+    // 1.7 batch 4
+    FormulaFunctionEntry(
+      name: "SUBTOTAL", kind: .math, arguments: "function_num, ref1, [ref2], ..."),
+    FormulaFunctionEntry(
+      name: "AGGREGATE", kind: .math, arguments: "function_num, options, ref1, [ref2 or k], ..."),
+    FormulaFunctionEntry(name: "DAVERAGE", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DCOUNT", kind: .database, arguments: "database, [field], criteria"),
+    FormulaFunctionEntry(
+      name: "DCOUNTA", kind: .database, arguments: "database, [field], criteria"),
+    FormulaFunctionEntry(name: "DGET", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DMAX", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DMIN", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DPRODUCT", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DSTDEV", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DSTDEVP", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DSUM", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DVAR", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(name: "DVARP", kind: .database, arguments: "database, field, criteria"),
+    FormulaFunctionEntry(
+      name: "NETWORKDAYS.INTL", kind: .dateTime,
+      arguments: "start_date, end_date, [weekend], [holidays]"),
+    FormulaFunctionEntry(
+      name: "WORKDAY.INTL", kind: .dateTime, arguments: "start_date, days, [weekend], [holidays]"),
+    FormulaFunctionEntry(name: "SHEET", kind: .information, arguments: "[value]"),
+    FormulaFunctionEntry(name: "SHEETS", kind: .information, arguments: "[reference]"),
+    FormulaFunctionEntry(name: "FORMULATEXT", kind: .lookup, arguments: "reference"),
+    FormulaFunctionEntry(name: "AREAS", kind: .lookup, arguments: "reference"),
+    FormulaFunctionEntry(name: "COT", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "CSC", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "SEC", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "COTH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "CSCH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "SECH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ACOT", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "ACOTH", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "CEILING.PRECISE", kind: .math, arguments: "number, [significance]"),
+    FormulaFunctionEntry(name: "ISO.CEILING", kind: .math, arguments: "number, [significance]"),
+    FormulaFunctionEntry(name: "FLOOR.PRECISE", kind: .math, arguments: "number, [significance]"),
+    FormulaFunctionEntry(name: "COMBINA", kind: .math, arguments: "number, number_chosen"),
+    FormulaFunctionEntry(
+      name: "PERMUTATIONA", kind: .statistical, arguments: "number, number_chosen"),
+    FormulaFunctionEntry(name: "FACTDOUBLE", kind: .math, arguments: "number"),
+    FormulaFunctionEntry(name: "MULTINOMIAL", kind: .math, arguments: "number1, [number2], ..."),
+    FormulaFunctionEntry(name: "SERIESSUM", kind: .math, arguments: "x, n, m, coefficients"),
+    FormulaFunctionEntry(name: "SUMX2MY2", kind: .math, arguments: "array_x, array_y"),
+    FormulaFunctionEntry(name: "SUMX2PY2", kind: .math, arguments: "array_x, array_y"),
+    FormulaFunctionEntry(name: "SUMXMY2", kind: .math, arguments: "array_x, array_y"),
+    FormulaFunctionEntry(name: "GAMMA", kind: .statistical, arguments: "x"),
+    FormulaFunctionEntry(name: "GAMMALN", kind: .statistical, arguments: "x"),
+    FormulaFunctionEntry(name: "GAMMALN.PRECISE", kind: .statistical, arguments: "x"),
+    FormulaFunctionEntry(name: "GAUSS", kind: .statistical, arguments: "z"),
+    FormulaFunctionEntry(name: "PHI", kind: .statistical, arguments: "x"),
+    FormulaFunctionEntry(name: "ROMAN", kind: .math, arguments: "number, [form]"),
+    FormulaFunctionEntry(name: "ARABIC", kind: .math, arguments: "text"),
+    FormulaFunctionEntry(name: "BASE", kind: .math, arguments: "number, radix, [min_length]"),
+    FormulaFunctionEntry(name: "DECIMAL", kind: .math, arguments: "text, radix"),
+    FormulaFunctionEntry(name: "BIN2DEC", kind: .engineering, arguments: "number"),
+    FormulaFunctionEntry(name: "BIN2HEX", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "BIN2OCT", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "OCT2BIN", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "OCT2DEC", kind: .engineering, arguments: "number"),
+    FormulaFunctionEntry(name: "OCT2HEX", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "HEX2BIN", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "HEX2DEC", kind: .engineering, arguments: "number"),
+    FormulaFunctionEntry(name: "HEX2OCT", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "DEC2BIN", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "DEC2HEX", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "DEC2OCT", kind: .engineering, arguments: "number, [places]"),
+    FormulaFunctionEntry(name: "BITAND", kind: .engineering, arguments: "number1, number2"),
+    FormulaFunctionEntry(name: "BITOR", kind: .engineering, arguments: "number1, number2"),
+    FormulaFunctionEntry(name: "BITXOR", kind: .engineering, arguments: "number1, number2"),
+    FormulaFunctionEntry(name: "BITLSHIFT", kind: .engineering, arguments: "number, shift_amount"),
+    FormulaFunctionEntry(name: "BITRSHIFT", kind: .engineering, arguments: "number, shift_amount"),
+    FormulaFunctionEntry(name: "DELTA", kind: .engineering, arguments: "number1, [number2]"),
+    FormulaFunctionEntry(name: "GESTEP", kind: .engineering, arguments: "number, [step]"),
+    FormulaFunctionEntry(name: "ERF", kind: .engineering, arguments: "lower_limit, [upper_limit]"),
+    FormulaFunctionEntry(name: "ERF.PRECISE", kind: .engineering, arguments: "x"),
+    FormulaFunctionEntry(name: "ERFC", kind: .engineering, arguments: "x"),
+    FormulaFunctionEntry(name: "ERFC.PRECISE", kind: .engineering, arguments: "x"),
+    FormulaFunctionEntry(name: "LENB", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "LEFTB", kind: .text, arguments: "text, [num_bytes]"),
+    FormulaFunctionEntry(name: "RIGHTB", kind: .text, arguments: "text, [num_bytes]"),
+    FormulaFunctionEntry(name: "MIDB", kind: .text, arguments: "text, start_num, num_bytes"),
+    FormulaFunctionEntry(
+      name: "FINDB", kind: .text, arguments: "find_text, within_text, [start_num]"),
+    FormulaFunctionEntry(
+      name: "SEARCHB", kind: .text, arguments: "find_text, within_text, [start_num]"),
+    FormulaFunctionEntry(
+      name: "REPLACEB", kind: .text, arguments: "old_text, start_num, num_bytes, new_text"),
+    FormulaFunctionEntry(name: "ASC", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "DBCS", kind: .text, arguments: "text"),
+    FormulaFunctionEntry(name: "VALUETOTEXT", kind: .text, arguments: "value, [format]"),
+    FormulaFunctionEntry(name: "ARRAYTOTEXT", kind: .text, arguments: "array, [format]"),
+    FormulaFunctionEntry(name: "BAHTTEXT", kind: .text, arguments: "number"),
+    FormulaFunctionEntry(name: "ENCODEURL", kind: .text, arguments: "text"),
   ]
 
   public static func groups(matching query: String) -> [FormulaFunctionGroup] {

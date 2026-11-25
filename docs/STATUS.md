@@ -1,6 +1,142 @@
 # Status
 
-Updated: 2026-11-18. Commit this file in the same commit as the work it describes.
+Updated: 2026-11-23. Commit this file in the same commit as the work it describes.
+
+## App icon, on `claude/1.7-app-icon`
+
+- The Dock icon looked oversized next to other Mac icons, with no transparent edge (Ludovic by email, djaysan on r/macapps). The artwork filled the whole 1024 canvas with opaque light-amber corners. It now follows Apple's macOS grid: an 824×824 shape centered on the 1024 canvas (100 px of transparent margin), with continuous corners (radius 185.4) and the template drop shadow (0, 10, blur 10, 30% black). The amber grid and bolt are the old artwork, scaled with the shape. Every size in `AppIcon.appiconset` is made from that 1024 image.
+- Source: `design/app-icon/glyph-1024.png` (the grid and bolt on transparency) and `design/app-icon/render-icon.swift` (`swift render-icon.swift glyph-1024.png out.png`); the smaller sizes are Lanczos downscales of the result.
+- Checked: the Release build's AppIcon.icns has the new art, and side by side with Calculator and Notes the shape is the same size.
+
+## Build 14, on `claude/1.7-build-14` (Nov 23)
+
+Sam, Nov 23, after 1.6 cleared review: 1.7 goes out as build 14 with the icon fix and these four.
+- Unlocked cells imported as locked from files that write cell styles as self-closing tags (openpyxl and others), so a protected sheet refused them; text rotation and clip went to the wrong cells for the same reason. `XLSXCodec.xfElementPattern` reads both forms (`StyleIndexScanTests`; with `SPARK_GRID_FIXTURES` it checks the stress workbook too). Found on the iPad branch.
+- A link within the workbook saved as an outside address starting with `#` (`#'Orders'!A1`, as openpyxl writes it) did nothing on Command-click. `CellHyperlink.place` / `.outsideTarget` read it as the place it is; the tooltip too (`LinkPlaceTests`).
+- Settings › General › Readable text on filled cells (Sam's idea, so people aren't confused by text changing color), on by default as before: off, text keeps its own color on fills and conditional fills. Only the screen and printing change. `SparkTheme.readableTextOnFills`, `ConditionalFormatEvaluator.resolvedPaint(readableText:)` (`ReadableTextSettingTests`).
+- REGEXTEST, REGEXEXTRACT and REGEXREPLACE (`FormulaEvaluator+Regex.swift`), 99 formulas against Excel 16.115 (`ExcelRegexTests`): case options, every match and the groups across a row, replacements with `$1`, `${name}`, `$$` and `\n`, errors where Excel gives them, letters like é for `\w`. Foundation's regular expressions differ from Excel's in one place: after an empty match Excel also tries a longer one there, so `a*?` finds more matches in Excel. In What's New and Help.
+- Checked in the Mac app with BugBash (`build14Additions`, 130/130): REGEXEXTRACT spills 12, 2026, 11, 23 on the grid, a dark conditional fill's text is light with the setting on and its own color off, and `#'Orders'!B2` selects Orders B2. Not clicked through by hand: the Debug build shares Sam's app's ID and settings while his copy was open.
+- Nov 24, the archived Release app (1.7 (14)) checked by hand on a copy of the stress workbook, dark mode, with Sam's copy closed: regex formulas through AppleScript spill and draw (H22:I22 41,362,409 and 15,000; groups A, 17; a shorter result clears the old spill cells; Edit › Undo brings it back); errors red; Insert Function lists the three; Settings › Readable text on filled cells turns the Total row's text white at once and back; Protected 1.4 takes 77 in unlocked B6 and keeps D6's formula; the saved file has `_xlfn.REGEX…` and spilling array formulas; What's New lists both new items.
+- Fixed from that check: the Link dialog (Insert › Link…) read a `#'Orders'!A1` link as a web address; it now opens it as a place, as Command-click does (`LinkSheet` uses `place` / `outsideTarget`).
+- Noted, not changed: AppleScript `put value` into a locked cell is refused without an error.
+
+## 1.7, on `claude/1.7-polish`
+
+- "i" buttons on Conditional Formatting's rule type (one explanation per type) and on Settings › General › Bar length, Keep earlier versions and the formulas warning.
+- What's New: Formula Help's line mentions charts from a description; "Save as .ods" became "More ways to save" (.ods, tab-separated text, web page); new "Your own shortcuts". Help › Files describes .tsv and .html; Help › Charts mentions Describe it and the ⓘ on chart types.
+- Bug test: five new checks (`BugBashRunner+Nov21.swift`): Remove Table restores filled headers, every command has its own default shortcut and none is reserved (38 actions; change and reset), Clear Formats keeps values, the .tsv and .html exports, and LAMBDA in place, criteria arrays and a missing sheet typed into the grid. 129/129 pass.
+- Checked in the Debug app (background), with Apple Intelligence on this Mac: Formula Help on bt.csv gave =SUM(C2:C9) = 11,836 for "total of column C"; Insert Chart › Describe it with "units by month as a line with a trend" chose Line, Units, a linear trendline and the title; the ⓘ popovers; Settings › Shortcuts (F2 and ⌥↓ shown) and › AI ("Ready on this Mac").
+
+## 1.7, on `claude/1.7-lambda-call`
+
+- From Sam's hand test of the 1.7 stress workbook (Nov 20). A LAMBDA called where it is written, `=LAMBDA(x,x*3)(7)`, gives 21 (it was #ERROR!: the parser stopped at the second brackets). It parses as `SG.CALL(LAMBDA(...), 7)` (`FormulaExpr.lambdaCallFunction`), also for a LAMBDA that gives a LAMBDA (`(3)(4)`); it spills when the LAMBDA's body does, and .ods writes it back as typed. LET calls a LAMBDA it names, `=LET(f,LAMBDA(x,x+1),f(9))` = 10 (was #NAME?), and no longer works a LAMBDA out early. `LambdaCalledInPlaceTests`.
+- A range or list where SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF(S) and MAXIFS/MINIFS take criteria gives one answer per criterion, and spills: `=SUMIFS(H12:H15,A12:A15,B12:B15)` was #VALUE! (Formula Help wrote it). `criteriaSlots` / `criteriaLifted`. The #VALUE! hint for several values in one cell no longer mentions ARRAYFORMULA (not an Excel function). `CriteriaArrayTests`.
+
+## 1.7, on `claude/1.7-ui-fixes`
+
+From Sam's hand test of the 1.7 stress workbook (Nov 20).
+- Shortcuts: every Spark Grid command can be remapped in Settings › Shortcuts, 38 in all, in eight groups: New, Open, Save As, Print, Find, Find and Replace, Find Next/Previous, Go To, Select All, Edit Cell (F2), Open Dropdown List (⌥↓), Insert Link, Formula Help, Group/Ungroup, Zoom, Help and the new Clear Formats (⌘\\), with those before. Menus read them with `.hotkey(_:_:)`; the grid reads Edit Cell and Open Dropdown List. A function key alone can be recorded. Only Quit, Close, Hide, Minimize and Settings stay fixed. Every row has its reset button, greyed out at the default; Reset All stays.
+- Cut, Copy and Paste act on a text field that has the keyboard (a dialog's field, the formula bar, a cell being edited), as Select All did: pasting into Formula Help's question pasted into the cell (`FocusedText`).
+- Clear Formats: ⌘\\, in the Format menu and the cell's right-click menu (with Clear Contents), as well as Edit › Clear and the toolbar's More.
+- Remove Table puts back header cells it filled ("Column 1"…) that nobody changed (`SheetTable.filledHeaders`, by column within the table).
+- Goal Seek: Return in a field is Find (then Keep); the spinner and "Finding…" show before the search starts; Find and Keep run once.
+- Formula Help: describes the block of data around or above the selected cell, not the top of the sheet; asks again once when its formula gives an error, and says so when it still does.
+- Apple Intelligence: Settings › AI › Use Apple Intelligence (on by default, `AppSettings.usesAppleIntelligence`) with its status; off, Formula Help leaves the Insert menu and Describe it leaves Insert Chart. Help has an Apple Intelligence topic.
+- Insert Chart › Describe it: a sentence becomes the chart kind, columns, trendline and title (`ChartHelper`, the model on the Mac; only kinds and columns that exist are taken).
+- "i" buttons (`SparkInfoButton`): each chart kind, trendlines, sparkline types, validation alert styles, Describe it. The sparkline type picker is the app's own.
+- Toolbar drop-downs are popovers in the app's look (`ToolbarMenuButton.Style`): rows highlighted in amber that close after a choice. Layout is a panel: alignment as icons, Overflow/Wrap/Clip, and rotation as tiles showing "Ab" at each angle. The narrow-window overflow menu stays a system menu (it has submenus).
+- Help is drawn in the app's style with a search field; the Shortcuts topic says every shortcut can be changed.
+- The autosave pop-up uses the app's rows and switch.
+- Show in the unsupported-functions note scrolls to the cell.
+- Save As adds Tab-Separated Text (.tsv) and Web Page (.html: every visible sheet as it looks, `HTMLExporter` over `PreviewPresentation`). After saving a web page the window keeps its own file, keeps no version and doesn't list it in Open Recent. `WebPageAndTSVExportTests`.
+- Not reproduced: after rotating text and resizing rows, Sam's grid showed a row number twice and clicks landing between cells (stale drawing). Resizing rows, even to almost nothing, redrew correctly here.
+
+## 1.7, on `claude/1.7-popup-design`
+
+- From Sam's hand test (Nov 20). The data validation alert and the note about functions Spark Grid can't calculate were system alerts (blue buttons, app icon); both are now `SparkDialog` sheets like Goal Seek's. `ValidationAlertSheet`: the rule's title and message (or plain defaults), the typed entry and cell under the title, a stop, warning or info symbol; Stop has OK only, Warning Keep / Don't Keep, Information OK / Cancel; closing it any other way refuses the entry. It opens after the edit ends, on the workbook's window (`WorkbookWindows.window(showing:)`): opened while no window was key it came up as a loose window, and once crashed in a loop of size changes. `UncalculatedFormulasSheet`: a row per function with its cells, first cell and a Show button; text that fits the file (an .xlsx keeps saved results; an .ods or Numbers file isn't changed; a CSV has no results, so the cells show #NAME?); Save a Copy… on the left, opening beside the file; "Don't tell me about this again". `SparkDialog` takes no Cancel button (`cancelTitle: nil`) and `SparkDialogPresenter.present` an `onEnd`.
+- Formula Help leaves sheet names out of what it doesn't need them in: `SheetPrefixes.keepingOnly` (Formula) takes the name off references to this sheet and to sheets the workbook doesn't have, in the formula and its explanation; other sheets keep theirs. Its model had written `=SUMIF(Sheet1!B2:B5,1200)` and "Sheet1!B2:B5" for a sheet named Report. The instructions say so too, with a plain total as an example (it had made up a condition for "total of column B"). `SheetPrefixesTests`.
+- Goal Seek shows its answer to six decimals (it showed 26495.3531619636); Keep still writes the full value.
+- Checked in the Debug app in the background: both sheets, Show, the Stop alert on the window. Not yet: Warning and Information alerts, Save a Copy from the new note, Formula Help after the change.
+
+## 1.7, on `claude/1.7-missing-sheet-ifs`
+
+- SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF(S), MAXIFS/MINIFS and COUNTBLANK over a sheet the workbook doesn't have give #REF!, as `=Nope!A1` and `=SUM(Nope!A1:A3)` already did; they gave 0, because every cell of the missing sheet reads #REF! and these functions skip error cells. Found in the Nov 20 hand test: Formula Help's model wrote `=SUMIF(Sheet1!B2:B5,1200)` on a sheet named Report and the preview and cell said 0. `missingSheetError` in `FormulaEvaluator+Everyday.swift` (reads the sheet's last cell, blank on a real sheet). `MissingSheetCriteriaTests` (8 cases fail without the fix).
+
+## 1.7, on `claude/1.7-chart-excel-fixes`
+
+- Charts saved by Spark Grid, opened in Excel 16 (Nov 20): the axes had no labels, because the axis parts left out `<c:delete val="0"/>` (true of every chart saved since 1.3). Axes now write it with tick marks and labels. Horizontal bars put the first category on top (category axis `maxMin`, value axis crossing at `max`), as Spark Grid draws them. With more than one series the first takes its header as its name, not the chart title. Pie and doughnut series write no color, so each slice gets its own. `ChartTrendlineTests.testChartPartsDrawTheSameElsewhere`.
+
+## 1.7, on `claude/1.7-whats-new`
+
+- What's New for 1.7 (`ReleaseNotes.all["1.7"]`) adds new charts and trendlines, sparklines, Goal Seek, saving as .ods and the note about functions Spark Grid can't calculate (#152–#156, all merged Nov 20).
+
+## 1.7, on `claude/1.7-unsupported-warning`
+
+- Opening a file whose formulas call functions Spark Grid doesn't have shows a note on the window (from a Reddit comment, Nov 20): each function with its cell count and first cell, what that means (the saved results show and don't update; the formulas are saved back unchanged), and OK, Show First Cell, Save a Copy… (copies the file as it is on disk; not offered for an .ods or Numbers file, which is never written over), and "Don't tell me about this again". Settings › General › Saving, "Warn about formulas it can't calculate" (on by default). The scan (`UnknownFunctions.uses`) runs off the main thread after the file opens, and leaves out names the workbook defines and LET and LAMBDA names. Not shown in the bug test, benchmarks or unit tests. `UnknownFunctionUsesTests`. Checked in the Debug app.
+
+## 1.7, on `claude/1.7-ods-save`
+
+- Save and Save As offer OpenDocument (.ods) beside .xlsx and CSV, with the panel's File Format menu shown (macOS 15+). `ODSExporter` (FileFormats) writes every sheet: values, formulas in OpenFormula (`OpenFormulaPrinter`, from the parsed formula, with brackets, `;`, `TRUE()`, `COM.MICROSOFT.` for newer functions) with their results, number formats, bold/italic/underline/strikethrough, colors, fonts, alignment, wrapping, rotation, borders, merged cells, column widths, row heights, hidden rows and columns, hidden sheets and named ranges. `mimetype` first and stored. Not written: charts, pictures, comments, conditional formatting, data validation, filters, sparklines, spilled array formulas as arrays (their values are written). An .ods still opens as a new workbook, so Save never writes over one it did not just write. `ODSExporterTests`: formula printing, OpenFormula read back, a two-sheet round trip through `ODSImporter`; the XML passes xmllint. Not opened in LibreOffice (not installed here).
+
+## 1.7, on `claude/1.7-sparklines`
+
+- Sparklines (`SparklineGroup` in Model, kept in `SheetFileExtras.sparklines`): line, column and win/loss, one per row or column of the data (`SparklineGroup.layout`), with a color, markers and high/low points. Read from and written to the worksheet's `<extLst>` as `<x14:sparklineGroups>` (`XLSXCodec+Sparklines.swift`), so files from other apps keep theirs; data on another sheet works. They move with inserted and deleted rows and columns (`SheetStructureMutation`). Drawn by `SparklineLayerView` in the grid's chart layer, under charts; Insert › Sparklines… (`SparklinesSheet`) and Clear Sparklines, each one undo step. `SparklineTests`. Checked in the Debug app (insert, replace, undo). Not yet: sparklines in printing and PDF export, and in cells under frozen rows or columns (the frozen pane covers them), axis and first/last point options, editing a group after it is made.
+
+## 1.7, on `claude/1.7-charts`
+
+- New chart kinds in `SheetChart.Kind`: horizontal bar, stacked bar, stacked horizontal bar, stacked area, doughnut. They draw in the series plot (`ImportedChartPlot`) and save as `barChart` (`barDir`, stacked grouping with overlap 100), stacked `areaChart` and `doughnutChart` (hole 50).
+- Trendlines (`ChartTrendline` in Model): linear, exponential, logarithmic, power, moving average, with the equation and R² above the plot. On bar, line, area and scatter charts of values; category charts fit against x = 1…n as other apps do. Saved as `<c:trendline>`; trendlines in charts from other apps are read and drawn (not polynomial). `ChartTrendlineTests`. Checked in the Debug app with a demo of every new kind. Not checked in Excel by hand. Not added: radar, histogram, waterfall, box.
+
+## 1.7, on `claude/1.7-goal-seek`
+
+- Data › Goal Seek (`GoalSeek` in Calc, `GoalSeekSheet`): the formula cell, the value it should reach and the input cell; the search (secant steps, at most a thousandfold jump, 100 tries) runs on its own engine over a copy of the workbook, across sheets too, and the answer is shown before Keep writes it as one undo step. No exact answer reports the closest. `GoalSeekTests`: a loan amount for a 500 payment (25,862.78), a square across sheets, a negative square (not found), refusals. Checked in the Debug app.
+
+## 1.7, on `claude/1.7-welcome-versions`
+
+- Version 1.7 (13). Build 14 (Nov 23) is the same 1.7 with the app icon on Apple's macOS grid (#165); 13 was archived before it and never uploaded.
+- Settings › General › Saving › Keep earlier versions, on by default (Sam, Nov 20): off, saves keep no versions; File › Browse Versions still shows those already kept.
+- Welcome and What's New (`LaunchIntro`, `WelcomeView`, `WhatsNewView`): the first time Spark Grid opens it says thanks and shows what it does; the first time a new version opens, What's New lists `ReleaseNotes` for that version. Someone who used a version before 1.7 (recent files, or a file opened before) gets What's New, not the welcome. Help › Welcome to Spark Grid and Help › What's New show them again. Not shown under BugBash, benchmarks or tests; a Debug build launched with SPARK_GRID_RESET_INTRO=1 forgets the version seen. Checked in the Debug app.
+
+## 1.7, on `claude/1.7-functions-d` (on top of `-c`)
+
+- Functions batch 7 (`FormulaEvaluator+Batch7.swift`), 61 functions: the coupon functions, PRICE, YIELD, DURATION, MDURATION, ACCRINT (period by period), ACCRINTM, DISC, INTRATE, RECEIVED, PRICEDISC, YIELDDISC, PRICEMAT, YIELDMAT, the T-bill functions, VDB, AMORLINC, AMORDEGRC, FVSCHEDULE, DOLLARDE, DOLLARFR, PDURATION, RRI; CONVERT with every unit, prefix and temperature Excel has (its factors read from Excel itself); COMPLEX and the 25 IM functions; BESSELJ, Y, I and K. 195 formulas (`ExcelBatch7Tests`) and 354 conversions (`ExcelConvertTests`) match Excel 16.115. Excel's Bessel answers are only good to about 1e-5 of themselves; Spark Grid's are exact, and the test allows the difference. Excel's day counts were found by trying each candidate against its answers: PRICE and DURATION take the days to the next coupon as the period less the days gone, one-coupon YIELD at basis 2 the period's actual length, VDB leaves out LibreOffice's mid-life adjustment.
+- Not written: the four ODD coupon functions, the ETS forecasts, cube, web and RTD functions, STOCKHISTORY, IMAGE, INFO, PHONETIC.
+
+## 1.7, on `claude/1.7-functions-c` (on top of `-b`)
+
+- Functions batch 6 (`FormulaEvaluator+Batch6.swift`): LAMBDA (#CALC! on its own, as in Excel), MAP, REDUCE, SCAN, BYROW, BYCOL, MAKEARRAY, ISOMITTED, EXPAND, GROUPBY and PIVOTBY (headers, totals at the top or bottom, sort, filter, a LAMBDA or a function by name; PIVOTBY one row field, one column field and one value column). A function name given bare (`BYROW(A1:B2,SUM)`) works and saves as `_xlfn._xleta.SUM`; LAMBDA parameters save as `_xlpm.` names. 67 formulas typed into Excel 16.115 match (`ExcelBatch6Tests`).
+- Defined names that are formulas, not ranges, now calculate (`NamedFormulas`): constants such as `Tax = 0.07`, moving ranges built with OFFSET, and LAMBDAs called by name (`=Hyp(3,4)`, recursive ones too). Before 1.7 they were #NAME?. Their cells are not in the dependency graph, so a formula reading such a name is not recalculated by an edit to the cells the name reads (docs/gaps.md item 9).
+
+## 1.7, on `claude/1.7-functions-b` (on top of `-a`)
+
+- Functions batch 5 (`FormulaEvaluator+Batch5.swift`), 69 functions: every probability distribution and inverse Excel has except the ETS forecasts (beta, binomial and its range and inverse, chi-squared, exponential, F, gamma, hypergeometric, lognormal, negative binomial, Poisson, t, Weibull, with their pre-2010 names), CHISQ.TEST, F.TEST, T.TEST (all three types), Z.TEST, CONFIDENCE.NORM and .T, PROB, STEYX, MDETERM, and the spilling FREQUENCY, MODE.MULT, LINEST and LOGEST (with stats, several x columns, no constant), TREND, GROWTH, MMULT, MINVERSE and MUNIT. 157 formulas typed into Excel 16.115 give the same answers to nine digits (`ExcelBatch5Tests`; array results read one value at a time through INDEX). The incomplete beta and gamma functions are continued fractions; inverses are found by bisection.
+
+## 1.7, on `claude/1.7-functions-a`
+
+- Functions batch 4 (`FormulaEvaluator+Batch4.swift`), 87 functions: SUBTOTAL and AGGREGATE (all 19 functions and 8 options, the array form for LARGE, SMALL and the percentiles), the 12 database functions (D-criteria: plain text matches text starting with it), NETWORKDAYS.INTL and WORKDAY.INTL, SHEET, SHEETS, FORMULATEXT, AREAS, COT/CSC/SEC and their hyperbolic and inverse forms, CEILING.PRECISE, ISO.CEILING, FLOOR.PRECISE, COMBINA, PERMUTATIONA, FACTDOUBLE, MULTINOMIAL, SERIESSUM, SUMX2MY2, SUMX2PY2, SUMXMY2, GAMMA, GAMMALN(.PRECISE), GAUSS, PHI, ROMAN (all five forms), ARABIC, BASE, DECIMAL, the twelve BIN/OCT/DEC/HEX conversions, BITAND/OR/XOR/LSHIFT/RSHIFT, DELTA, GESTEP, ERF, ERFC and their .PRECISE forms, the B text functions, ASC, DBCS, VALUETOTEXT, ARRAYTOTEXT, BAHTTEXT and ENCODEURL. 257 formulas typed into Excel 16.115 by script give the same answers (`ExcelBatch4Tests`). Excel for Mac has no ENCODEURL and answers #N/A for PHONETIC, which stays unwritten so a file's saved result shows.
+- SUBTOTAL leaves out rows a filter hides, and 101 to 111 rows hidden by hand, as AGGREGATE does with its options (`SubtotalHiddenRowTests`). The filter's rows reach the engine as `SheetFileExtras.filteredRows` (not saved), set by `syncFilteredRowsForFormulas` when the filter changes.
+## 1.7, on `claude/1.7-version-history`
+
+- Version history (`WorkbookVersions`, `VersionsSheet`): each Save keeps a version in the Mac's own version store (`NSFileVersion`, as document apps do), an autosave at most one every ten minutes, and the first save after opening also keeps the file as it was opened unless that is already kept. File › Browse Versions lists them newest first. Open a Copy opens one in a new window as a new workbook (from a temporary copy: the version is readable only inside the file's access); Restore swaps it in as one undoable step. Checked in the sandboxed Debug app on a copy of a fixture: three versions after two saves, Restore and Undo, Open a Copy.
+## 1.7, on `claude/1.7-edit-kept`
+
+- Data validation: rules files carry were kept but did nothing. Now a typed entry is checked against the cell's rule (whole number, decimal, date, time, text length, a list, or a custom formula that must be TRUE, checked with the entry standing in for the cell so `=COUNTIF($A:$A,A1)=1` works) when the rule shows an alert: Stop refuses it, Warning asks, Information tells and keeps it unless Cancel. The rule's input message shows when pointing at the cell. Data › Data Validation makes, changes and clears rules (`DataValidationSheet`), saved as other apps write them (`DataValidationRule.Parts`, `DataValidationPartsTests`). Pasting and clearing are not checked, as in other apps. Checked in the Debug app: 500 refused with the rule's message, 50 kept, the saved `<dataValidation>` as Excel writes it.
+- Comments, dropdown lists and hiding rows, columns and sheets were already editable (since 1.2 and 1.4); Help said otherwise and is corrected.
+- Alerts asked while another app is in front (Move Cells' replace question, validation) sit on the workbook's window rather than floating.
+## 1.7, on `claude/1.7-big-file-save`
+
+- Big workbooks keep their formula results after a sort, a moved block, an inserted row or an Undo of a whole step (docs/gaps.md item 8): above `FormulaCacheWriter.recalculateOnSaveLimit` (40,000 formulas) the engine calculates the whole workbook in the background two seconds after the step (`scheduleStaleResultsCalculation`); an edit before it finishes starts it again. When it lands, the next save writes every result, as below the limit (`StaleResultsBackgroundTests`). A save before it lands still leaves the results out, as before.
+- While Close or Quit waits for a save to finish writing, the window shows "Saving “name”…" (`SavingBeforeClosingBadge`) instead of looking stuck.
+- Checked in the Debug app on a copy of the stress workbook: after an inserted row, a save once the background calculation had landed wrote results for all 114,814 formulas, the same as the original file's apart from the RANDARRAY cell; a save before then wrote none, as before. Quit during a save shows the badge until the file is written.
+## 1.7, on `claude/1.7-typing-polish`
+
+- Typed short dates and fractions as Excel 16.115 reads them (asked by AppleScript, Nov 20): `3/4`, `15-Mar`, `Mar 15`, `Mar-15`, `March 15`, `1-2` are dates this year shown `d-mmm`; a day too big for the month makes a year (`2/30` is February 1930, `mmm-yy`); `13/1` and `31/12` stay text. `1 1/2`, `-1 1/2`, `0 1/2` are numbers shown `# ?/?` (`# ??/??` for `3 10/16`); `1 1/0` stays text (`TypedEntry.shortDate`, `TypedEntry.fraction`, `ShortDateFractionErrorTests`).
+- A typed error code (`#N/A`, `#n/a`, `#DIV/0!` and the other five) is the error value, saved as an error cell (`t="e"`) and opened as one; text "#N/A" from a file stays text.
+- Text pasted from another app, by Text to Columns or Paste Special text, or put by a script or an AI assistant (`put values`, the helper's write_cells) reads as typing reads it: dates, money, times, fractions, error codes (`edit.paste` with `typed`, `PastedTextReadsAsTypedTests`). It stayed text, found in the 1.7 bug test through the helper. Cells copied in Spark Grid and pivot tables are left as they are.
+- Pointing at another sheet while typing a formula: clicking a sheet tab while the formula waits for a reference (after `=`, `(`, a comma or an operator) shows that sheet with the formula open in the formula bar (`formulaHome`); clicked cells go in as `'Q3 Data'!B2:B4`; Return writes the formula into its own cell back on its own sheet, Escape goes back without it (BugBash "formula points at another sheet"). Not yet driven by hand: background automation could not type into the formula bar, and full-screen control was not answered.
+## 1.7, on `claude/1.7-formula-help`
+
+- Formula help with the model built into the Mac (`FormulaHelper`, `FormulaHelpSheet`; Insert › Formula Help…, Control-Command-H): Write a formula turns a sentence into a formula for the selected cell, given the sheet's name, the other sheets, and each column's header with a few values (`formulaHelpContext`); the model answers with the formula line then a sentence, after worked examples of SUMIFS, COUNTIFS, AVERAGEIFS and XLOOKUP argument order (without them it summed the wrong column, and guided generation took 152 s; plain answers take about a second), checked with the parser and shown with the result it would give, and any function Spark Grid lacks is named before Insert. Explain this formula explains the selected cell's formula. It runs on the Mac (FoundationModels, macOS 26 and Apple Intelligence; weak-linked, so the app still opens on macOS 14 and 15, where the sheet says what it needs). Nothing goes over the network, so the privacy answers stay as they are.
 
 - Automatic number formats (`FormulaAutoFormat`, on `claude/1.6-auto-formats`): a formula typed into a General cell takes the format Excel 16.115 gives it. DATE and TODAY a date (m/d/yy), NOW a date and time, TIME a time; PMT, PPMT, IPMT, FV, PV, NPV, SLN, SYD, DDB and DB money with red negatives; RATE a percent; =A1 and + or - with a formatted cell that cell's format (two dates added stay General); SUM and ROUND the format of the cells they read. Everything else stays General, as in Excel (EDATE, EOMONTH, WORKDAY, DATEVALUE, MAX, IF, * and /). A cell with its own format keeps it. 35 formulas match Excel (`FormulaAutoFormatTests`); checked in the app by script.
 
@@ -13,7 +149,6 @@ Updated: 2026-11-18. Commit this file in the same commit as the work it describe
 ## 1.5 (version 1.5, build 10)
 
 Everything agreed for 1.5 is merged, with the Nov 18 script bug bash and Excel checks (#92–#120). Version 1.5, build 10. Build 9 was uploaded on Nov 18 but compares text that reads as a number with a number as unequal (fixed in #122); do not submit it. Release notes, promotional text and release-day steps are in `docs/release-notes-1.5.md` (What's New 2,360 characters). Sam's manual pass is `Claude outputs/1.5 manual test list.md`. Upload, screenshots and submitting wait for Sam.
-
 
 - Start screen (Sam, Nov 17; mockup https://claude.ai/artifact/CZePYnBz1nX6vJ5Xd4aBdw): Spark Grid opens to it when it opens with no file (Settings > General can turn that off, as can its own checkbox), and File > New from Template (Shift-Command-N) shows it as a sheet over an open workbook, with Cancel. Blank Workbook and ten templates in three categories (Personal: Monthly Budget, Expense Report, Loan Calculator, To-Do List; Business: Invoice, Sales Pipeline, Timesheet, Inventory; Planning: Project Tracker, Weekly Schedule), each with an info button and a preview drawn from its real cells in the window's light or dark look (`TemplatePreview`). Recent lists Open Recent's files. A template opens as a new Untitled workbook, dates counted from today. Templates are built in code with made-up data (`WorkbookTemplate`, Engine): dropdowns, highlight rules, frozen headers and formulas such as PMT/PPMT/IPMT, XLOOKUP, SUMIFS and EDATE. `WorkbookTemplateTests`: every formula calculates without an error, sample totals, and each saves and opens again; BugBash "start screen opens templates". 110/110.
 - Finder Quick Look preview looks like the grid: the file's fills, bold and italic, sizes, text colors, column widths and row heights; numbers on the right; error values in red; and in dark mode automatic text on a light fill is black, as the grid draws it. Formulas a file saved no result for (such as a template saved before anything recalculated) are calculated in the background for workbooks up to 60,000 formulas; past that the preview says to open the file in Spark Grid. Logic in `PreviewPresentation` (Rendering), tested by `PreviewPresentationTests`. Release, the stress workbook (114,524 formulas, all saved): import 0.46 s, preview 0.05 s.
@@ -78,8 +213,6 @@ Every item on the 1.4 list in `Future Features.md` is merged (main `e4c7c02`). V
 - Row insert: formulas on other sheets that don't name the changed sheet are skipped by a byte scan, and the rest are shifted in parallel.
 - Checked: an edited stress workbook opens in Excel with no repair prompt and imports into Numbers; a table from the app's template opens in Excel as a styled table.
 - Still to check by hand: Remove Duplicates, Undo, save; a changed shortcut after a relaunch. Still to make: App Store screenshots and a preview video.
-
-
 
 1.1.1 shipped on 2026-10-29. 1.2 follows `Future Features.md`: compatibility first. The bug bash (PR #77) is merged; `docs/BUGS.md` lists what is open. Release notes are in `docs/release-notes-1.2.md`.
 

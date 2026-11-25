@@ -868,7 +868,7 @@ public nonisolated enum XLSXCodec {
     let section = String(xml[start.lowerBound..<end.upperBound])
     guard
       let xfRegex = try? NSRegularExpression(
-        pattern: #"<xf\b[^>]*>(.*?)</xf>|<xf\b[^>]*/>"#,
+        pattern: xfElementPattern,
         options: [.dotMatchesLineSeparators]
       ),
       let rotationRegex = try? NSRegularExpression(pattern: #"textRotation="(-?\d+)""#)
@@ -896,6 +896,13 @@ public nonisolated enum XLSXCodec {
     return rotations
   }
 
+  /// One `<xf>` in `cellXfs`, self-closing or with children. The self-closing form comes first:
+  /// tried second, `<xf …/>` matched as an opening tag and ran on to the next `</xf>`, so a file
+  /// whose plain styles are self-closing (as openpyxl writes them) counted the styles after it at
+  /// the wrong index. Unlocked cells imported locked, and rotation and clip landed on the wrong
+  /// cells (found testing the iPad app, Nov 23).
+  static let xfElementPattern = #"<xf\b[^>]*/>|<xf\b[^>]*>.*?</xf>"#
+
   /// Cells whose style says `<protection locked="0"/>`: the ones a protected sheet lets people edit.
   public static func importUnlockedStyleIndexes(archiveData: Data) -> Set<Int> {
     guard let xml = zipEntryString(archiveData: archiveData, entryPath: "xl/styles.xml"),
@@ -903,7 +910,7 @@ public nonisolated enum XLSXCodec {
       let start = xml.range(of: "<cellXfs"),
       let end = xml.range(of: "</cellXfs>", range: start.upperBound..<xml.endIndex),
       let xfRegex = try? NSRegularExpression(
-        pattern: #"<xf\b[^>]*>(.*?)</xf>|<xf\b[^>]*/>"#, options: [.dotMatchesLineSeparators])
+        pattern: xfElementPattern, options: [.dotMatchesLineSeparators])
     else { return [] }
     let section = String(xml[start.lowerBound..<end.upperBound]) as NSString
     var indexes = Set<Int>()
@@ -927,7 +934,7 @@ public nonisolated enum XLSXCodec {
     let section = String(xml[start.lowerBound..<end.upperBound])
     guard
       let xfRegex = try? NSRegularExpression(
-        pattern: #"<xf\b[^>]*>(.*?)</xf>|<xf\b[^>]*/>"#,
+        pattern: xfElementPattern,
         options: [.dotMatchesLineSeparators]
       ),
       // 1.4 and later write sg:textDisplay in an ignorable namespace; earlier builds wrote
@@ -1715,6 +1722,7 @@ public nonisolated enum XLSXCodec {
       let parts = rels.tables.map { #"<tablePart r:id="rId\#($0)"/>"# }.joined()
       xml.append(utf8: #"<tableParts count="\#(rels.tables.count)">\#(parts)</tableParts>"#)
     }
+    xml.append(utf8: sparklinesExtensionXML(extras.sparklines, sheetName: sheet.name))
     xml.append(ascii: "</worksheet>")
     return xml.data
   }
@@ -1832,6 +1840,10 @@ public nonisolated enum XLSXCodec {
     case .number:
       xml.append(ascii: "><v>")
       xml.append(escaped: cell.raw)
+      xml.append(ascii: "</v></c>")
+    case .error:
+      xml.append(ascii: " t=\"e\"><v>")
+      xml.append(escaped: cell.raw.uppercased())
       xml.append(ascii: "</v></c>")
     case .boolean:
       xml.append(ascii: " t=\"b\"><v>")
@@ -2090,6 +2102,8 @@ public nonisolated enum XLSXCodec {
     // A typed TRUE or FALSE is a boolean, saved as one so other apps read it the same way.
     let upper = cell.raw.uppercased()
     if upper == "TRUE" || upper == "FALSE" { return .boolean }
+    // A typed #N/A is an error value, saved as one (`t="e"`), not as the text #N/A.
+    if CellValue.literalErrorCodes.contains(upper) { return .error }
     if Double(cell.raw) != nil, !cell.raw.contains(where: \.isLetter) { return .number }
     if !cell.raw.isEmpty { return .sharedString }
     if cell.importedFormulaResult != nil { return .spilled }
@@ -2113,6 +2127,7 @@ private nonisolated enum ExportCellKind {
   case formula
   case number
   case boolean
+  case error
   case sharedString
   case spilled
   case emptyFormatted

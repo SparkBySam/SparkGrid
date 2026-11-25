@@ -18,6 +18,11 @@ struct SpreadsheetRootView: View {
       if store.showsStartScreen && !store.startScreenReturnsToDocument {
         StartScreenView(store: store)
       }
+      // Close and Quit wait for a big workbook's save to finish; without a sign the window
+      // looked stuck for several seconds (Sam, Nov 19).
+      if store.isSavingBeforeClosing {
+        SavingBeforeClosingBadge(name: store.fileURL?.lastPathComponent ?? store.displayTitle)
+      }
     }
     .sheet(isPresented: startScreenSheet) {
       StartScreenView(store: store, isSheet: true)
@@ -44,6 +49,28 @@ struct SpreadsheetRootView: View {
     Binding(
       get: { store.showsStartScreen && store.startScreenReturnsToDocument },
       set: { if !$0 { store.dismissStartScreen() } })
+  }
+}
+
+/// "Saving…" in the middle of the window while Close or Quit waits for the file to be written.
+private struct SavingBeforeClosingBadge: View {
+  let name: String
+
+  var body: some View {
+    VStack(spacing: 10) {
+      ProgressView().controlSize(.regular)
+      Text("Saving \u{201C}\(name)\u{201D}…")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(SparkStyle.label)
+      Text("The window closes when the file is written.")
+        .font(.system(size: 11))
+        .foregroundStyle(SparkStyle.secondaryLabel)
+    }
+    .padding(.horizontal, 24)
+    .padding(.vertical, 18)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .shadow(radius: 12)
+    .accessibilityElement(children: .combine)
   }
 }
 

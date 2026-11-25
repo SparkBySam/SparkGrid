@@ -106,10 +106,12 @@ extension SpreadsheetViewModel {
   ) {
     let kind: ImportedChart.Kind
     switch chart.kind {
-    case .bar: kind = .column
+    case .bar, .stackedBar: kind = .column
+    case .horizontalBar, .stackedHorizontalBar: kind = .bar
     case .line: kind = .line
-    case .area: kind = .area
+    case .area, .stackedArea: kind = .area
     case .pie: kind = .pie
+    case .doughnut: kind = .doughnut
     case .scatter: kind = .scatter
     }
     let n = chart.dataRange.normalized
@@ -124,7 +126,8 @@ extension SpreadsheetViewModel {
           start: CellAddress(row: firstRow, col: col), end: CellAddress(row: n.maxRow, col: col)))
     }
     let base = ImportedChart(
-      kind: kind, title: chart.title, series: [], showsLegend: chart.showsLegend,
+      kind: kind, title: chart.title, isStacked: chart.kind.isStacked, series: [],
+      showsLegend: chart.showsLegend,
       categoryAxisTitle: chart.categoryAxisTitle, valueAxisTitle: chart.valueAxisTitle)
 
     if chart.valueMode == .count {
@@ -161,6 +164,9 @@ extension SpreadsheetViewModel {
           : nil,
         categories: column(categoryColumn),
         values: column(col))
+    }
+    if chart.drawsTrendline, !plotted.series.isEmpty {
+      plotted.series[0].trendline = chart.trendline
     }
     var series = importedChartSeries(plotted)
     // The first series keeps the chart's own color.
@@ -310,7 +316,7 @@ extension SpreadsheetViewModel {
     return value
   }
 
-  private func chartNumber(sheetName: String?, at address: CellAddress) -> Double? {
+  func chartNumber(sheetName: String?, at address: CellAddress) -> Double? {
     guard let value = chartValue(sheetName: sheetName, at: address) else { return nil }
     if case .bool = value { return nil }
     return value.asNumber

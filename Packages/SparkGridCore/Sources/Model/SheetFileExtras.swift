@@ -49,6 +49,11 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
   /// Ranges locked on their own, whether the sheet is protected or not. Spark Grid keeps these
   /// in its own part of the file; other apps do not lock them.
   public var rangeLocks: [RangeLock] = []
+  /// Rows the sheet's filter hides at the moment. Not saved: the app works them out from the
+  /// filter. SUBTOTAL and AGGREGATE leave them out, as other apps do.
+  public var filteredRows: Set<Int> = []
+  /// Small charts drawn in cells.
+  public var sparklines: [SparklineGroup] = []
 
   public init() {}
 
@@ -59,7 +64,7 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     case collapsedRows, collapsedColumns, sheetPropertiesXML, protectionXML, pageLayoutXML
     case printArea, rowBreaks, columnBreaks, builtInNames
     case dataValidations, hyperlinks, comments, tables, foreignCharts, pivotTables, sparkPivots
-    case spills, blockedSpills, editableRanges, rangeLocks
+    case spills, blockedSpills, editableRanges, rangeLocks, sparklines
   }
 
   public init(from decoder: Decoder) throws {
@@ -100,6 +105,7 @@ public nonisolated struct SheetFileExtras: Codable, Equatable, Sendable {
     editableRanges =
       try c.decodeIfPresent([EditableRange].self, forKey: .editableRanges) ?? []
     rangeLocks = try c.decodeIfPresent([RangeLock].self, forKey: .rangeLocks) ?? []
+    sparklines = try c.decodeIfPresent([SparklineGroup].self, forKey: .sparklines) ?? []
   }
 }
 
@@ -216,6 +222,22 @@ public nonisolated struct CellHyperlink: Codable, Equatable, Sendable {
     self.display = display
     self.tooltip = tooltip
   }
+
+  /// The place in the workbook the link goes to: its `location`, or a target that is one. Some
+  /// apps (openpyxl among them) save an in-workbook jump as an outside address starting with
+  /// `#`, such as `#'Orders'!A1`; other spreadsheet apps follow those, and Spark Grid didn't
+  /// (found testing the iPad app, Nov 23).
+  public var place: String? {
+    if let location, !location.isEmpty { return location }
+    guard let target, target.hasPrefix("#"), target.count > 1 else { return nil }
+    return String(target.dropFirst())
+  }
+
+  /// The outside address to open, or nil when the link is a place in the workbook.
+  public var outsideTarget: String? {
+    guard let target, !target.hasPrefix("#") else { return nil }
+    return target
+  }
 }
 
 public nonisolated struct CellComment: Codable, Equatable, Sendable {
@@ -234,10 +256,27 @@ public nonisolated struct CellComment: Codable, Equatable, Sendable {
 public nonisolated struct SheetTable: Codable, Equatable, Sendable {
   public var range: CellRange
   public var xml: String
+  /// Header cells Spark Grid filled when it made the table ("Column 3" for a blank one), by
+  /// column within the table, with what each held before. Removing the table puts back those
+  /// still as filled (Sam, Nov 20: "it still left Column 1-10"). Nil for tables from a file.
+  public var filledHeaders: [FilledHeader]?
 
-  public init(range: CellRange, xml: String) {
+  public struct FilledHeader: Codable, Equatable, Sendable {
+    public var column: Int
+    public var previous: String
+    public var filled: String
+
+    public init(column: Int, previous: String, filled: String) {
+      self.column = column
+      self.previous = previous
+      self.filled = filled
+    }
+  }
+
+  public init(range: CellRange, xml: String, filledHeaders: [FilledHeader]? = nil) {
     self.range = range
     self.xml = xml
+    self.filledHeaders = filledHeaders
   }
 }
 

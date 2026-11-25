@@ -433,67 +433,8 @@ struct FormattingToolbar: View {
   /// Align, Vertical, Overflow and Rotate in one menu, with Merge beside it.
   private var layoutGroup: some View {
     HStack(spacing: 2) {
-      ToolbarMenuButton(title: "Layout", showLabel: showLabels, width: 32) {
-        Section("Horizontal") {
-          Button {
-            viewModel.setHorizontalAlign(.left)
-          } label: {
-            Label("Align Left", systemImage: "text.alignleft")
-          }
-          Button {
-            viewModel.setHorizontalAlign(.center)
-          } label: {
-            Label("Align Center", systemImage: "text.aligncenter")
-          }
-          Button {
-            viewModel.setHorizontalAlign(.right)
-          } label: {
-            Label("Align Right", systemImage: "text.alignright")
-          }
-        }
-        Section("Vertical") {
-          Button {
-            viewModel.setVerticalAlign(.top)
-          } label: {
-            Label("Align Top", systemImage: "arrow.up.to.line")
-          }
-          Button {
-            viewModel.setVerticalAlign(.middle)
-          } label: {
-            Label("Align Middle", systemImage: "arrow.up.and.down")
-          }
-          Button {
-            viewModel.setVerticalAlign(.bottom)
-          } label: {
-            Label("Align Bottom", systemImage: "arrow.down.to.line")
-          }
-        }
-        Section("Text") {
-          ForEach([CellFormat.TextDisplay.overflow, .wrap, .clip], id: \.self) { display in
-            Button {
-              viewModel.setTextDisplay(display)
-            } label: {
-              if viewModel.uniformTextDisplay == display {
-                Label(display.toolbarTitle, systemImage: "checkmark")
-              } else {
-                Label(display.toolbarTitle, systemImage: "text.word.spacing")
-              }
-            }
-          }
-          Menu {
-            Button("None") { viewModel.setTextRotation(0) }
-            Divider()
-            Button("Tilt Up") { viewModel.setTextRotation(-45) }
-            Button("Tilt Down") { viewModel.setTextRotation(45) }
-            Button("Stack Vertically") {
-              viewModel.setTextRotation(CellFormat.stackedTextRotation)
-            }
-            Button("Rotate Up") { viewModel.setTextRotation(-90) }
-            Button("Rotate Down") { viewModel.setTextRotation(90) }
-          } label: {
-            Label("Rotate", systemImage: "arrow.trianglehead.counterclockwise.rotate.90")
-          }
-        }
+      ToolbarMenuButton(title: "Layout", showLabel: showLabels, width: 32, style: .panel) {
+        ToolbarLayoutPanel(viewModel: viewModel)
       } label: {
         Image(systemName: horizontalAlignIcon)
           .font(.system(size: 13))
@@ -559,7 +500,7 @@ struct FormattingToolbar: View {
 
   /// The groups that did not fit, as one menu at the end of the row.
   private func overflowMenu(fold: ToolbarFold) -> some View {
-    ToolbarMenuButton(title: "More", showLabel: false, width: 24) {
+    ToolbarMenuButton(title: "More", showLabel: false, width: 24, style: .systemMenu) {
       if fold == .layoutDataAndInsert {
         Menu("Merge") {
           Button("Merge All") { viewModel.mergeSelection(axis: .all) }
@@ -1334,6 +1275,17 @@ private struct ToolbarIconButton: View {
 }
 
 private struct ToolbarMenuButton<Label: View, MenuContent: View>: View {
+  /// How the button's choices show.
+  enum Style {
+    /// A popover of rows in the app's look that closes after a choice (Sam, Nov 20: the
+    /// toolbar's drop-downs were system menus that didn't match).
+    case list
+    /// A popover holding a panel of its own, which stays open while it is used.
+    case panel
+    /// A system menu, for the overflow menu's submenus.
+    case systemMenu
+  }
+
   let title: String
   var showLabel = false
   @Environment(\.toolbarCaptions) private var captions
@@ -1341,33 +1293,281 @@ private struct ToolbarMenuButton<Label: View, MenuContent: View>: View {
   var width: CGFloat = 32
   /// Wider than the icon when the caption is a word like "Overflow".
   var titleWidth: CGFloat? = nil
+  var style: Style = .list
   @ViewBuilder var menuContent: () -> MenuContent
   @ViewBuilder var label: () -> Label
+  @State private var showing = false
 
   var body: some View {
-    Menu {
-      menuContent()
-    } label: {
-      VStack(spacing: 2) {
-        label()
-          .frame(width: width, height: shows ? 24 : 32)
-
-        if shows {
-          Text(title)
-            .font(.system(size: 9))
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(width: titleWidth ?? max(width, 40))
+    Group {
+      if style == .systemMenu {
+        Menu {
+          menuContent()
+        } label: {
+          face
+        }
+        .menuStyle(.borderlessButton)
+      } else {
+        Button {
+          showing.toggle()
+        } label: {
+          face
+        }
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+          if style == .list {
+            ToolbarMenuList(close: { showing = false }) { menuContent() }
+          } else {
+            menuContent()
+              .padding(12)
+              .background(SparkStyle.window)
+          }
         }
       }
-      .frame(minWidth: 40)
-      .contentShape(Rectangle())
     }
-    .menuStyle(.borderlessButton)
     .buttonStyle(.plain)
     .fixedSize(horizontal: true, vertical: false)
     .help(title)
     .accessibilityLabel(title)
+  }
+
+  private var face: some View {
+    VStack(spacing: 2) {
+      label()
+        .frame(width: width, height: shows ? 24 : 32)
+
+      if shows {
+        Text(title)
+          .font(.system(size: 9))
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+          .frame(width: titleWidth ?? max(width, 40))
+      }
+    }
+    .frame(minWidth: 40)
+    .contentShape(Rectangle())
+    .background(
+      RoundedRectangle(cornerRadius: 6)
+        .fill(showing ? SparkStyle.accent.opacity(0.14) : Color.clear)
+    )
+  }
+}
+
+/// The rows of a toolbar menu in a popover: buttons as hover-highlighted rows, dividers as
+/// hairlines. A choice closes it.
+private struct ToolbarMenuList<Content: View>: View {
+  let close: () -> Void
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 1) {
+      content()
+    }
+    .buttonStyle(SparkMenuRowStyle(after: close))
+    .labelStyle(SparkMenuLabelStyle())
+    .padding(6)
+    .frame(minWidth: 200, alignment: .leading)
+    .background(SparkStyle.window)
+  }
+}
+
+/// A menu row: the whole width, highlighted in Spark amber under the pointer.
+struct SparkMenuRowStyle: ButtonStyle {
+  var after: () -> Void = {}
+
+  func makeBody(configuration: Configuration) -> some View {
+    Row(configuration: configuration, after: after)
+  }
+
+  private struct Row: View {
+    let configuration: ButtonStyleConfiguration
+    let after: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+      configuration.label
+        .font(.system(size: 13))
+        .foregroundStyle(isEnabled ? SparkStyle.label : SparkStyle.secondaryLabel.opacity(0.6))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+          RoundedRectangle(cornerRadius: 5)
+            .fill(
+              hovering && isEnabled
+                ? SparkStyle.accent.opacity(configuration.isPressed ? 0.32 : 0.18) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onChange(of: configuration.isPressed) { _, pressed in
+          // After the button's own action has run.
+          if !pressed, isEnabled { DispatchQueue.main.async(execute: after) }
+        }
+    }
+  }
+}
+
+/// A menu row's icon in a fixed column, so the titles line up.
+private struct SparkMenuLabelStyle: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    HStack(spacing: 8) {
+      configuration.icon
+        .frame(width: 16)
+        .foregroundStyle(SparkStyle.secondaryLabel)
+      configuration.title
+    }
+  }
+}
+
+/// Toolbar › Layout: alignment, wrapping and rotation as pictures rather than menu text, each
+/// showing what it does (Sam, Nov 20: "text rotating needs some help visually").
+private struct ToolbarLayoutPanel: View {
+  @Bindable var viewModel: SpreadsheetViewModel
+
+  private var format: CellFormat { viewModel.selectedFormat }
+
+  private static let rotations: [(title: String, degrees: Int)] = [
+    ("None", 0), ("Tilt Up", -45), ("Tilt Down", 45),
+    ("Rotate Up", -90), ("Rotate Down", 90), ("Stacked", CellFormat.stackedTextRotation),
+  ]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      section("Horizontal") {
+        HStack(spacing: 6) {
+          choice("text.alignleft", "Align Left", format.horizontalAlign == .left) {
+            viewModel.setHorizontalAlign(.left)
+          }
+          choice("text.aligncenter", "Align Center", format.horizontalAlign == .center) {
+            viewModel.setHorizontalAlign(.center)
+          }
+          choice("text.alignright", "Align Right", format.horizontalAlign == .right) {
+            viewModel.setHorizontalAlign(.right)
+          }
+        }
+      }
+      section("Vertical") {
+        HStack(spacing: 6) {
+          choice("arrow.up.to.line", "Align Top", format.verticalAlign == .top) {
+            viewModel.setVerticalAlign(.top)
+          }
+          choice("arrow.up.and.down", "Align Middle", format.verticalAlign == .middle) {
+            viewModel.setVerticalAlign(.middle)
+          }
+          choice("arrow.down.to.line", "Align Bottom", format.verticalAlign == .bottom) {
+            viewModel.setVerticalAlign(.bottom)
+          }
+        }
+      }
+      section("Text") {
+        HStack(spacing: 6) {
+          ForEach([CellFormat.TextDisplay.overflow, .wrap, .clip], id: \.self) { display in
+            pill(display.toolbarTitle, viewModel.uniformTextDisplay == display) {
+              viewModel.setTextDisplay(display)
+            }
+          }
+        }
+      }
+      section("Rotation") {
+        LazyVGrid(
+          columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6
+        ) {
+          ForEach(Self.rotations, id: \.degrees) { item in
+            rotationTile(item.title, degrees: item.degrees)
+          }
+        }
+      }
+    }
+    .frame(width: 252)
+  }
+
+  private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content)
+    -> some View
+  {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(title.uppercased())
+        .font(.system(size: 10, weight: .semibold))
+        .tracking(0.4)
+        .foregroundStyle(SparkStyle.secondaryLabel)
+      content()
+    }
+  }
+
+  private func choice(
+    _ symbol: String, _ title: String, _ selected: Bool, _ action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Image(systemName: symbol)
+        .font(.system(size: 14))
+        .frame(maxWidth: .infinity)
+        .frame(height: 28)
+        .foregroundStyle(selected ? SparkStyle.label : SparkStyle.secondaryLabel)
+        .background(tileBackground(selected))
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help(title)
+    .accessibilityLabel(title)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+
+  private func pill(_ title: String, _ selected: Bool, _ action: @escaping () -> Void)
+    -> some View
+  {
+    Button(action: action) {
+      Text(title)
+        .font(.system(size: 12, weight: selected ? .semibold : .regular))
+        .frame(maxWidth: .infinity)
+        .frame(height: 26)
+        .foregroundStyle(selected ? SparkStyle.label : SparkStyle.secondaryLabel)
+        .background(tileBackground(selected))
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  /// A tile showing "Ab" at the angle it sets.
+  private func rotationTile(_ title: String, degrees: Int) -> some View {
+    let selected = format.textRotation == degrees
+    return Button {
+      viewModel.setTextRotation(degrees)
+    } label: {
+      VStack(spacing: 3) {
+        Group {
+          if degrees == CellFormat.stackedTextRotation {
+            VStack(spacing: -2) {
+              Text("A")
+              Text("b")
+            }
+          } else {
+            Text("Ab").rotationEffect(.degrees(Double(degrees)))
+          }
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .frame(height: 30)
+        Text(title)
+          .font(.system(size: 10))
+          .foregroundStyle(SparkStyle.secondaryLabel)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 5)
+      .foregroundStyle(selected ? SparkStyle.label : SparkStyle.secondaryLabel)
+      .background(tileBackground(selected))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(title)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+
+  private func tileBackground(_ selected: Bool) -> some View {
+    RoundedRectangle(cornerRadius: 6)
+      .fill(selected ? SparkStyle.accent.opacity(0.16) : SparkStyle.chrome)
+      .overlay(
+        RoundedRectangle(cornerRadius: 6)
+          .stroke(
+            selected ? SparkStyle.accent : SparkStyle.separator, lineWidth: selected ? 1.5 : 1)
+      )
   }
 }
 

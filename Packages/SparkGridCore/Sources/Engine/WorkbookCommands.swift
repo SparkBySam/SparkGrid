@@ -317,8 +317,12 @@ public final class WorkbookSession {
     }
     applyPercentLiteralIfNeeded(to: &cell)
     applyDateLiteralIfNeeded(to: &cell)
+    applyShortDateOrFractionIfNeeded(to: &cell)
     applyTypedNumberOrTimeIfNeeded(to: &cell)
     applyFormulaFormatIfNeeded(to: &cell, on: sheet, in: workbook)
+    // `#n/a` typed is the error #N/A, as in other apps.
+    let upper = cell.raw.trimmingCharacters(in: .whitespaces).uppercased()
+    if CellValue.literalErrorCodes.contains(upper) { cell.raw = upper }
     sheet.setCell(cell, at: address)
     workbook.sheets[index] = sheet
     return Applied(
@@ -357,6 +361,7 @@ public final class WorkbookSession {
     }
     let rowDelta = intArgument(arguments, "rowDelta") ?? 0
     let colDelta = intArgument(arguments, "colDelta") ?? 0
+    let readsAsTyped = arguments["typed"] == "1"
     var sheet = workbook.sheets[index]
     var addresses: [CellAddress] = []
     for (rowOffset, fields) in rows.enumerated() {
@@ -378,6 +383,16 @@ public final class WorkbookSession {
         cell.importedFormulaResult = nil
         cell.importedFormulaValueType = nil
         applyPercentLiteralIfNeeded(to: &cell)
+        // Text pasted from another app, or put by a script or an AI assistant, is read as typing
+        // reads it: 1/5/2026 and 3/4 dates, $1,234 money, 1 1/2 a fraction, #N/A the error.
+        // Pasted text stayed text (found in the 1.7 bug test, Nov 20).
+        if readsAsTyped, rowDelta == 0, colDelta == 0 {
+          applyDateLiteralIfNeeded(to: &cell)
+          applyShortDateOrFractionIfNeeded(to: &cell)
+          applyTypedNumberOrTimeIfNeeded(to: &cell)
+          let upper = cell.raw.trimmingCharacters(in: .whitespaces).uppercased()
+          if CellValue.literalErrorCodes.contains(upper) { cell.raw = upper }
+        }
         sheet.setCell(cell, at: address)
         addresses.append(address)
       }
@@ -899,6 +914,27 @@ public final class WorkbookSession {
     format.numberFormat = .date
     cell.raw = String(Int(serial))
     cell.format = format
+  }
+
+  /// `3/4`, `15-Mar` and `Mar 15` are dates this year, shown `d-mmm`; `1 1/2` is 1.5 shown as a
+  /// fraction. Both were text before 1.7 (docs/gaps.md item 2), checked against Excel 16.115.
+  private func applyShortDateOrFractionIfNeeded(to cell: inout Cell) {
+    let trimmed = cell.raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !FormulaSyntax.isFormula(trimmed), Double(trimmed) == nil else { return }
+    var format = cell.format ?? CellFormat()
+    guard format.numberFormat == .general, format.formatCode == nil else { return }
+    let year = Calendar.current.component(.year, from: Date())
+    if let date = TypedEntry.shortDate(trimmed, year: year) {
+      cell.raw = String(date.serial)
+      format.numberFormat = .date
+      format.formatCode = date.formatCode
+      cell.format = format
+    } else if let fraction = TypedEntry.fraction(trimmed) {
+      cell.raw = Self.storedNumber(fraction.value)
+      format.numberFormat = .number
+      format.formatCode = fraction.formatCode
+      cell.format = format
+    }
   }
 
   /// `1,234`, `$1,234.50`, `(5)`, `10:30` and `9:05 am` typed into a General cell are stored

@@ -202,13 +202,13 @@ extension SpreadsheetViewModel {
   /// Opens a web or mail link, or goes to the place a workbook link names. Other kinds of
   /// address, such as files, are not opened.
   func openHyperlink(_ link: CellHyperlink) {
-    if let target = link.target, let url = URL(string: target),
+    if let target = link.outsideTarget, let url = URL(string: target),
       let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme)
     {
       NSWorkspace.shared.open(url)
       return
     }
-    guard let location = link.location,
+    guard let location = link.place,
       let place = Self.workbookPlace(location, in: workbook, activeSheet: activeSheet.name),
       let index = workbook.sheets.firstIndex(where: {
         $0.name.caseInsensitiveCompare(place.sheet) == .orderedSame

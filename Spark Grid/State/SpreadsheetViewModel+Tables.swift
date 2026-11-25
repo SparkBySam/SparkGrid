@@ -54,6 +54,7 @@ extension SpreadsheetViewModel {
     }
     // Every header needs a name, and other apps reject a table whose names repeat.
     var names: [String] = []
+    var filled: [SheetTable.FilledHeader] = []
     var used = Set<String>()
     for col in n.minCol...n.maxCol {
       let address = CellAddress(row: n.minRow, col: col)
@@ -68,7 +69,12 @@ extension SpreadsheetViewModel {
       }
       used.insert(unique.lowercased())
       names.append(unique)
-      if blank || unique != name { setCellValue(unique, at: address) }
+      if blank || unique != name {
+        filled.append(
+          .init(
+            column: col - n.minCol, previous: activeSheet.cell(at: address).raw, filled: unique))
+        setCellValue(unique, at: address)
+      }
     }
     let (id, tableName) = nextTableIdentity()
     let ref = range.a1Label
@@ -78,14 +84,30 @@ extension SpreadsheetViewModel {
     let xml =
       #"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="\#(id)" name="\#(tableName)" displayName="\#(tableName)" ref="\#(ref)" totalsRowShown="0"><autoFilter ref="\#(ref)"/><tableColumns count="\#(names.count)">\#(columns)</tableColumns><tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>"#
     updateFileExtras(actionName: "Create Table") { extras in
-      extras.tables.append(SheetTable(range: range, xml: xml))
+      extras.tables.append(
+        SheetTable(range: range, xml: xml, filledHeaders: filled.isEmpty ? nil : filled))
     }
     notifyGridRefresh()
   }
 
-  /// Keeps the cells and their values; only the table goes.
+  /// Keeps the cells and their values, except header names Spark Grid filled in when it made
+  /// the table and nobody has changed since: those go back to what they were.
   func removeTable(at index: Int) {
     guard activeSheet.fileExtras.tables.indices.contains(index) else { return }
+    let table = activeSheet.fileExtras.tables[index]
+    undoManager?.beginUndoGrouping()
+    defer {
+      undoManager?.endUndoGrouping()
+      undoManager?.setActionName("Remove Table")
+    }
+    let n = table.range.normalized
+    for header in table.filledHeaders ?? [] {
+      let address = CellAddress(row: n.minRow, col: n.minCol + header.column)
+      guard address.col <= n.maxCol, activeSheet.cell(at: address).raw == header.filled else {
+        continue
+      }
+      setCellValue(header.previous, at: address)
+    }
     updateFileExtras(actionName: "Remove Table") { extras in
       extras.tables.remove(at: index)
     }

@@ -184,6 +184,13 @@ enum CellNotePresenter {
     }
   }
 
+  static func presentValidation(from viewModel: SpreadsheetViewModel, in window: NSWindow? = nil) {
+    viewModel.commitEditIfNeeded()
+    SparkDialogPresenter.present(title: "Data Validation", width: 440, in: window) { close in
+      DataValidationSheet(viewModel: viewModel, onDismiss: close)
+    }
+  }
+
   static func presentComment(from viewModel: SpreadsheetViewModel, in window: NSWindow? = nil) {
     viewModel.commitEditIfNeeded()
     SparkDialogPresenter.present(title: "Comment", width: 400, in: window) { close in

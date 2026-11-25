@@ -13,7 +13,7 @@ final class UnknownFunctionTests: XCTestCase {
       name: "Data",
       cells: [
         CellAddress(row: 0, col: 0): Cell(
-          raw: "=BAHTTEXT(5)", importedFormulaResult: "Five Baht",
+          raw: "=CUBEVALUE(\"Sales\",5)", importedFormulaResult: "Five Baht",
           importedFormulaValueType: .string),
         CellAddress(row: 0, col: 1): Cell(raw: "=LEN(A1)"),
         CellAddress(row: 1, col: 0): Cell(raw: "=NOTAFUNCTION(1)"),

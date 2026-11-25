@@ -20,10 +20,14 @@ extension SpreadsheetViewModel {
     guard !rules.isEmpty else {
       return ConditionalPaint(format: base)
     }
-    if conditionalFormatCacheRevision != contentRevision {
+    let readableText = SparkTheme.readableTextOnFills
+    if conditionalFormatCacheRevision != contentRevision
+      || conditionalFormatCacheReadableText != readableText
+    {
       conditionalFormatCache.removeAll(keepingCapacity: true)
       conditionalRangeNumbers.removeAll(keepingCapacity: true)
       conditionalFormatCacheRevision = contentRevision
+      conditionalFormatCacheReadableText = readableText
     }
     if let index = conditionalFormatCache.index(forKey: address) {
       return conditionalFormatCache[index].value
@@ -49,7 +53,8 @@ extension SpreadsheetViewModel {
           relativeTo: origin,
           sheet: self.activeSheet
         )
-      }
+      },
+      readableText: readableText
     )
     conditionalFormatCache[address] = resolved
     return resolved

@@ -98,7 +98,7 @@ public nonisolated struct PreviewPresentation: Sendable {
       alignment = isNumber || isError ? (isError ? .center : .right) : .left
     }
     var textColor = format?.textColor
-    if darkMode, textColor == nil, let fill = format?.fillColor {
+    if darkMode, SparkTheme.readableTextOnFills, textColor == nil, let fill = format?.fillColor {
       textColor = CodableColor.contrastingText(on: fill)
     }
     return Style(

@@ -266,6 +266,11 @@ public nonisolated struct Sheet: Identifiable, Codable, Equatable, Sendable {
     !fileExtras.hiddenRows.isEmpty && fileExtras.hiddenRows.contains(row)
   }
 
+  /// Hidden by the sheet's filter at the moment: every SUBTOTAL leaves these rows out.
+  public func isRowFiltered(_ row: Int) -> Bool {
+    !fileExtras.filteredRows.isEmpty && fileExtras.filteredRows.contains(row)
+  }
+
   public func isColumnHidden(_ col: Int) -> Bool {
     !fileExtras.hiddenColumns.isEmpty && fileExtras.hiddenColumns.contains(col)
   }

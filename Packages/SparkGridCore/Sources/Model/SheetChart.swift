@@ -12,6 +12,12 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     case area
     case pie
     case scatter
+    // Added in 1.7 (Sam, Nov 20: "Another thing to add is new charts").
+    case horizontalBar
+    case stackedBar
+    case stackedHorizontalBar
+    case stackedArea
+    case doughnut
 
     public var id: String { rawValue }
 
@@ -22,11 +28,37 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
       case .area: return "Area"
       case .pie: return "Pie"
       case .scatter: return "Scatter"
+      case .horizontalBar: return "Horizontal Bar"
+      case .stackedBar: return "Stacked Bar"
+      case .stackedHorizontalBar: return "Stacked Horizontal Bar"
+      case .stackedArea: return "Stacked Area"
+      case .doughnut: return "Doughnut"
       }
     }
 
-    /// Pie slices come from one series.
-    public var allowsMoreSeries: Bool { self != .pie }
+    /// Pie and doughnut slices come from one series.
+    public var allowsMoreSeries: Bool { !isRound }
+
+    public var isRound: Bool { self == .pie || self == .doughnut }
+
+    /// Each series sits on top of the one before.
+    public var isStacked: Bool {
+      self == .stackedBar || self == .stackedHorizontalBar || self == .stackedArea
+    }
+
+    /// Bars that run across, with categories down the side.
+    public var isHorizontal: Bool { self == .horizontalBar || self == .stackedHorizontalBar }
+
+    public var isBar: Bool {
+      self == .bar || self == .horizontalBar || self == .stackedBar || self == .stackedHorizontalBar
+    }
+
+    public var isArea: Bool { self == .area || self == .stackedArea }
+
+    /// Kinds the other apps allow a trendline on: not stacked, round, or horizontal ones.
+    public var allowsTrendline: Bool {
+      self == .bar || self == .line || self == .area || self == .scatter
+    }
   }
 
   /// How Y values are produced from the data range.
@@ -83,6 +115,8 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
   /// A column of plus-or-minus amounts (standard error, say) drawn as error bars on the first
   /// series of a bar or line chart. Nil draws none (asked for on Reddit, Nov 19).
   public var errorBarColumn: Int?
+  /// A line fitted through the first series. Nil draws none.
+  public var trendline: ChartTrendline?
   /// Set once the user moves or resizes the chart. Import then keeps that
   /// frame, including when the frame covers the data range.
   public var frameIsCustom: Bool
@@ -122,7 +156,8 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     categoryAxisTitle: String = "",
     valueAxisTitle: String = "",
     frameIsCustom: Bool = false,
-    errorBarColumn: Int? = nil
+    errorBarColumn: Int? = nil,
+    trendline: ChartTrendline? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -149,6 +184,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     self.valueAxisTitle = valueAxisTitle
     self.frameIsCustom = frameIsCustom
     self.errorBarColumn = errorBarColumn
+    self.trendline = trendline
   }
 
   public enum CodingKeys: String, CodingKey {
@@ -157,7 +193,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     case anchorRow, anchorCol, rowSpan, colSpan
     case originXOffset, originYOffset, endXOffset, endYOffset
     case seriesColor, pointColors, showsLegend, showsGridlines
-    case categoryAxisTitle, valueAxisTitle, frameIsCustom, errorBarColumn
+    case categoryAxisTitle, valueAxisTitle, frameIsCustom, errorBarColumn, trendline
   }
 
   public init(from decoder: Decoder) throws {
@@ -191,6 +227,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     valueAxisTitle = try c.decodeIfPresent(String.self, forKey: .valueAxisTitle) ?? ""
     frameIsCustom = try c.decodeIfPresent(Bool.self, forKey: .frameIsCustom) ?? false
     errorBarColumn = try c.decodeIfPresent(Int.self, forKey: .errorBarColumn)
+    trendline = try c.decodeIfPresent(ChartTrendline.self, forKey: .trendline)
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -216,6 +253,7 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
     try c.encode(endYOffset, forKey: .endYOffset)
     try c.encodeIfPresent(seriesColor, forKey: .seriesColor)
     try c.encodeIfPresent(errorBarColumn, forKey: .errorBarColumn)
+    try c.encodeIfPresent(trendline, forKey: .trendline)
     try c.encode(pointColors, forKey: .pointColors)
     try c.encode(showsLegend, forKey: .showsLegend)
     try c.encode(showsGridlines, forKey: .showsGridlines)
@@ -228,9 +266,10 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
   /// Bar and line use the first palette swatch. Area uses a steady blue.
   public static func defaultSeriesColor(for kind: Kind) -> CodableColor {
     switch kind {
-    case .bar, .line, .pie, .scatter:
+    case .bar, .line, .pie, .scatter, .horizontalBar, .stackedBar, .stackedHorizontalBar,
+      .doughnut:
       return CodableColor(red: 0.18, green: 0.45, blue: 0.86, alpha: 1)
-    case .area:
+    case .area, .stackedArea:
       return CodableColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1)
     }
   }
@@ -243,8 +282,15 @@ public nonisolated struct SheetChart: Identifiable, Codable, Equatable, Sendable
       && (kind == .bar || kind == .line)
   }
 
+  /// A trendline draws on bar, line, area and scatter charts of values.
+  public var drawsTrendline: Bool {
+    trendline != nil && valueMode == .values && kind.allowsTrendline
+  }
+
   public var usesSeriesPlot: Bool {
-    kind == .pie || kind == .scatter || (valueMode == .values && !extraValueColumns.isEmpty)
+    kind == .pie || kind == .scatter || kind == .horizontalBar || kind.isStacked
+      || kind == .doughnut || drawsTrendline
+      || (valueMode == .values && !extraValueColumns.isEmpty)
   }
 
   /// Series color, or the kind's default when the series color is unset.

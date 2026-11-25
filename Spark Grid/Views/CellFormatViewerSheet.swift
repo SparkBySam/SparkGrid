@@ -392,7 +392,22 @@ enum CellFormatPanel {
 enum SpreadsheetPaste {
   static func perform(on viewModel: SpreadsheetViewModel?) {
     if CellFormatCodePaste.pasteIntoEditingField() { return }
+    if let text = FocusedText.current {
+      text.paste(nil)
+      return
+    }
     viewModel?.pasteFromPasteboard()
+  }
+}
+
+/// The text being typed in the front window, when there is any: a dialog's field, the formula
+/// bar, the name box or a cell's editor.
+enum FocusedText {
+  static var current: NSText? {
+    guard let text = NSApp.keyWindow?.firstResponder as? NSText, text.isEditable else {
+      return nil
+    }
+    return text
   }
 }
 

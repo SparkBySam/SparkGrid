@@ -648,7 +648,7 @@ extension FormulaEvaluator {
     return (y, m, d)
   }
 
-  private static func serial(year: Int, month: Int, day: Int) -> Int? {
+  static func serial(year: Int, month: Int, day: Int) -> Int? {
     guard
       let date = utcCalendar.date(from: DateComponents(year: year, month: month, day: day))
     else { return nil }
@@ -734,7 +734,7 @@ extension FormulaEvaluator {
   }
 
   /// Holiday serials from an optional argument.
-  private func holidays(_ args: [FormulaExpr], at index: Int) -> Result<Set<Int>, ErrorBox> {
+  func holidays(_ args: [FormulaExpr], at index: Int) -> Result<Set<Int>, ErrorBox> {
     guard args.count > index else { return .success([]) }
     var days = Set<Int>()
     for value in flatten([args[index]]) {

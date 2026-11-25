@@ -9,7 +9,8 @@ struct SparkDialog<Content: View, Leading: View>: View {
   let subtitle: String
   let primaryTitle: String
   var primaryDisabled = false
-  var cancelTitle = "Cancel"
+  /// Nil for a notice with nothing to cancel: the main button alone closes it.
+  var cancelTitle: String? = "Cancel"
   let onCancel: () -> Void
   let onPrimary: () -> Void
   @ViewBuilder var leading: () -> Leading
@@ -40,8 +41,10 @@ struct SparkDialog<Content: View, Leading: View>: View {
       HStack(spacing: 8) {
         leading()
         Spacer(minLength: 12)
-        Button(cancelTitle, action: onCancel)
-          .keyboardShortcut(.cancelAction)
+        if let cancelTitle {
+          Button(cancelTitle, action: onCancel)
+            .keyboardShortcut(.cancelAction)
+        }
         Button(primaryTitle, action: onPrimary)
           .keyboardShortcut(.defaultAction)
           .buttonStyle(.borderedProminent)
@@ -138,9 +141,18 @@ struct SparkDialogSection: View {
 enum SparkDialogPresenter {
   private final class Controller: NSObject, NSWindowDelegate {
     var window: NSWindow?
+    var onEnd: (() -> Void)?
 
     func windowWillClose(_ notification: Notification) {
       window = nil
+      ended()
+    }
+
+    /// Once, however the sheet goes: a button, the close button, or another dialog replacing it.
+    func ended() {
+      let end = onEnd
+      onEnd = nil
+      end?()
     }
 
     func close() {
@@ -155,11 +167,13 @@ enum SparkDialogPresenter {
 
   private static var controllers: [ObjectIdentifier: Controller] = [:]
 
-  /// `content` receives the close action.
+  /// `content` receives the close action. `onEnd` runs once when the sheet is gone, also when
+  /// it was closed some way other than its buttons.
   static func present<Content: View>(
     title: String,
     width: CGFloat,
     in window: NSWindow? = nil,
+    onEnd: (() -> Void)? = nil,
     content: (@escaping () -> Void) -> Content
   ) {
     let parent = window ?? NSApp.keyWindow ?? NSApp.mainWindow
@@ -169,6 +183,7 @@ enum SparkDialogPresenter {
       controllers[key] = nil
     }
     let controller = Controller()
+    controller.onEnd = onEnd
     let close: () -> Void = {
       controller.close()
       if let key { controllers[key] = nil }
@@ -185,6 +200,7 @@ enum SparkDialogPresenter {
       parent.beginSheet(sheetWindow) { _ in
         controller.window = nil
         if let key { controllers[key] = nil }
+        controller.ended()
       }
     } else {
       sheetWindow.center()
